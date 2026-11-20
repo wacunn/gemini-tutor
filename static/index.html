@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Gemini Tutor</title>
+  <link rel="manifest" href="/static/manifest.json" />
+  <link rel="icon" href="/static/icon-192.png" />
+  <meta name="theme-color" content="#131314" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Google+Sans+Text:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="fresh">
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <linearGradient id="gemGrad" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#4285f4" />
+        <stop offset="55%" stop-color="#9b72cb" />
+        <stop offset="100%" stop-color="#d96570" />
+      </linearGradient>
+      <symbol id="spark" viewBox="0 0 24 24">
+        <path fill="url(#gemGrad)" d="M12 1.5c.6 5.6 4.9 9.9 10.5 10.5-5.6.6-9.9 4.9-10.5 10.5C11.4 16.9 7.1 12.6 1.5 12 7.1 11.4 11.4 7.1 12 1.5z" />
+      </symbol>
+    </defs>
+  </svg>
+
+  <!-- Parent setup (first run only) -->
+  <section id="setup" hidden>
+    <form id="setupForm" class="setup-card">
+      <svg class="setup-spark"><use href="#spark" /></svg>
+      <h1>Set up</h1>
+      <p class="sub">For the parent. Everything stays on this computer.</p>
+      <label>Child's first name<input id="sName" required autocomplete="off" /></label>
+      <div class="row">
+        <label>Grade<input id="sGrade" type="number" min="1" max="12" value="3" /></label>
+        <label>What they call you<input id="sParent" value="Dad" /></label>
+      </div>
+      <label>Voice<select id="sVoice"></select></label>
+      <label>What should the tutor know? (optional)
+        <textarea id="sNote" rows="4" placeholder="What's hard, what they're into, what to avoid…"></textarea>
+      </label>
+      <label id="keyRow">Gemini API key
+        <input id="sKey" type="password" placeholder="aistudio.google.com/app/api-keys" autocomplete="off" />
+      </label>
+      <button class="btn-primary" type="submit">Done</button>
+    </form>
+  </section>
+
+  <!-- Main -->
+  <div id="app" hidden>
+    <header class="top">
+      <div class="brand">Gemini</div>
+      <div class="top-right">
+        <span class="building" id="building" hidden><span class="dot"></span><span id="buildingText">Making something</span></span>
+        <span class="goal-pill" id="goalPill" hidden></span>
+        <span class="timer" id="timer"></span>
+        <button class="icon-btn" id="phonesBtn" title="Headphones on: you can talk while Gemini is talking" aria-pressed="false">
+          <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0-9 9v6a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H5v-1a7 7 0 0 1 14 0v1h-2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1a3 3 0 0 0 3-3v-6a9 9 0 0 0-9-9z"/></svg>
+        </button>
+        <a class="icon-btn" href="/parent" title="Parent page">
+          <svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-3.3 0-8 1.7-8 5v1h16v-1c0-3.3-4.7-5-8-5z"/></svg>
+        </a>
+        <button class="text-btn" id="endBtn" hidden>Done for today</button>
+      </div>
+    </header>
+
+    <div class="body">
+      <main class="convo" id="convo">
+        <div class="hero" id="hero">
+          <h1 class="hello"><span id="helloText">Hi</span></h1>
+        </div>
+        <div class="stream" id="stream"></div>
+      </main>
+
+      <aside class="canvas" id="canvas" hidden>
+        <div class="canvas-tabs" id="canvasTabs"></div>
+        <div class="canvas-body" id="canvasBody"></div>
+      </aside>
+    </div>
+
+    <div class="dock" id="dock">
+      <div class="ask" id="ask" hidden><svg class="ask-spark"><use href="#spark" /></svg><span id="askText"></span></div>
+      <div class="composer" id="composer">
+        <textarea id="input" rows="1" placeholder="Type, write, or talk" autocomplete="off" spellcheck="false"></textarea>
+        <div class="composer-actions">
+          <button class="icon-btn" id="penBtn" title="Write with a pen">
+            <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zm17.7-10.2a1 1 0 0 0 0-1.42l-2.33-2.33a1 1 0 0 0-1.42 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+          </button>
+          <button class="icon-btn mic" id="micBtn" title="Talk">
+            <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg>
+          </button>
+          <button class="icon-btn send" id="sendBtn" title="Send" hidden>
+            <svg viewBox="0 0 24 24"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12 2-12 2z"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="live-glow" id="glow"></div>
+    </div>
+
+    <!-- Pen sheet -->
+    <div class="pen-sheet" id="penSheet" hidden>
+      <div class="pen-card">
+        <div class="pen-head">
+          <span id="penPrompt">Write here</span>
+          <div class="pen-btns">
+            <button class="text-btn" id="penClear">Clear</button>
+            <button class="text-btn" id="penCancel">Cancel</button>
+            <button class="btn-primary" id="penDone">Done</button>
+          </div>
+        </div>
+        <canvas id="penCanvas"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

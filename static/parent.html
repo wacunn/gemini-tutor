@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Parent · Gemini Tutor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Google+Sans+Text:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root { --bg:#131314; --s:#1e1f20; --s2:#282a2c; --line:#3c4043; --t:#e3e3e3; --t2:#c4c7c5; --m:#8e918f; --b:#a8c7fa; --g:#81c995; --y:#fdd663; --r:#f28b82; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--t); font-family:"Google Sans Text",-apple-system,sans-serif; }
+    a { color: var(--b); }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 24px 80px; }
+    h1 { font-family:"Google Sans",sans-serif; font-weight:400; font-size:2rem; margin:0 0 4px; }
+    h2 { font-family:"Google Sans",sans-serif; font-weight:500; font-size:1.15rem; margin:28px 0 12px; color:var(--t2); }
+    .muted { color: var(--m); }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(300px,1fr)); gap: 14px; }
+    .card { background: var(--s); border-radius: 20px; padding: 18px 20px; }
+    .card h3 { margin:0 0 8px; font-size:.95rem; color:var(--t2); font-weight:500; font-family:"Google Sans",sans-serif; }
+    .big { font-size: 2rem; font-family:"Google Sans",sans-serif; }
+    .pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:.8rem; background:var(--s2); margin:2px 4px 2px 0; }
+    .ok { color: var(--g); } .warn { color: var(--y); } .bad { color: var(--r); }
+    ul { margin: 6px 0 0; padding-left: 18px; } li { margin: 4px 0; line-height: 1.45; }
+    textarea, input, select { width:100%; background:var(--bg); color:var(--t); border:1px solid var(--line); border-radius:12px; padding:10px 12px; font:inherit; }
+    button { background: var(--b); color:#062e6f; border:none; border-radius:999px; padding:9px 18px; font-family:"Google Sans",sans-serif; font-weight:500; cursor:pointer; }
+    button.ghost { background:none; color:var(--b); border:1px solid var(--line); }
+    .row { display:flex; gap:10px; align-items:center; }
+    details { background: var(--s); border-radius: 16px; padding: 12px 16px; margin: 8px 0; }
+    summary { cursor: pointer; }
+    pre { white-space: pre-wrap; font-size: .85rem; color: var(--t2); }
+    .live-dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--m); margin-right:6px; }
+    .live-dot.on { background: var(--g); box-shadow: 0 0 0 4px rgba(129,201,149,.15); }
+    .t { font-size:.9rem; line-height:1.5; }
+    .t .k { color: var(--y); } .t .g { color: var(--t); } .t .n { color: var(--m); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="row" style="justify-content:space-between">
+    <div><h1 id="title">Parent page</h1><div class="muted" id="sub"></div></div>
+    <div class="row">
+      <button id="topUpdBtn" hidden>Update available — Update now</button>
+      <a href="/">Back to tutor</a>
+    </div>
+  </div>
+
+  <h2><span class="live-dot" id="liveDot"></span>Live session</h2>
+  <div class="grid" id="live"><div class="card muted">No session running.</div></div>
+
+  <h2>What we've learned</h2>
+  <div class="grid" id="model"></div>
+
+  <h2>Progress by session</h2>
+  <div class="card" id="trend"></div>
+
+  <h2>Sessions</h2>
+  <div id="sessions"></div>
+
+  <h2>Things it built</h2>
+  <div id="acts" class="grid"></div>
+
+  <h2>Tell the tutor something</h2>
+  <div class="card">
+    <textarea id="note" rows="3" placeholder="e.g. Teacher says he loses marks for run-ons and missing capitals. He was wiped out today."></textarea>
+    <div class="row" style="margin-top:10px"><button id="saveNote">Save note</button><span class="muted" id="noteMsg"></span></div>
+    <ul id="notes" class="muted"></ul>
+  </div>
+
+  <h2>Software</h2>
+  <div class="card" id="SoftwareCard">
+    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:12px">
+      <div><div class="big" id="ver" style="font-size:1.4rem">–</div><div class="muted" id="updMsg">Installed version</div></div>
+      <div class="row">
+        <button id="checkUpd" class="ghost">Check for updates</button>
+        <button id="applyUpd" hidden>Update now</button>
+        <button id="quitApp" class="ghost">Quit tutor</button>
+      </div>
+    </div>
+    <pre id="updNotes" class="muted" hidden></pre>
+  </div>
+
+  <h2>Settings</h2>
+  <div class="card">
+    <div class="row">
+      <label style="flex:1">Voice <select id="voice"></select></label>
+      <label style="flex:2">Gemini API key <input id="key" type="password" placeholder="leave blank to keep current" /></label>
+      <button id="saveSettings" style="align-self:flex-end">Save</button>
+    </div>
+    <div class="muted" id="setMsg" style="margin-top:8px"></div>
+    <p class="muted" style="margin-bottom:0">Skill targets come from <code>curriculum/targets.md</code> (sourced from the Ontario Language curriculum, 2023).</p>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+const list = (arr) => (arr && arr.length) ? "<ul>" + arr.map(x => "<li>" + esc(typeof x === "string" ? x : Object.entries(x).map(([k,v]) => `${k}: ${Array.isArray(v)?v.join("; "):v}`).join(" · ")) + "</li>").join("") + "</ul>" : '<div class="muted">Nothing yet.</div>';
+
+async function loadLive() {
+  const r = await fetch("/api/live"); const d = await r.json();
+  $("liveDot").classList.toggle("on", !!d.active);
+  if (!d.session_id) return;
+  const tr = d.tracker || {}, cr = d.critic || {}, st = d.stats || {};
+  const eng = tr.engagement || {};
+  const verdictCls = cr.verdict === "on_track" ? "ok" : cr.verdict === "drifting" ? "warn" : cr.verdict ? "bad" : "muted";
+  const rate = st.complete_first_try_rate;
+  $("live").innerHTML = `
+    <div class="card"><h3>Engagement (tracker)</h3>
+      <div class="big">${eng.level ?? "–"}<span class="muted" style="font-size:1rem"> / 5 · ${esc(eng.trend || "")}</span></div>
+      <div class="${tr.risk && tr.risk !== "none" ? "warn" : "muted"}">risk: ${esc(tr.risk || "–")}</div>
+      <div class="muted" style="margin-top:6px">${esc(eng.evidence || "")}</div>
+      <div style="margin-top:8px">${esc(tr.headline || "")}</div></div>
+    <div class="card"><h3>Is it still educational? (critic)</h3>
+      <div class="big ${verdictCls}">${esc((cr.verdict || "–").replace("_"," "))}</div>
+      <div class="muted">educational turns: ${d.turns ? `${d.turns.educational}/${d.turns.judged}` : "–"} · learning/min: ${cr.learning_per_minute ?? "–"} · work done by: ${esc(cr.who_is_doing_the_work || "–")}</div>
+      ${d.turns && d.turns.last ? `<div class="muted" style="margin-top:4px">last turn: ${d.turns.last.last_turn_ok ? "✓" : "✗ " + esc(d.turns.last.why || "")}<br>→ next: ${esc(d.turns.last.next_move || "")}</div>` : ""}
+      <div style="margin-top:6px">${esc(cr.issue || "")}</div>
+      <div class="muted" style="margin-top:4px">${cr.advice ? "→ " + esc(cr.advice) : ""}</div></div>
+    <div class="card"><h3>Writing this session (checker)</h3>
+      <div class="big">${rate == null ? "–" : Math.round(rate * 100) + "%"}</div>
+      <div class="muted">complete sentences on first try (${st.complete_on_first_try ?? 0}/${st.sentence_attempts ?? 0})</div>
+      <div style="margin-top:6px">${Object.entries(st.issues || {}).map(([k,v]) => `<span class="pill">${esc(k.replace(/_/g," "))}: ${v}</span>`).join("")}
+        ${st.missing_capital ? `<span class="pill">no capital: ${st.missing_capital}</span>` : ""}${st.missing_end_punctuation ? `<span class="pill">no end punct.: ${st.missing_end_punctuation}</span>` : ""}</div>
+      <div class="muted" style="margin-top:6px">${(st.misspellings || []).map(m => esc(m.wrote) + "→" + esc(m.meant)).join(", ")}</div>
+      <div class="muted">typing: ${st.typing_chars_per_min ?? "–"} chars/min</div></div>
+    <div class="card"><h3>On screen now</h3><pre>${esc(d.mechanic || "Conversation")}</pre>
+      ${(d.ideas || []).length ? "<h3 style='margin-top:10px'>Latest invented ideas</h3>" + list(d.ideas.map(i => `${i.name} (critic ${i.critic_score ?? "?"}/5): ${i.pitch}`)) : ""}</div>`;
+}
+
+async function loadAll() {
+  const r = await fetch("/api/parent"); const d = await r.json();
+  const L = d.learner, M = L.model || {};
+  $("title").textContent = (L.name || "Child") + " · parent page";
+  $("sub").textContent = `Grade ${L.grade} · ${L.sessions.length} session(s)`;
+  $("model").innerHTML = `
+    <div class="card"><h3>Summary</h3>${esc(M.summary || "Not enough sessions yet.")}<div class="muted" style="margin-top:8px">${esc(M.notes_for_parent || "")}</div></div>
+    <div class="card"><h3>What engages him</h3>${list(M.what_engages)}<h3 style="margin-top:12px">What shuts him down</h3>${list(M.what_shuts_down)}</div>
+    <div class="card"><h3>Writing</h3>${esc(M.writing || "–")}<h3 style="margin-top:12px">Typing</h3>${esc(M.typing || "–")}</div>
+    <div class="card"><h3>Spelling ${M.spelling?.stage ? "· " + esc(M.spelling.stage) : ""}</h3>${list(M.spelling?.patterns)}</div>
+    <div class="card"><h3>Open hypotheses</h3>${list(M.hypotheses)}</div>
+    <div class="card"><h3>Plan for next session</h3>${esc(M.plan_next_session || "–")}<h3 style="margin-top:12px">Ideas to try</h3>${list(M.ideas_to_try)}</div>`;
+
+  const rows = L.sessions.filter(s => s.metrics).map(s =>
+    `<tr><td>${esc(s.date.slice(0,10))}</td><td>${s.minutes}m</td><td>${s.metrics.complete_first_try_rate == null ? "–" : Math.round(s.metrics.complete_first_try_rate*100) + "%"}</td><td>${s.metrics.sentence_attempts ?? "–"}</td><td>${s.metrics.typed_chars ?? "–"}</td><td>${s.metrics.kid_spoken_words ?? "–"}</td><td>${s.metrics.talk_ratio_kid_to_tutor ?? "–"}</td></tr>`).join("");
+  $("trend").innerHTML = rows ? `<table style="width:100%;border-collapse:collapse" class="t"><tr class="muted"><td>Date</td><td>Length</td><td>Complete 1st try</td><td>Sentences</td><td>Typed chars</td><td>Spoken words</td><td>Kid:tutor talk</td></tr>${rows}</table>` : '<span class="muted">After the first reviewed session.</span>';
+
+  $("sessions").innerHTML = d.sessions.map(s => `
+    <details data-id="${esc(s.id)}"><summary>${esc(s.date.slice(0,16).replace("T"," "))} · ${s.minutes} min ${s.reviewed ? "" : '<span class="pill">reviewing…</span>'} <span class="muted">${esc(s.recap || "")}</span></summary>
+      <div class="row" style="margin:10px 0"><button class="ghost rerun">Re-run review</button></div>
+      ${s.review ? `<div class="card" style="background:#18191a"><h3>Review</h3>${esc(s.review.session_recap || "")}<h3 style="margin-top:10px">For you</h3>${esc(s.review.notes_for_parent || "")}</div>` : ""}
+      <div class="t transcript" style="margin-top:10px"></div></details>`).join("") || '<div class="muted">No sessions yet.</div>';
+  document.querySelectorAll("details[data-id]").forEach(el => {
+    el.addEventListener("toggle", async () => {
+      if (!el.open || el.dataset.loaded) return;
+      el.dataset.loaded = 1;
+      const r = await fetch("/api/session/" + el.dataset.id); const s = await r.json();
+      el.querySelector(".transcript").innerHTML = s.events.map(e => {
+        const t = `${String(Math.floor(e.t/60)).padStart(2,"0")}:${String(Math.floor(e.t%60)).padStart(2,"0")}`;
+        if (e.kind === "kid_said") return `<div class="k">${t} ${esc(L.name)}: ${esc(e.text)}</div>`;
+        if (e.kind === "kid_typed") return `<div class="k">${t} ${esc(L.name)} typed: “${esc(e.text)}”</div>`;
+        if (e.kind === "kid_wrote") return `<div class="k">${t} ${esc(L.name)} wrote: “${esc(e.text)}”</div>`;
+        if (e.kind === "tutor_said") return `<div class="g">${t} Gemini: ${esc(e.text)}</div>`;
+        if (e.kind === "critic") return `<div class="n">${t} critic: ${esc(e.state?.verdict)} ${esc(e.state?.issue || "")}</div>`;
+        if (e.kind === "tracker") return `<div class="n">${t} tracker: engagement ${esc(e.state?.engagement?.level)} ${esc(e.state?.risk || "")}</div>`;
+        if (e.kind === "tool") return `<div class="n">${t} [${esc(e.name)}] ${esc(JSON.stringify(e.args).slice(0,160))}</div>`;
+        return "";
+      }).join("");
+      el.querySelector(".rerun").onclick = async () => { el.querySelector(".rerun").textContent = "Reviewing…"; await fetch("/api/review/" + el.dataset.id, { method: "POST" }); loadAll(); };
+    });
+  });
+
+  $("acts").innerHTML = d.activities.map(a => `<div class="card"><h3>${esc(a.title)}</h3><div class="muted">${esc(a.summary || a.description?.slice(0,160) || "")}</div>${a.how_it_went ? `<div style="margin-top:6px">${esc(a.how_it_went)}</div>` : ""}<a href="/activity/${esc(a.id)}" target="_blank">Open</a></div>`).join("") || '<div class="muted">Nothing built yet.</div>';
+  $("notes").innerHTML = (L.parent_notes || []).slice().reverse().map(n => `<li>${esc(n.date.slice(0,10))}: ${esc(n.note)}</li>`).join("");
+
+  const st = await (await fetch("/api/state")).json();
+  $("voice").innerHTML = st.voices.map(([v, d]) => `<option value="${v}" ${v === st.voice ? "selected" : ""}>${v} (${d})</option>`).join("");
+}
+
+$("saveNote").onclick = async () => {
+  const note = $("note").value.trim(); if (!note) return;
+  await fetch("/api/parent-note", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ note }) });
+  $("note").value = ""; $("noteMsg").textContent = "Saved. The tutor reads it next session."; loadAll();
+};
+$("saveSettings").onclick = async () => {
+  await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voice: $("voice").value }) });
+  const k = $("key").value.trim();
+  if (k) await fetch("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: k }) });
+  $("key").value = ""; $("setMsg").textContent = "Saved. Voice changes apply to the next session.";
+};
+
+async function loadVersion() {
+  const v = await (await fetch("/api/version")).json();
+  $("ver").textContent = "Version " + v.version;
+  return v.version;
+}
+$("checkUpd").onclick = async () => {
+  $("updMsg").textContent = "Checking…";
+  const r = await (await fetch("/api/update/check")).json();
+  if (r.error) { $("updMsg").textContent = r.error; return; }
+  if (r.available) {
+    $("updMsg").textContent = `Version ${r.latest} is available.`;
+    $("applyUpd").hidden = false;
+    if (r.notes) { $("updNotes").hidden = false; $("updNotes").textContent = r.notes; }
+  } else {
+    $("updMsg").textContent = "You're up to date.";
+  }
+};
+$("applyUpd").onclick = async () => {
+  $("applyUpd").disabled = true;
+  $("updMsg").textContent = "Updating… this takes about a minute. The page will reload by itself.";
+  const old = $("ver").textContent;
+  const r = await fetch("/api/update/apply", { method: "POST" });
+  if (!r.ok) { $("updMsg").textContent = "Update failed: " + (await r.text()); $("applyUpd").disabled = false; return; }
+  for (let i = 0; i < 120; i++) {
+    await new Promise(res => setTimeout(res, 1500));
+    try { await loadVersion(); location.reload(); return; } catch (_) {}
+  }
+  $("updMsg").textContent = "Updated. If the page doesn't come back, close it and click the Gemini Tutor icon again.";
+};
+$("quitApp").onclick = async () => {
+  if (!confirm("Quit Gemini Tutor? Click the Gemini Tutor icon to start it again.")) return;
+  await fetch("/api/quit", { method: "POST" });
+  document.body.innerHTML = '<div class="wrap"><h1>Gemini Tutor is closed.</h1><p class="muted">Click the Gemini Tutor icon to start it again.</p></div>';
+};
+
+async function checkUpdatesQuietly() {
+  try {
+    const r = await (await fetch("/api/update/check")).json();
+    if (r.available) {
+      $("updMsg").textContent = `Version ${r.latest} is available.`;
+      $("applyUpd").hidden = false;
+      $("topUpdBtn").hidden = false;
+      $("topUpdBtn").textContent = `Update to v${r.latest}`;
+      $("topUpdBtn").onclick = () => { $("SoftwareCard")?.scrollIntoView({ behavior: "smooth" }); $("applyUpd").click(); };
+      if (r.notes) { $("updNotes").hidden = false; $("updNotes").textContent = r.notes; }
+    }
+  } catch (_) {}
+}
+
+loadVersion(); loadAll(); loadLive(); checkUpdatesQuietly(); setInterval(loadLive, 5000);
+</script>
+</body>
+</html>

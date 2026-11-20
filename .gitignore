@@ -1,0 +1,14 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# learner data (stays on this machine)
+data/
+logs/
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
