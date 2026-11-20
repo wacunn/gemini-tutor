@@ -1,6 +1,12 @@
 # Gemini Tutor
 
-A local-first, voice + typing + stylus AI writing and spelling tutor built on Gemini, grounded in empirical writing science (SRSD, sentence combining, intrinsic game integration, escape extinction + antecedent scaffolding, and Cover-Copy-Compare morphological spelling) and aligned verbatim with the **Ontario Language Curriculum (2023), Grades 3–4**.
+A local-first, voice + typing + stylus AI Language, Writing, Reading-to-Write, and Spelling studio built on Gemini, grounded in empirical writing & ADHD science (SRSD `POW+TREE` & Story Blueprints, Saddler & Graham sentence combining, Habgood & Ainsworth intrinsic integration, Dunlap escape extinction + antecedent choice, MacArthur dictation-to-edit, and Leitner spaced Cover-Copy-Compare morphological spelling) and aligned verbatim with **18 expectations across Strands B, C, and D of The Ontario Curriculum, Grades 1–8: Language (2023), Grades 3–4**.
+
+### Multi-Scale Creative & Expository Studios (All Save Across Weeks & Export 150-DPI PDFs)
+- **Full Graphic Novel Studio (Up to 100+ Panels):** Maps a verified causal *Beginning → Middle ('But / When / Because') → End ('So / Finally')* Story Spine first, then zooms in chapter-by-chapter with consistent character art, `B3.3`-punctuated speech bubbles, and automatic Mastery Tier 1–5 escalation.
+- **3-Source Fact & Invention Codex (Reading Comprehension + Research Synthesis):** Presents 3 real science/engineering/history/acoustics sources (or generates a custom 3-source dossier on any topic the child asks to research), verifies causal inference (`C2.3 / C3.2`), builds a cohesive 3-sentence informational paragraph, and exports wide Encyclopedia PDF spreads.
+- **4-Page Persuasive Pitch Book (`POW+TREE`):** Scaffolds *Claim → Evidence (`because/since`) → Counter-Argument (`although/even though`) → Final Deal* into an illustrated PDF Case File.
+- **Quick Sprints & Voice-to-Draft Mode:** 3-Panel Strips, live HTML5 sentence-driven mini-games, spoken dictation-into-editable-box (`ORAL_DRAFT`) for low-energy ADHD days, and guaranteed daily Leitner Spaced Word Forge.
 
 ## One-Line Install (Mac, Windows PC & Chromebook)
 

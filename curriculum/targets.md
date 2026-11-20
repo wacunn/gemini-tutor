@@ -49,6 +49,12 @@ Quotes are exact; the "looks like in a session" notes are ours.
 - "begin to develop fluent keyboarding skills using touch-typing techniques" (and D2.6: "use a word processor to edit texts")
 - Looks like: typing short, meaningful bits often; never long transcription.
 
-## Oral language — B1.5 (Grade 3)
+## Comprehension, Research & Text Forms — Strand C & D1.3 (Grade 3 & Grade 4)
+- **C1.2–C1.4 Text Forms, Literary Devices & Visual Design:** narrative, informational, and persuasive genres; figurative language, onomatopoeia, simile/metaphor, and how panel/graphic features convey meaning.
+- **C1.5 / D2.4 Point of View & Perspective:** first-person vs. third-person narration and how shifting perspective changes a story.
+- **C2.2–C2.4 & D1.3 Main Idea, Inference & Multi-Source Synthesis:** gather information from 3+ sources, make evidence-backed inferences, and synthesize into cohesive expository paragraphs.
+- **C3.2 Evaluating Accuracy & Arguments:** verify claims across sources (e.g. real geology/physics vs. game mechanics) and evaluate persuasive reasons.
+
+## Oral language — B1.5 (Grade 3–4)
 - "use appropriate word choice, including new vocabulary, grammar, and cohesive sentences when speaking…"
 - Talking counts: spoken complete sentences are a stepping stone to written ones.

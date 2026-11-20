@@ -50,6 +50,29 @@ demonstrate an understanding of the functions of parts of speech in sentences, i
 
 **B3.3 Capitalization and Punctuation**
 use their understanding of the meaning and function of capitalization and punctuation to communicate meaning clearly, including the use of capital letters in dialogue and for words in titles, commas and quotation marks to mark direct speech and direct quotations from texts within sentences, and apostrophes to indicate contractions
+
+## Comprehension: Understanding and Responding to Texts (Strand C — Grade 3)
+
+### C1 Knowledge about Texts
+apply foundational knowledge and skills to understand a variety of texts, including digital and media texts, by creators with diverse identities, perspectives, and experience, and demonstrate an understanding of the patterns, features, and elements of style associated with various text forms and genres
+
+- **C1.2 Text Forms and Genres**: identify and describe some characteristics of literary and informational text forms and their associated genres (narrative, informational, persuasive).
+- **C1.3 Text Patterns and Features**: identify text patterns, such as order of importance and cause and effect, and text features, such as headings, captions, and graphic panels, associated with various text forms, and explain how they help readers, listeners, and viewers understand the meaning.
+- **C1.4 Visual Elements of Texts**: describe ways in which images, graphics, and visual design are used in a given text, and demonstrate an understanding of their purpose and connection to the content of the text.
+- **C1.5 Elements of Style**: identify some elements of style in texts, including voice, word choice, word patterns, and sentence structure, and explain how they help communicate meaning; identify the point of view (first-person or third-person).
+
+### C2 Comprehension Strategies
+apply comprehension strategies before, during, and after reading, listening to, and viewing a variety of texts, including digital and media texts, by creators with diverse identities, perspectives, and experience, in order to understand and clarify the meaning of texts
+
+- **C2.2 Identifying the Purpose of Texts & Main Idea**: identify the purpose and main idea of texts and key supporting details across informational and literary sources.
+- **C2.3 Monitoring of Understanding: Making and Confirming Predictions and Inferences**: make predictions using background knowledge, text information, and cues from the environment, and make inferences using stated and implied information and ideas to understand texts.
+- **C2.4 Summarizing: Identifying Relevant Information and Drawing Conclusions**: use strategies such as rereading, visualizing, and graphic organizers to identify relevant information, summarize main ideas, and synthesize conclusions across sources.
+
+### C3 Critical Thinking in Literacy
+apply critical thinking skills to deepen understanding of texts, and analyze how various perspectives and topics are communicated and addressed in a variety of texts, including digital, media, and cultural texts
+
+- **C3.2 Making Inferences and Evaluating Perspectives / Accuracy**: make local and global inferences, using explicit and implicit evidence, to extend their understanding of various texts, and evaluate claims and perspectives across sources.
+
 ## Composition: Expressing Ideas and Creating Texts
 
 ### D1 Developing Ideas and Organizing Content
@@ -148,6 +171,17 @@ demonstrate an understanding of the functions of parts of speech in sentences, i
 
 **B3.3 Capitalization and Punctuation**
 use their understanding of the meaning and function of capitalization and punctuation to communicate meaning clearly and coherently, including the use of capital letters for proper adjectives, commas to set off nouns of direct address, and quotation marks to indicate the title of a short work
+
+## Comprehension: Understanding and Responding to Texts (Strand C — Grade 4)
+
+### C1 Knowledge about Texts
+- **C1.2–C1.4 Text Forms, Patterns & Visual Design**: describe characteristics of narrative, informational, and persuasive texts; analyze cause-and-effect, problem-and-solution, and comparative text structures, plus graphic/visual design interplay.
+- **C1.5 Elements of Style & Point of View**: identify voice, figurative language (simile, metaphor, onomatopoeia), varied sentence structures, and first/third-person point of view and competing character perspectives.
+
+### C2 Comprehension Strategies & C3 Critical Thinking
+- **C2.2–C2.4 Summarizing & Multi-Source Synthesis**: identify main ideas and relevant details across multiple sources and synthesize them into cohesive summaries and explanations.
+- **C2.3 & C3.2 Inference & Evidence Evaluation**: draw causal and comparative inferences from explicit and implicit text evidence and evaluate accuracy, bias, and arguments across sources.
+
 ## Composition: Expressing Ideas and Creating Texts
 
 ### D1 Developing Ideas and Organizing Content

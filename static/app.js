@@ -64,11 +64,12 @@ function renderHeroStarters(savedProjects) {
         `<div class="starter-card" data-open-proj="${esc(p.id)}"><div class="st-title">${esc(p.title)}</div><div class="st-sub">${p.panel_count} panel(s) saved · Click to continue (or <a href="${esc(p.pdf_url)}" target="_blank" onclick="event.stopPropagation()" style="color:var(--blue)">Download PDF</a>)</div></div>`
       ).join("") + `</div></div>`;
   }
-  html += `<div><div class="starter-group-label">Long-Term Books (Save Progress &amp; Export PDF)</div><div class="starter-row">
-    <button type="button" class="starter-card" data-tap="Start a Full Comic Book (Save & PDF)"><div class="st-title">Full Comic Book (PDF Book)</div><div class="st-sub">Plan Beginning → Middle → End, then zoom in up to 100 panels with dialogue</div></button>
-    <button type="button" class="starter-card" data-tap="Illustrated Monster/Invention Codex (PDF)"><div class="st-title">Illustrated Codex (PDF Book)</div><div class="st-sub">Multi-session field guide of creatures, bosses, or contraptions</div></button>
+  html += `<div><div class="starter-group-label">Multi-Session Books (Save Progress &amp; Export PDF)</div><div class="starter-row">
+    <button type="button" class="starter-card" data-tap="Start a Full Comic Book (Save & PDF)"><div class="st-title">Full Comic Book (PDF Book)</div><div class="st-sub">Beginning → Middle → End story spine, then zoom in up to 100 panels with dialogue</div></button>
+    <button type="button" class="starter-card" data-tap="3-Source Fact & Invention Codex (PDF)"><div class="st-title">3-Source Fact &amp; Invention Codex</div><div class="st-sub">Read real science/engineering dossiers &amp; write illustrated encyclopedia pages</div></button>
+    <button type="button" class="starter-card" data-tap="4-Page Persuasive Pitch ('Why We Should…')"><div class="st-title">4-Page Persuasive Pitch</div><div class="st-sub">Build an illustrated Claim → Evidence → Counter-Argument → Deal book</div></button>
   </div></div>
-  <div><div class="starter-group-label">Quick Today (~10 Min)</div><div class="starter-row">
+  <div><div class="starter-group-label">Quick / Low-Friction Today (~10 Min · Voice or Typing)</div><div class="starter-row">
     <button type="button" class="starter-card" data-tap="Quick 3-Panel Strip (10 min)"><div class="st-title">Quick 3-Panel Strip</div><div class="st-sub">Fast setup, twist, and payoff</div></button>
     <button type="button" class="starter-card" data-tap="Build a Live Mini-Game (10 min)"><div class="st-title">Build a Live Mini-Game</div><div class="st-sub">Code a playable sentence-driven game on the spot</div></button>
   </div></div>`;

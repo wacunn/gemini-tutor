@@ -192,12 +192,81 @@ def _draw_speech_bubble(d: ImageDraw.ImageDraw, x: int, y: int, max_w: int, spea
     return y + bh + 8
 
 
-def _render_panel_pages(proj: dict[str, Any], panels: list[dict[str, Any]]) -> list[Image.Image]:
+def _render_codex_pages(proj: dict[str, Any], panels: list[dict[str, Any]]) -> list[Image.Image]:
+    """Renders wide 2-entry-per-page Illustrated Field Codex spreads so full 3-5 sentence synthesized paragraphs never clip."""
     if not panels:
         return []
     pages: list[Image.Image] = []
     f_hdr = _font(24, bold=True)
+    f_lbl = _font(22, bold=True)
+    f_body = _font(22, bold=False)
+    f_body_sm = _font(19, bold=False)
+
+    grid_w = PAGE_W - 2 * MARGIN
+    row_h = 640
+    art_w = 480
+    art_h = row_h - 10
+
+    for page_idx in range(0, len(panels), 2):
+        chunk = panels[page_idx : page_idx + 2]
+        page = Image.new("RGB", (PAGE_W, PAGE_H), (252, 251, 248))
+        d = ImageDraw.Draw(page)
+
+        d.text((MARGIN, 46), f"{proj.get('title', 'Illustrated Field Codex')}  ·  Research & Synthesis Entries", fill=(85, 90, 98), font=f_hdr)
+        d.line([MARGIN, 84, PAGE_W - MARGIN, 84], fill=(210, 208, 200), width=2)
+
+        for r_idx, p in enumerate(chunk):
+            y0 = 114 + r_idx * (row_h + 36)
+            x0 = MARGIN
+            d.rectangle([x0, y0, x0 + grid_w, y0 + row_h], fill=(255, 255, 255), outline=(18, 20, 24), width=5)
+
+            # Left: framed encyclopedia illustration
+            im = _load_panel_img(p.get("image"), art_w, art_h)
+            if im:
+                page.paste(im, (x0 + 5, y0 + 5))
+            else:
+                d.rectangle([x0 + 5, y0 + 5, x0 + 5 + art_w, y0 + 5 + art_h], fill=(236, 238, 242))
+                d.text((x0 + 30, y0 + art_h // 2), f"Entry {p.get('number', r_idx + 1)} (rendering)", fill=(130, 134, 142), font=f_body)
+            d.line([x0 + 5 + art_w, y0, x0 + 5 + art_w, y0 + row_h], fill=(18, 20, 24), width=4)
+
+            # Right: full synthesized expository paragraph
+            tx0 = x0 + 5 + art_w + 28
+            tw = grid_w - art_w - 56
+            entry_no = p.get("number", page_idx + r_idx + 1)
+            d.text((tx0, y0 + 26), f"CODEX ENTRY #{entry_no}", fill=(36, 84, 190), font=f_lbl)
+            d.line([tx0, y0 + 62, tx0 + tw, y0 + 62], fill=(220, 218, 210), width=2)
+
+            cap_txt = p.get("caption") or ""
+            lines = _wrap(d, cap_txt, f_body, tw)
+            use_font = f_body
+            line_h = 34
+            max_lines = 15
+            if len(lines) > max_lines:
+                use_font = f_body_sm
+                lines = _wrap(d, cap_txt, use_font, tw)
+                line_h = 29
+                max_lines = 18
+            cy = y0 + 82
+            for ln in lines[:max_lines]:
+                d.text((tx0, cy), ln, fill=(22, 24, 28), font=use_font)
+                cy += line_h
+
+        pno = f"Page {len(pages) + 1}"
+        d.text((PAGE_W // 2 - 35, PAGE_H - 54), pno, fill=(120, 124, 132), font=f_body_sm)
+        pages.append(page)
+
+    return pages
+
+
+def _render_panel_pages(proj: dict[str, Any], panels: list[dict[str, Any]]) -> list[Image.Image]:
+    if not panels:
+        return []
+    if proj.get("kind") == "epic_codex":
+        return _render_codex_pages(proj, panels)
+    pages: list[Image.Image] = []
+    f_hdr = _font(24, bold=True)
     f_cap = _font(21, bold=False)
+    f_cap_sm = _font(17, bold=False)
     f_num = _font(20, bold=True)
 
     gutter = 28
@@ -242,15 +311,24 @@ def _render_panel_pages(proj: dict[str, Any], panels: list[dict[str, Any]]) -> l
             for bub in (p.get("dialogue") or [])[:2]:
                 by = _draw_speech_bubble(d, x0 + 56, by, cell_w - 72, bub.get("speaker", ""), bub.get("text", ""))
 
-            # Divider & narrative caption box at bottom of panel
+            # Divider & narrative caption box at bottom of panel (auto-scales font so long captions never clip!)
             cap_top = y0 + 5 + art_h
             d.rectangle([x0 + 5, cap_top, x0 + cell_w - 5, y0 + cell_h - 5], fill=(250, 246, 232))
             d.line([x0, cap_top, x0 + cell_w, cap_top], fill=(15, 15, 15), width=4)
-            cap_lines = _wrap(d, p.get("caption") or "", f_cap, cell_w - 36)
-            cy = cap_top + 14
-            for ln in cap_lines[:6]:
-                d.text((x0 + 18, cy), ln, fill=(20, 20, 20), font=f_cap)
-                cy += 29
+            cap_txt = p.get("caption") or ""
+            cap_lines = _wrap(d, cap_txt, f_cap, cell_w - 36)
+            use_f = f_cap
+            lh = 29
+            max_l = 6
+            if len(cap_lines) > 6:
+                use_f = f_cap_sm
+                cap_lines = _wrap(d, cap_txt, use_f, cell_w - 32)
+                lh = 22
+                max_l = 8
+            cy = cap_top + 12
+            for ln in cap_lines[:max_l]:
+                d.text((x0 + 18, cy), ln, fill=(20, 20, 20), font=use_f)
+                cy += lh
 
         # Page number
         pno = f"Page {len(pages) + 1}"

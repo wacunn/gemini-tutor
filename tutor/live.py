@@ -407,12 +407,21 @@ class TutorSession:
                 if self.id in LIVE:
                     LIVE[self.id]["ended"] = True
                 rec = load_learner()
+                if self.rec.get("spelling_deck"):
+                    rec["spelling_deck"] = self.rec["spelling_deck"]
                 rc = curriculum_tracker.ensure_report_card(rec)
                 evs = read_session(self.id, test_mode=False)
                 wchecks = [e for e in evs if e.get("kind") == "writing_check"]
                 had_spine = bool(self.ctrl.project and (self.ctrl.project.get("spine") or {}).get("beginning"))
                 curriculum_tracker.update_from_session_deterministic(
-                    rc, wchecks, self.stats.as_dict(), had_spine=had_spine, had_revision=self.ctrl.had_revision
+                    rc,
+                    wchecks,
+                    self.stats.as_dict(),
+                    had_spine=had_spine,
+                    had_revision=self.ctrl.had_revision,
+                    had_inference=self.ctrl.had_inference,
+                    had_synthesis=self.ctrl.had_synthesis,
+                    words_studied=len(self.ctrl.studied_words_today),
                 )
                 rec.setdefault("sessions", []).append(
                     {
@@ -478,8 +487,9 @@ class TutorSession:
             await self.apply_controller_ui(plan["ui"])
             render_note = ""
             if plan["kind"] == "COMPLETE_SENTENCE":
-                await self.apply_target(target, text, "typed")
-                render_note = await self.auto_render_sentence(text)
+                final_txt = plan.get("full_paragraph") or text
+                await self.apply_target(target, final_txt, "typed")
+                render_note = await self.auto_render_sentence(final_txt)
             await self.from_kid(
                 f'[{self.name} typed ({secs}s, {bs} backspaces): "{text}"]{check_note}',
                 plan["directive"] + render_note,
@@ -507,8 +517,9 @@ class TutorSession:
             await self.apply_controller_ui(plan["ui"])
             render_note = ""
             if text and plan["kind"] == "COMPLETE_SENTENCE":
-                await self.apply_target(target, text, "handwritten")
-                render_note = await self.auto_render_sentence(text)
+                final_txt = plan.get("full_paragraph") or text
+                await self.apply_target(target, final_txt, "handwritten")
+                render_note = await self.auto_render_sentence(final_txt)
             await self.from_kid(
                 f'[{self.name} handwrote: "{text}" (legible: {res.get("legible")}).]{check_note}',
                 plan["directive"] + render_note,
@@ -521,15 +532,7 @@ class TutorSession:
             if not proj:
                 return
             self.kid_events += 1
-            self.ctrl.project = proj
-            for p in projects.all_panels(proj)[-6:]:
-                if p.get("caption"):
-                    self.ctrl.active_story.append(p["caption"])
-            ui_acts = [{"type": "item", "item": projects.project_ui_payload(proj)}, {"type": "goal", "text": self.ctrl.goal_badge()}]
-            if proj.get("stage", "").startswith("spine_"):
-                ui_acts, directive = self.ctrl._prompt_spine_step(ui_acts, resumed=True)
-            else:
-                ui_acts, directive = self.ctrl._prompt_next_book_panel(ui_acts, resumed=True)
+            ui_acts, directive = await asyncio.to_thread(self.ctrl.resume_loaded_project, proj)
             await self.apply_controller_ui(ui_acts)
             await self.from_kid(f'[{self.name} opened saved book project "{proj.get("title")}" ({projects.total_panels(proj)} panels)]', directive)
 

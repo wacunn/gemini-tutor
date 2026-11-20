@@ -160,6 +160,7 @@ def settings(body: SettingsIn):
 def parent_data():
     from tutor.curriculum_tracker import ensure_report_card, format_report_for_ui
     from tutor.projects import list_projects
+    from tutor.spelling_srs import deck_summary
 
     rec = load_learner()
     rc = ensure_report_card(rec)
@@ -169,6 +170,7 @@ def parent_data():
     return {
         "learner": rec,
         "report_card": format_report_for_ui(rc),
+        "spelling_deck": deck_summary(rec),
         "projects": list_projects(),
         "sessions": sessions,
         "activities": list_activities(),
@@ -273,6 +275,7 @@ def clear_history():
     rec["sessions"] = []
     rec["model"] = json.loads(json.dumps(DEFAULT_LEARNER["model"]))
     rec["report_card"] = default_report_card()
+    rec["spelling_deck"] = {"cards": {}, "curriculum_index": 0}
     save_learner(rec)
     for folder in (SESSIONS, PIECES, ACTIVITIES, PROJECTS):
         if folder.exists():

@@ -123,6 +123,37 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
+    # Deterministic syntactic & craft features across the full submission (for Mastery Tier & Genre enforcement)
+    has_connector = bool(
+        re.search(
+            r"\b(because|when|whenever|if|unless|although|though|even though|while|before|after|until|since|whereas|therefore|however|but|so)\b",
+            text,
+            re.I,
+        )
+    )
+    has_dialogue = bool('"' in text or re.match(r"^[A-Z][A-Za-z0-9 _-]{0,16}:\s+\S+", text))
+    # Dialogue punctuation check (Ontario B3.3): if quotes used, check capital at start of quote & punctuation inside closing quote
+    dialogue_punct_ok = True
+    if '"' in text:
+        quotes = re.findall(r'"([^"]*)"', text)
+        if not quotes or text.count('"') % 2 != 0:
+            dialogue_punct_ok = False
+        else:
+            for q in quotes:
+                q_strip = q.strip()
+                first_q = next((ch for ch in q_strip if ch.isalpha()), "")
+                if not q_strip or (first_q and not first_q.isupper()) or not re.search(r"[,.!?]$", q_strip):
+                    dialogue_punct_ok = False
+    has_opener = bool(
+        re.match(
+            r"^(In|Inside|Beneath|Under|Above|Behind|Across|Beyond|Near|During|Before|After|When|While|Seconds|Deep|High|Suddenly|Finally|Although|Unlike)\b[^.!?]{4,45},",
+            text,
+        )
+    )
+    weak_found = sorted(
+        {m.group(0).lower() for m in re.finditer(r"\b(went|got|did|stuff|things|very big|very bad|nice)\b", text, re.I)}
+    )
+
     # Filter capitalization-only or identical "misspellings"
     clean_ms = []
     seen = set()
@@ -141,7 +172,18 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
         seen.add(key)
         clean_ms.append({"wrote": wrote, "meant": meant})
 
-    return {"sentences": verified_sents, "misspellings": clean_ms}
+    return {
+        "sentences": verified_sents,
+        "misspellings": clean_ms,
+        "features": {
+            "sentence_count": len(verified_sents),
+            "has_connector": has_connector,
+            "has_dialogue": has_dialogue,
+            "dialogue_punct_ok": dialogue_punct_ok,
+            "has_opener": has_opener,
+            "weak_words": weak_found,
+        },
+    }
 
 
 def check_writing(text: str) -> dict[str, Any]:

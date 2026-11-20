@@ -1,8 +1,9 @@
 """Ontario Grade 3 & Grade 4 Language Curriculum (2023) Report Card & Mastery Escalator.
 
-Tracks longitudinal mastery across 14 sourced expectations spanning:
+Tracks longitudinal mastery across 18 sourced expectations spanning:
 - Strand B3: Syntax, Sentence Structure, Grammar & Conventions (including Dialogue)
 - Strand B2: Phonics, Orthography, Morphology & Vocabulary
+- Strand C: Reading Comprehension, Multi-Source Synthesis, Inference, Point of View & Craft
 - Strand D: Causal Story/Idea Architecture, Multi-Genre Drafting, Voice, Revision & Keyboarding
 
 Levels follow Ontario's 4-level achievement scale:
@@ -92,6 +93,35 @@ ONTARIO_EXPECTATIONS: list[dict[str, str]] = [
         "strand": "Spelling, Morphology & Vocabulary (B2)",
         "name": "Precise Vocabulary & Vivid Verbs",
         "desc": "Selects specific verbs, nouns, and modifiers to convey exact meaning and tone.",
+    },
+    # Strand C: Comprehension, Inference, Research Synthesis & Literary Craft
+    {
+        "id": "C1.2_3_craft",
+        "code": "Gr.3–4 C1.2–C1.4",
+        "strand": "Comprehension, Research & Literary Craft (C1–C3)",
+        "name": "Text Forms, Visual Meaning & Literary Devices",
+        "desc": "Applies genre structures (narrative/expository/persuasive), visual-text interplay, and devices (onomatopoeia, simile, metaphor).",
+    },
+    {
+        "id": "C1.5_pov",
+        "code": "Gr.3–4 C1.5 / D2.4",
+        "strand": "Comprehension, Research & Literary Craft (C1–C3)",
+        "name": "Point of View & Character Perspective",
+        "desc": "Maintains consistent 1st/3rd-person narration and contrasts competing character perspectives.",
+    },
+    {
+        "id": "C2.2_4_synthesis",
+        "code": "Gr.3–4 C2.2, C2.4, D1.3",
+        "strand": "Comprehension, Research & Literary Craft (C1–C3)",
+        "name": "Multi-Source Research & Main-Idea Synthesis",
+        "desc": "Extracts key facts across 3+ sources and synthesizes them into a unified topic-and-detail paragraph.",
+    },
+    {
+        "id": "C2.3_inference",
+        "code": "Gr.3–4 C2.3, C3.2",
+        "strand": "Comprehension, Research & Literary Craft (C1–C3)",
+        "name": "Inference & Evidence Evaluation",
+        "desc": "Draws causal inferences from stated/implied text facts and evaluates accuracy across sources.",
     },
     # Strand D: Composition, Story Architecture & Keyboarding
     {
@@ -218,6 +248,9 @@ def update_from_session_deterministic(
     stats: dict[str, Any],
     had_spine: bool = False,
     had_revision: bool = False,
+    had_inference: bool = False,
+    had_synthesis: bool = False,
+    words_studied: int = 0,
 ) -> None:
     """Applies conservative deterministic floor updates from objective session checks before specialist review."""
     ts = now_iso()[:10]
@@ -280,6 +313,18 @@ def update_from_session_deterministic(
     if had_revision and sk["D2.5_6_revision"]["level"] < 2:
         sk["D2.5_6_revision"]["level"] = 2
         sk["D2.5_6_revision"]["updated"] = ts
+
+    if had_inference and sk["C2.3_inference"]["level"] < 2:
+        sk["C2.3_inference"]["level"] = 2
+        sk["C2.3_inference"]["updated"] = ts
+
+    if had_synthesis and sk["C2.2_4_synthesis"]["level"] < 3:
+        sk["C2.2_4_synthesis"]["level"] = max(2, sk["C2.2_4_synthesis"]["level"])
+        sk["C2.2_4_synthesis"]["updated"] = ts
+
+    if words_studied > 0 and sk["B2.3_morphology"]["level"] < 2:
+        sk["B2.3_morphology"]["level"] = 2
+        sk["B2.3_morphology"]["updated"] = ts
 
     cpm = stats.get("typing_chars_per_min")
     if cpm and (stats.get("typed_chars") or 0) >= 60:

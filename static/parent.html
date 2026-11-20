@@ -260,6 +260,9 @@
     <h2>Saved Books &amp; Printable PDFs</h2>
     <div class="grid" id="books"></div>
 
+    <h2>Spaced Spelling &amp; Morphology Deck (Leitner SRS)</h2>
+    <div id="spellingDeck"></div>
+
     <h2>What we've learned</h2>
     <div class="grid" id="model"></div>
 
@@ -310,6 +313,7 @@
         <label style="flex:2;min-width:220px">Gemini API key <input id="key" type="password"
             placeholder="leave blank to keep current" /></label>
         <button id="saveSettings" style="align-self:flex-end">Save</button>
+        <span class="muted" id="setMsg" style="align-self:center"></span>
       </div>
     </div>
 
@@ -392,7 +396,10 @@
         });
 
         $("acts").innerHTML = d.activities.map(a => `<div class="card"><h3>${esc(a.title)}</h3><div class="muted">${esc(a.summary || a.description?.slice(0, 160) || "")}</div>${a.how_it_went ? `<div style="margin-top:6px">${esc(a.how_it_went)}</div>` : ""}<a href="/activity/${esc(a.id)}" target="_blank">Open</a></div>`).join("") || '<div class="muted">Nothing built yet.</div>';
-        $("books").innerHTML = (d.projects || []).map(p => `<div class="card"><h3>${esc(p.title || "Untitled Book")}</h3><div class="muted">${p.panel_count ?? 0} panel(s) · ${esc((p.kind || "").replace(/_/g, " "))}</div>${p.spine?.beginning ? `<div style="margin-top:6px;font-size:.86rem" class="muted">Arc: ${esc(p.spine.beginning.slice(0, 120))}</div>` : ""}<div class="row" style="margin-top:12px"><a href="/api/project/${esc(p.id)}/pdf" target="_blank"><button type="button">Download PDF</button></a><a href="/project/${esc(p.id)}" target="_blank">Web view</a></div></div>`).join("") || '<div class="card muted">No multi-session books started yet.</div>';
+        $("books").innerHTML = (d.projects || []).map(p => `<div class="card"><h3>${esc(p.title || "Untitled Book")}</h3><div class="muted">${p.panel_count ?? 0} page/panel(s) · ${esc((p.kind || "").replace(/_/g, " "))}</div>${p.spine?.beginning ? `<div style="margin-top:6px;font-size:.86rem" class="muted">Arc: ${esc(p.spine.beginning.slice(0, 120))}</div>` : ""}<div class="row" style="margin-top:12px"><a href="/api/project/${esc(p.id)}/pdf" target="_blank"><button type="button">Download PDF</button></a><a href="/project/${esc(p.id)}" target="_blank">Web view</a></div></div>`).join("") || '<div class="card muted">No multi-session books started yet.</div>';
+
+        const sd = d.spelling_deck || {};
+        $("spellingDeck").innerHTML = `<div class="card"><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:12px"><div><h3>Active Spaced Retrieval Queue (Ontario B2.1–B2.3 + Student Errors)</h3><div class="muted">${sd.mastered ?? 0} mastered · ${sd.in_progress ?? 0} in spaced review · ${sd.due_now ?? 0} due today</div></div></div>${(sd.cards || []).length ? `<div style="margin-top:10px">${sd.cards.map(c => `<span class="pill">${esc(c.word)} (${esc(c.parts || c.word)}) · Box ${c.box}/5</span>`).join("")}</div>` : '<div class="muted" style="margin-top:8px">Populates automatically from session spelling &amp; systematic Ontario morphology units.</div>'}</div>`;
 
         const rc = d.report_card;
         if (rc && rc.expectations) {
