@@ -59,6 +59,22 @@ svg { display: block; }
 body.fresh .convo { display: flex; flex-direction: column; justify-content: flex-end; }
 body.fresh .hero { padding-bottom: 28px; }
 body:not(.fresh) .hero { display: none; }
+.hero-starters { margin-top: 22px; display: flex; flex-direction: column; gap: 14px; }
+.starter-group-label { font-size: .8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-family: var(--font); margin-bottom: 4px; }
+.starter-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.starter-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 12px 16px; cursor: pointer; text-align: left; max-width: 340px; transition: border-color .15s, background .15s; }
+.starter-card:hover { border-color: var(--blue); background: var(--surface-2); }
+.starter-card .st-title { font-family: var(--font); font-weight: 500; font-size: .98rem; color: var(--text); }
+.starter-card .st-sub { font-size: .84rem; color: var(--muted); margin-top: 3px; line-height: 1.35; }
+.book-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.book-actions { display: flex; gap: 8px; align-items: center; }
+.book-actions a { text-decoration: none; font-size: .88rem; }
+.spine-box { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-bottom: 16px; display: grid; gap: 8px; font-size: .92rem; }
+.spine-beat { color: var(--text-2); line-height: 1.45; }
+.spine-beat strong { color: var(--blue); font-family: var(--font); }
+.ch-label { font-family: var(--font); font-size: 1.05rem; color: var(--text-2); margin: 16px 2px 8px; }
+.panel .art .bubbles { position: absolute; top: 8px; left: 42px; right: 8px; display: flex; flex-direction: column; gap: 4px; z-index: 2; pointer-events: none; }
+.panel .art .bubble-overlay { background: rgba(255,255,255,.96); color: #111; border: 2px solid #111; border-radius: 12px; padding: 4px 10px; font-size: .82rem; line-height: 1.25; box-shadow: 2px 2px 0 #111; width: fit-content; max-width: 100%; }
 
 /* messages */
 .msg { display: flex; gap: 16px; animation: rise .25s ease-out; }

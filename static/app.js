@@ -49,8 +49,44 @@ async function boot() {
   }
   $("app").hidden = false;
   $("helloText").textContent = `Hi ${st.name}`;
+  renderHeroStarters(st.projects || []);
   $("input").focus();
   fetch("/api/prewarm", { method: "POST" }).catch(() => {});
+}
+
+function renderHeroStarters(savedProjects) {
+  const box = $("heroStarters");
+  if (!box) return;
+  let html = "";
+  if (savedProjects.length) {
+    html += `<div><div class="starter-group-label">Continue Saved Book</div><div class="starter-row">` +
+      savedProjects.map((p) =>
+        `<div class="starter-card" data-open-proj="${esc(p.id)}"><div class="st-title">${esc(p.title)}</div><div class="st-sub">${p.panel_count} panel(s) saved · Click to continue (or <a href="${esc(p.pdf_url)}" target="_blank" onclick="event.stopPropagation()" style="color:var(--blue)">Download PDF</a>)</div></div>`
+      ).join("") + `</div></div>`;
+  }
+  html += `<div><div class="starter-group-label">Long-Term Books (Save Progress &amp; Export PDF)</div><div class="starter-row">
+    <button type="button" class="starter-card" data-tap="Start a Full Comic Book (Save & PDF)"><div class="st-title">Full Comic Book (PDF Book)</div><div class="st-sub">Plan Beginning → Middle → End, then zoom in up to 100 panels with dialogue</div></button>
+    <button type="button" class="starter-card" data-tap="Illustrated Monster/Invention Codex (PDF)"><div class="st-title">Illustrated Codex (PDF Book)</div><div class="st-sub">Multi-session field guide of creatures, bosses, or contraptions</div></button>
+  </div></div>
+  <div><div class="starter-group-label">Quick Today (~10 Min)</div><div class="starter-row">
+    <button type="button" class="starter-card" data-tap="Quick 3-Panel Strip (10 min)"><div class="st-title">Quick 3-Panel Strip</div><div class="st-sub">Fast setup, twist, and payoff</div></button>
+    <button type="button" class="starter-card" data-tap="Build a Live Mini-Game (10 min)"><div class="st-title">Build a Live Mini-Game</div><div class="st-sub">Code a playable sentence-driven game on the spot</div></button>
+  </div></div>`;
+  box.innerHTML = html;
+  box.querySelectorAll("[data-open-proj]").forEach((el) => {
+    el.onclick = () => {
+      begin();
+      addKid(`Continue “${esc(el.querySelector(".st-title")?.textContent || "Book")}”`);
+      send({ type: "open_project", id: el.dataset.openProj });
+    };
+  });
+  box.querySelectorAll("[data-tap]").forEach((el) => {
+    el.onclick = () => {
+      begin();
+      addKid(esc(el.querySelector(".st-title")?.textContent || el.dataset.tap));
+      send({ type: "tap", value: el.dataset.tap, prompt: "Starter menu" });
+    };
+  });
 }
 
 // ---------------------------------------------------------------- socket
@@ -423,7 +459,10 @@ function renderItem(it) {
       break;
     }
     case "saved":
-      upsertInline(it.id, `<div class="saved"><svg style="width:20px;height:20px"><use href="#spark"/></svg><span>Saved “${esc(it.title)}”</span><a href="${esc(it.url)}" target="_blank">Open to print or send</a></div>`);
+      upsertInline(it.id, `<div class="saved"><svg style="width:20px;height:20px"><use href="#spark"/></svg><span>Saved “${esc(it.title)}”</span><a href="${esc(it.url)}" target="_blank">Open</a> · <a href="/api/piece/${esc(it.id)}/pdf" target="_blank">Download PDF</a></div>`);
+      break;
+    case "book_project":
+      canvasPane("book", "Book · PDF", renderBookProject(it));
       break;
     case "comic":
       canvasPane("comic", "Comic", renderComic(it));
@@ -444,6 +483,47 @@ function renderItem(it) {
       break;
     }
   }
+}
+
+function renderBookProject(b) {
+  const sp = b.spine || {};
+  const hasSpine = b.proj_kind === "epic_graphic_novel" || sp.beginning || sp.middle || sp.end;
+  const spineHtml = hasSpine
+    ? `<div class="spine-box">
+        <div class="spine-beat"><strong>Act I · Beginning:</strong> ${sp.beginning ? esc(sp.beginning) : '<span class="muted">Mapping now…</span>'}</div>
+        <div class="spine-beat"><strong>Act II · Middle (But/When):</strong> ${sp.middle ? esc(sp.middle) : '<span class="muted">Up next…</span>'}</div>
+        <div class="spine-beat"><strong>Act III · End (So/Finally):</strong> ${sp.end ? esc(sp.end) : '<span class="muted">Up next…</span>'}</div>
+      </div>`
+    : "";
+
+  const chHtml = (b.chapters || [])
+    .map((ch) => {
+      const pList = ch.panels || [];
+      if (!pList.length) return "";
+      const cells = pList
+        .map((p) => {
+          const art = p.src ? `<img src="${esc(p.src)}" alt="">` : "";
+          const cls = p.status === "drawing" ? "art drawing" : "art";
+          const bubs = (p.dialogue || [])
+            .map((d) => `<div class="bubble-overlay">${d.speaker ? `<strong>${esc(d.speaker)}:</strong> ` : ""}${esc(d.text)}</div>`)
+            .join("");
+          return `<div class="panel"><div class="${cls}"><span class="num" style="background:#111;color:#fff;padding:2px 8px;border-radius:4px;font-size:.95rem;top:6px;left:6px">${p.number || ""}</span>${bubs ? `<div class="bubbles">${bubs}</div>` : ""}${art}</div><div class="caption">${esc(p.caption || "")}</div></div>`;
+        })
+        .join("");
+      return `<div class="ch-label">${esc(ch.title || "Chapter " + ch.number)}</div><div class="comic-grid">${cells}</div>`;
+    })
+    .join("");
+
+  return `<div class="book-head">
+      <div><div class="comic-title" style="margin:0">${esc(b.title || "Untitled Book")}</div>
+      <div class="muted" style="font-size:.86rem">${b.panel_count || 0} panel(s) auto-saved · Progresses across sessions</div></div>
+      <div class="book-actions">
+        <a class="text-btn" href="${esc(b.web_url)}" target="_blank">Web view</a>
+        <a class="btn-primary" href="${esc(b.pdf_url)}" target="_blank">Download PDF</a>
+      </div>
+    </div>
+    ${spineHtml}
+    ${chHtml || '<div class="muted" style="padding:12px 2px">Panels will appear here as soon as your Story Spine locks in. You can download an updated PDF at any stage!</div>'}`;
 }
 
 function renderComic(c) {

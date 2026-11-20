@@ -201,6 +201,38 @@
     .t .n {
       color: var(--m);
     }
+
+    .rc-row {
+      display: grid;
+      grid-template-columns: 110px 1.2fr 160px 1.4fr;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 0;
+      border-top: 1px solid #2b2d30;
+      font-size: .9rem;
+    }
+
+    .rc-bars {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 4px;
+    }
+
+    .rc-bar {
+      height: 7px;
+      flex: 1;
+      border-radius: 4px;
+      background: #2c2f33;
+    }
+
+    .rc-bar.on-1 { background: var(--r); }
+    .rc-bar.on-2 { background: var(--y); }
+    .rc-bar.on-3 { background: var(--g); }
+    .rc-bar.on-4 { background: var(--b); }
+
+    @media (max-width: 800px) {
+      .rc-row { grid-template-columns: 1fr; gap: 6px; }
+    }
   </style>
 </head>
 
@@ -221,6 +253,12 @@
     <div class="grid" id="live">
       <div class="card muted">No session running.</div>
     </div>
+
+    <h2>Ontario Curriculum Report Card (Grades 3–4)</h2>
+    <div id="reportCard"></div>
+
+    <h2>Saved Books &amp; Printable PDFs</h2>
+    <div class="grid" id="books"></div>
 
     <h2>What we've learned</h2>
     <div class="grid" id="model"></div>
@@ -354,6 +392,42 @@
         });
 
         $("acts").innerHTML = d.activities.map(a => `<div class="card"><h3>${esc(a.title)}</h3><div class="muted">${esc(a.summary || a.description?.slice(0, 160) || "")}</div>${a.how_it_went ? `<div style="margin-top:6px">${esc(a.how_it_went)}</div>` : ""}<a href="/activity/${esc(a.id)}" target="_blank">Open</a></div>`).join("") || '<div class="muted">Nothing built yet.</div>';
+        $("books").innerHTML = (d.projects || []).map(p => `<div class="card"><h3>${esc(p.title || "Untitled Book")}</h3><div class="muted">${p.panel_count ?? 0} panel(s) · ${esc((p.kind || "").replace(/_/g, " "))}</div>${p.spine?.beginning ? `<div style="margin-top:6px;font-size:.86rem" class="muted">Arc: ${esc(p.spine.beginning.slice(0, 120))}</div>` : ""}<div class="row" style="margin-top:12px"><a href="/api/project/${esc(p.id)}/pdf" target="_blank"><button type="button">Download PDF</button></a><a href="/project/${esc(p.id)}" target="_blank">Web view</a></div></div>`).join("") || '<div class="card muted">No multi-session books started yet.</div>';
+
+        const rc = d.report_card;
+        if (rc && rc.expectations) {
+          const strands = {};
+          rc.expectations.forEach(e => { (strands[e.strand] = strands[e.strand] || []).push(e); });
+          const trendIcon = t => t === "rising" ? "↑" : t === "falling" ? "↓" : t === "steady" ? "→" : "";
+          const strandCards = Object.entries(strands).map(([sname, items]) => `
+            <div class="card" style="margin-top:12px">
+              <h3>${esc(sname)}</h3>
+              ${items.map(it => {
+                const bars = [1, 2, 3, 4].map(n => `<span class="rc-bar ${it.level >= n ? "on-" + it.level : ""}"></span>`).join("");
+                const cls = it.level >= 3 ? "ok" : it.level === 2 ? "warn" : it.level === 1 ? "bad" : "muted";
+                return `<div class="rc-row">
+                  <div><span class="pill">${esc(it.code)}</span></div>
+                  <div><div style="font-weight:500">${esc(it.name)}</div><div class="muted" style="font-size:.82rem">${esc(it.desc)}</div></div>
+                  <div><div class="rc-bars">${bars}</div><div class="${cls}" style="font-size:.82rem">${esc(it.level_label)} ${trendIcon(it.trend)}</div></div>
+                  <div class="muted" style="font-size:.84rem">${it.evidence ? `“${esc(it.evidence)}”` : "Awaiting session evidence"}</div>
+                </div>`;
+              }).join("")}
+            </div>`).join("");
+          $("reportCard").innerHTML = `
+            <div class="card">
+              <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:12px">
+                <div>
+                  <h3>Active Tutor Mastery Escalation</h3>
+                  <div style="font-size:1.15rem;font-weight:500">${esc(rc.tier_info?.name || "Tier 1")}</div>
+                  <div class="muted" style="margin-top:4px">${esc(rc.tier_info?.rule || "")}</div>
+                </div>
+                <div style="text-align:right">
+                  <div class="big">${rc.solid_count}<span class="muted" style="font-size:1rem"> / ${rc.total_expectations}</span></div>
+                  <div class="muted">at Grade 3 Solid+ (${rc.assessed_count} assessed)</div>
+                </div>
+              </div>
+            </div>${strandCards}`;
+        }
         $("notes").innerHTML = (L.parent_notes || []).slice().reverse().map(n => `<li>${esc(n.date.slice(0, 10))}: ${esc(n.note)}</li>`).join("");
 
         const st = await (await fetch("/api/state")).json();

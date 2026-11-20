@@ -11,6 +11,7 @@ SESSIONS = DATA / "sessions"
 TEST_SESSIONS = DATA / "test_sessions"
 ACTIVITIES = DATA / "activities"
 PIECES = DATA / "pieces"
+PROJECTS = DATA / "projects"
 ENV_FILE = ROOT / ".env"
 
 # Real-time voice tutor (verified available via models.list with bidiGenerateContent)
@@ -38,7 +39,7 @@ VOICES = [
 
 
 def ensure_dirs() -> None:
-    for d in (DATA, SESSIONS, TEST_SESSIONS, ACTIVITIES, PIECES):
+    for d in (DATA, SESSIONS, TEST_SESSIONS, ACTIVITIES, PIECES, PROJECTS):
         d.mkdir(parents=True, exist_ok=True)
 
 

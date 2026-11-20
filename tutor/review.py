@@ -13,6 +13,7 @@ from typing import Any
 from google import genai
 from google.genai import types
 
+from . import curriculum_tracker
 from .config import FALLBACK_MODEL, HYDROGEN_MODEL, REVIEW_MODEL, SESSIONS, api_key
 from .observers import targets_text
 from .record import list_activities, load_learner, read_session, save_activity, save_learner
@@ -32,6 +33,9 @@ Your job: turn what actually happened into an honest, evidence-based model of th
 - ideas_to_try should be concrete and genuinely new where helpful — new kinds of activities or games, not variations on worksheets.
 - The plan is a starting point for the live tutor, not a script. Keep it to what fits in 15 minutes.
 - notes_for_parent: plain language, short, honest, useful; include anything the parent should try or watch for at home.
+- expectation_ratings: evaluate ONLY the Ontario expectations that had direct evidence in this session using Ontario's 1–4 scale:
+  1 = Emerging (needed heavy scaffolding), 2 = Approaching (succeeded with prompts), 3 = Solid Grade 3 Met (applied independently), 4 = Extending / Grade 4+.
+  Quote exact words from the session in `evidence`. Omit expectations that had zero evidence today.
 Return strict JSON only."""
 
 SCHEMA_HINT = {
@@ -53,6 +57,9 @@ SCHEMA_HINT = {
     "ideas_to_try": ["..."],
     "plan_next_session": "...",
     "notes_for_parent": "...",
+    "expectation_ratings": [
+        {"id": "exact expectation id from ONTARIO EXPECTATIONS list", "level": 2, "evidence": "short exact quote from session"}
+    ],
 }
 
 
@@ -154,9 +161,14 @@ def review_session(session_id: str) -> dict[str, Any]:
         _mark_reviewed(session_id)
         return result
 
+    exp_list_txt = "\n".join(
+        f"- {e['id']} ({e['code']} — {e['name']}): {e['desc']}" for e in curriculum_tracker.ONTARIO_EXPECTATIONS
+    )
     prompt = (
         f"CHILD: {name}, grade {rec.get('grade', 3)}.\n\n"
         f"PARENT NOTES:\n" + "\n".join(f"- {n['note']}" for n in rec.get("parent_notes", [])) + "\n\n"
+        f"ONTARIO EXPECTATIONS FOR REPORT CARD (use these exact ids in expectation_ratings):\n{exp_list_txt}\n\n"
+        f"CURRENT REPORT CARD:\n{json.dumps(rec.get('report_card', {}), indent=2)}\n\n"
         f"SKILL TARGETS (Ontario Language 2023, quoted):\n{targets_text()}\n\n"
         f"CURRENT LEARNER MODEL (from earlier sessions; update it, keep what still holds, drop what was contradicted):\n"
         f"{json.dumps(rec.get('model', {}), indent=2)}\n\n"
@@ -197,6 +209,8 @@ def review_session(session_id: str) -> dict[str, Any]:
               "what_shuts_down", "hypotheses", "ideas_to_try", "plan_next_session", "notes_for_parent"):
         if result.get(k) not in (None, "", [], {}):
             model[k] = result[k]
+    rc = curriculum_tracker.ensure_report_card(rec)
+    curriculum_tracker.merge_specialist_ratings(rc, result.get("expectation_ratings") or [], session_id)
     save_learner(rec)
     _mark_reviewed(session_id, result.get("session_recap", ""), stats)
 

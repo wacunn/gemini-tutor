@@ -20,7 +20,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from google import genai
 from google.genai import types
 
-from . import builder, controller, media, observers, thinking
+from . import builder, controller, curriculum_tracker, media, observers, projects, thinking
 from .config import DATA, LIVE_MODEL, api_key
 from .prompt import TOOL_SPECS, build_system_prompt, opening_message
 from .record import (
@@ -57,7 +57,7 @@ class TutorSession:
         self.name = self.rec.get("name") or "the student"
         self.id = new_id("test" if test_mode else "sess")
         self.log = SessionLog(self.id, test_mode=test_mode)
-        self.ctrl = controller.SessionController(self.rec)
+        self.ctrl = controller.SessionController(self.rec, test_mode=test_mode)
         self.live: Any = None
         self.send_lock = asyncio.Lock()
         self.closed = False
@@ -220,12 +220,22 @@ class TutorSession:
                 self.log.add("ctrl_ui", ui_kind="input", title=act.get("prompt", ""), detail=f"prefill={act.get('prefill','')!r}")
 
     async def auto_render_sentence(self, sentence: str) -> str:
-        """Immediately starts rendering the current comic panel (or scene image) as soon as a complete sentence is verified."""
+        """Immediately starts rendering the current book panel, comic panel, or scene image as soon as a complete sentence is verified."""
         if self.activity:
             return ""
         self.ctrl.draw_unlocked = False  # Prevent duplicate LLM draw tool call for this same sentence
+
+        # Persistent Multi-Session Book / Graphic Novel / Codex Project!
+        if self.ctrl.project:
+            proj = self.ctrl.project
+            pnum, _ = projects.add_panel_to_project(proj, sentence, scene=sentence, persist=not self.test_mode)
+            await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
+            await self.ui({"type": "goal", "text": self.ctrl.goal_badge()})
+            self.spawn(self._draw_project_panel(proj, pnum, sentence))
+            self.log.add("auto_draw_book_panel", project=proj["id"], panel=pnum, sentence=sentence)
+            return f" (Book Panel {pnum} is already saved and rendering on screen automatically—do NOT call draw or comic_panel again.)"
+
         if self.comic:
-            # Find first empty panel, or append if all filled
             idx = next((i for i, p in enumerate(self.comic["panels"]) if not p.get("image") and p.get("status") != "drawing"), None)
             if idx is None:
                 self.comic["panels"].append({"caption": "", "scene": "", "image": None, "status": "empty"})
@@ -238,13 +248,45 @@ class TutorSession:
             self.spawn(self._draw_panel(idx))
             self.log.add("auto_draw_panel", panel=idx + 1, sentence=sentence)
             return f" (Panel {idx + 1} is already rendering on screen automatically—do NOT call comic_panel or draw again for this sentence.)"
-        else:
-            iid = new_id("draw")
-            item = {"id": iid, "kind": "image", "caption": sentence, "status": "drawing"}
-            await self.ui({"type": "item", "item": item})
-            self.spawn(self._draw(item, sentence, "comic ink and flat color"))
-            self.log.add("auto_draw", id=iid, sentence=sentence)
-            return " (The illustration for this sentence is already rendering on screen automatically—do NOT call draw again for this sentence.)"
+
+        iid = new_id("draw")
+        item = {"id": iid, "kind": "image", "caption": sentence, "status": "drawing"}
+        await self.ui({"type": "item", "item": item})
+        self.spawn(self._draw(item, sentence, "comic ink and flat color"))
+        self.log.add("auto_draw", id=iid, sentence=sentence)
+        return " (The illustration for this sentence is already rendering on screen automatically—do NOT call draw again for this sentence.)"
+
+    async def _draw_project_panel(self, proj: dict[str, Any], panel_number: int, sentence: str) -> None:
+        refs = []
+        for mid in projects.recent_reference_media_ids(proj, limit=2):
+            try:
+                refs.append(media.media_path(mid).read_bytes())
+            except OSError:
+                pass
+        continuity = proj.get("characters") or (proj.get("spine") or {}).get("beginning", "")[:180]
+        try:
+            mid, _ = await asyncio.to_thread(
+                media.generate_image,
+                sentence,
+                proj.get("style") or "comic book ink with bold lines and vibrant flat colors",
+                "4:3",
+                refs,
+                continuity,
+            )
+            if not self.test_mode:
+                projects.update_panel_media(proj, panel_number, mid, "done")
+            else:
+                for ch in proj.get("chapters") or []:
+                    for p in ch.get("panels") or []:
+                        if p.get("number") == panel_number:
+                            p.update(image=mid, src=f"/media/{mid}.jpg", status="done")
+            self.log.add("book_panel_drawn", project=proj["id"], panel=panel_number, id=mid)
+            await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
+            self.silent_context.append(f'[Book Panel {panel_number} rendered on screen for: "{sentence[:140]}"]')
+        except Exception as e:
+            projects.update_panel_media(proj, panel_number, None, "failed")
+            await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
+            self.log.add("error", where="draw_project_panel", error=str(e))
 
     async def from_kid(self, payload: str, directive: str, image: bytes | None = None) -> None:
         prefix = ""
@@ -365,8 +407,21 @@ class TutorSession:
                 if self.id in LIVE:
                     LIVE[self.id]["ended"] = True
                 rec = load_learner()
+                rc = curriculum_tracker.ensure_report_card(rec)
+                evs = read_session(self.id, test_mode=False)
+                wchecks = [e for e in evs if e.get("kind") == "writing_check"]
+                had_spine = bool(self.ctrl.project and (self.ctrl.project.get("spine") or {}).get("beginning"))
+                curriculum_tracker.update_from_session_deterministic(
+                    rc, wchecks, self.stats.as_dict(), had_spine=had_spine, had_revision=self.ctrl.had_revision
+                )
                 rec.setdefault("sessions", []).append(
-                    {"id": self.id, "date": now_iso(), "minutes": round((time.time() - self.started) / 60, 1), "reviewed": False}
+                    {
+                        "id": self.id,
+                        "date": now_iso(),
+                        "minutes": round((time.time() - self.started) / 60, 1),
+                        "project_id": self.ctrl.project["id"] if self.ctrl.project else None,
+                        "reviewed": False,
+                    }
                 )
                 save_learner(rec)
 
@@ -460,6 +515,24 @@ class TutorSession:
                 png,
             )
 
+        elif kind == "open_project":
+            pid = str(m.get("id") or "").strip()
+            proj = projects.load_project(pid)
+            if not proj:
+                return
+            self.kid_events += 1
+            self.ctrl.project = proj
+            for p in projects.all_panels(proj)[-6:]:
+                if p.get("caption"):
+                    self.ctrl.active_story.append(p["caption"])
+            ui_acts = [{"type": "item", "item": projects.project_ui_payload(proj)}, {"type": "goal", "text": self.ctrl.goal_badge()}]
+            if proj.get("stage", "").startswith("spine_"):
+                ui_acts, directive = self.ctrl._prompt_spine_step(ui_acts, resumed=True)
+            else:
+                ui_acts, directive = self.ctrl._prompt_next_book_panel(ui_acts, resumed=True)
+            await self.apply_controller_ui(ui_acts)
+            await self.from_kid(f'[{self.name} opened saved book project "{proj.get("title")}" ({projects.total_panels(proj)} panels)]', directive)
+
         elif kind == "tap":
             val = str(m.get("value") or "").strip()
             if not val:
@@ -550,6 +623,12 @@ class TutorSession:
 
     def mechanic_desc(self) -> str:
         bits = [f"Goal: {self.ctrl.goal_badge()} | Rung: {self.ctrl.rung} | Phase: {self.ctrl.phase}"]
+        if self.ctrl.project:
+            pr = self.ctrl.project
+            bits.append(
+                f"Book Project '{pr.get('title')}' ({pr.get('kind')}, stage={pr.get('stage')}, {projects.total_panels(pr)} panels):\n"
+                f"{self.ctrl.spine_summary()}"
+            )
         if self.current_card:
             bits.append(f"Active card on screen ('{self.current_card.get('title')}'):\n{self.current_card.get('text','')[:400]}")
         if self.ctrl.phase == "WORD_STUDY" and self.ctrl.word_target:

@@ -1,17 +1,15 @@
 # Changelog
 
+## 0.4.0
+- Added **Multi-Week Persistent Book Projects** (`tutor/projects.py`) across time scales:
+  - **Full Graphic Novel / Comic Book (up to 100+ panels):** Maps causal *Beginning → Middle ('But/When') → End ('So/Finally')* Story Spine first, then zooms in chapter-by-chapter with consistent character art, speech bubbles, and auto-saves across sessions.
+  - **Illustrated Monster & Invention Codex:** Multi-session expository field guide teaching paragraph structure.
+  - **4-Page Persuasive Pitch Book** + **Quick 10-Minute Sprints** (3-Panel Strip, Live Mini-Game).
+- Added **Publication-Quality PDF Book Exporter** (`tutor/pdf_book.py`, `/api/project/{id}/pdf`) generating cover pages, Story Spine architecture pages, chapter spreads, rendered speech bubbles, and captions at any draft or final stage.
+- Added **14-Expectation Ontario Grade 3–4 Language Curriculum Report Card & Mastery Escalator (Tiers 1–5)** (`tutor/curriculum_tracker.py`, Parent page) tracking longitudinal mastery across Strands B3, B2, and D and escalating tutor expectations automatically as skills solidify.
+
 ## 0.3.2
-- Deterministic immediate panel/scene rendering (`auto_render_sentence`) as soon as each complete punctuated sentence is verified—renders Panel 1, Panel 2, Panel 3 immediately as you go without waiting on a secondary LLM tool call.
-- Added automatic WebSocket reconnection in `static/app.js` so server restarts never drop or freeze typed input.
-- Added active scaffold/word card visibility into the live Critic & Turn Auditor context, plus a one-click **Clear test sessions** button on the Parent page.
+- Deterministic immediate panel/scene rendering as soon as each complete punctuated sentence is verified, WebSocket auto-reconnect, and one-click **Clear test sessions**.
 
 ## 0.3.1
-- Generalized learner context across `SessionController` so fresh installs dynamically read the child's name, grade, parent title, and notes from the first-run setup card with zero hardcoded assumptions.
-- Added editable child name, grade, and parent title fields to Parent Page → Settings.
-- Added Windows PC PowerShell installer (`install.ps1`), cross-platform supervisor (`launch.py`), and automatic update banner on the Parent page.
-
-## 0.3.0
-- Added synchronous `SessionController` (`tutor/controller.py`) enforcing Ontario Grade 3–4 sentence structure (B3.1 simple, compound, complex adverbial clauses), conventions (B3.3), and Cover-Copy-Compare morphological/orthographic spelling (B2.1–B2.3).
-- Added hard Python tool gates blocking 1-word escape rewards, babyish filler prompts, conversational `wh-` traps, and verbatim sentence dictation.
-- Added in-place draft prefill for low-friction editing and auto-covering word study cards.
-- Upgraded child modeling, critic, and inventor to `gemini-4-hydrogen` and post-session specialist review to `gemini-4-carbon`.
+- Generalized learner setup context and added editable profile fields on the Parent page, Windows PowerShell installer (`install.ps1`), and automatic update banner.
