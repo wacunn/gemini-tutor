@@ -241,6 +241,27 @@ def quit_app():
     return {"ok": True}
 
 
+@app.post("/api/clear-history")
+def clear_history():
+    """Clears test/past session history and learned model while keeping child setup, parent notes, and API key."""
+    import shutil
+    from tutor.config import ACTIVITIES, DATA, PIECES, SESSIONS
+    from tutor.record import DEFAULT_LEARNER
+
+    rec = load_learner()
+    rec["sessions"] = []
+    rec["model"] = json.loads(json.dumps(DEFAULT_LEARNER["model"]))
+    save_learner(rec)
+    for folder in (SESSIONS, PIECES, ACTIVITIES):
+        if folder.exists():
+            shutil.rmtree(folder, ignore_errors=True)
+            folder.mkdir(parents=True, exist_ok=True)
+    oi = DATA / "opening_ideas.json"
+    if oi.exists():
+        oi.unlink()
+    return {"ok": True}
+
+
 @app.get("/api/live")
 def live_state():
     """Latest critic/tracker/stats for the most recent session (parent's live view)."""

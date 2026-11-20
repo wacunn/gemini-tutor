@@ -80,6 +80,7 @@ class TutorSession:
         # canvas state
         self.page: list[dict[str, str]] = []
         self.comic: dict[str, Any] | None = None
+        self.current_card: dict[str, str] | None = None
         self.activity: dict[str, Any] | None = None
         self.build_task: asyncio.Task | None = None
         self.input_target: str | None = None
@@ -207,6 +208,8 @@ class TutorSession:
             await self.ui(act)
             if act.get("type") == "item":
                 it = act.get("item", {})
+                if it.get("kind") == "card":
+                    self.current_card = {"title": it.get("title", ""), "text": it.get("text", "")}
                 self.log.add(
                     "ctrl_ui",
                     ui_kind=it.get("kind"),
@@ -215,6 +218,33 @@ class TutorSession:
                 )
             elif act.get("type") == "input":
                 self.log.add("ctrl_ui", ui_kind="input", title=act.get("prompt", ""), detail=f"prefill={act.get('prefill','')!r}")
+
+    async def auto_render_sentence(self, sentence: str) -> str:
+        """Immediately starts rendering the current comic panel (or scene image) as soon as a complete sentence is verified."""
+        if self.activity:
+            return ""
+        self.ctrl.draw_unlocked = False  # Prevent duplicate LLM draw tool call for this same sentence
+        if self.comic:
+            # Find first empty panel, or append if all filled
+            idx = next((i for i, p in enumerate(self.comic["panels"]) if not p.get("image") and p.get("status") != "drawing"), None)
+            if idx is None:
+                self.comic["panels"].append({"caption": "", "scene": "", "image": None, "status": "empty"})
+                idx = len(self.comic["panels"]) - 1
+            p = self.comic["panels"][idx]
+            p["caption"] = sentence
+            p["scene"] = sentence
+            p["status"] = "drawing"
+            await self.push_comic()
+            self.spawn(self._draw_panel(idx))
+            self.log.add("auto_draw_panel", panel=idx + 1, sentence=sentence)
+            return f" (Panel {idx + 1} is already rendering on screen automatically—do NOT call comic_panel or draw again for this sentence.)"
+        else:
+            iid = new_id("draw")
+            item = {"id": iid, "kind": "image", "caption": sentence, "status": "drawing"}
+            await self.ui({"type": "item", "item": item})
+            self.spawn(self._draw(item, sentence, "comic ink and flat color"))
+            self.log.add("auto_draw", id=iid, sentence=sentence)
+            return " (The illustration for this sentence is already rendering on screen automatically—do NOT call draw again for this sentence.)"
 
     async def from_kid(self, payload: str, directive: str, image: bytes | None = None) -> None:
         prefix = ""
@@ -391,11 +421,13 @@ class TutorSession:
             )
             self.log.add("ctrl_plan", how="typed", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
             await self.apply_controller_ui(plan["ui"])
+            render_note = ""
             if plan["kind"] == "COMPLETE_SENTENCE":
                 await self.apply_target(target, text, "typed")
+                render_note = await self.auto_render_sentence(text)
             await self.from_kid(
                 f'[{self.name} typed ({secs}s, {bs} backspaces): "{text}"]{check_note}',
-                plan["directive"],
+                plan["directive"] + render_note,
             )
 
         elif kind == "pen":
@@ -418,11 +450,13 @@ class TutorSession:
             )
             self.log.add("ctrl_plan", how="pen", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
             await self.apply_controller_ui(plan["ui"])
+            render_note = ""
             if text and plan["kind"] == "COMPLETE_SENTENCE":
                 await self.apply_target(target, text, "handwritten")
+                render_note = await self.auto_render_sentence(text)
             await self.from_kid(
                 f'[{self.name} handwrote: "{text}" (legible: {res.get("legible")}).]{check_note}',
-                plan["directive"],
+                plan["directive"] + render_note,
                 png,
             )
 
@@ -516,6 +550,10 @@ class TutorSession:
 
     def mechanic_desc(self) -> str:
         bits = [f"Goal: {self.ctrl.goal_badge()} | Rung: {self.ctrl.rung} | Phase: {self.ctrl.phase}"]
+        if self.current_card:
+            bits.append(f"Active card on screen ('{self.current_card.get('title')}'):\n{self.current_card.get('text','')[:400]}")
+        if self.ctrl.phase == "WORD_STUDY" and self.ctrl.word_target:
+            bits.append(f"Word study card on screen: {self.ctrl.word_target.get('word')} ({self.ctrl.word_target.get('parts')})")
         if self.activity:
             bits.append(f"Game on screen: {self.activity.get('title')} — {self.activity.get('description','')[:400]}")
         if self.comic:

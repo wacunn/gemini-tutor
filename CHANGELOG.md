@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.2
+- Deterministic immediate panel/scene rendering (`auto_render_sentence`) as soon as each complete punctuated sentence is verified—renders Panel 1, Panel 2, Panel 3 immediately as you go without waiting on a secondary LLM tool call.
+- Added automatic WebSocket reconnection in `static/app.js` so server restarts never drop or freeze typed input.
+- Added active scaffold/word card visibility into the live Critic & Turn Auditor context, plus a one-click **Clear test sessions** button on the Parent page.
+
 ## 0.3.1
 - Generalized learner context across `SessionController` so fresh installs dynamically read the child's name, grade, parent title, and notes from the first-run setup card with zero hardcoded assumptions.
 - Added editable child name, grade, and parent title fields to Parent Page → Settings.

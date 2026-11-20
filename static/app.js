@@ -72,6 +72,11 @@ function connect() {
   ws.onclose = () => {
     state.ws = null;
     state.wsOpen = false;
+    if (state.started && !state.ended) {
+      setTimeout(() => {
+        if (!state.ws && !state.ended) connect();
+      }, 1500);
+    }
   };
 }
 
@@ -589,6 +594,7 @@ function toast(text) {
 }
 
 function endSession() {
+  state.ended = true;
   send({ type: "end" });
   if (state.micOn) micStop();
   stopPlayback();

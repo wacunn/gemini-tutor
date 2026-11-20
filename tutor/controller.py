@@ -927,16 +927,19 @@ class SessionController:
             return None
 
         if name in ("draw", "comic_panel"):
-            # Allow caption-only update only if complete sentence, and block ALL image generation unless draw_unlocked!
             if not self.draw_unlocked:
+                if self.last_kid_kind == "COMPLETE_SENTENCE":
+                    return {
+                        "ok": True,
+                        "status": "Scene is already rendering on screen automatically for this sentence. Do not repeat yourself.",
+                    }
                 return {
                     "blocked": True,
                     "reason": (
                         f"Drawing blocked by education gate: last student input class was {self.last_kid_kind!r}, not a complete punctuated sentence. "
-                        "Never draw a 1-word answer, greeting, refusal, or incomplete fragment. Tell him plainly what his sentence needs so you can draw it."
+                        "Never draw a 1-word answer, greeting, refusal, or incomplete fragment. Tell them plainly what their sentence needs so you can draw it."
                     ),
                 }
-            # Consume draw_unlocked after one draw/panel render so the model cannot draw twice without a new sentence
             self.draw_unlocked = False
             return None
 
