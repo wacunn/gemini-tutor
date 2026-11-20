@@ -81,9 +81,14 @@
 
   <h2>Settings</h2>
   <div class="card">
-    <div class="row">
-      <label style="flex:1">Voice <select id="voice"></select></label>
-      <label style="flex:2">Gemini API key <input id="key" type="password" placeholder="leave blank to keep current" /></label>
+    <div class="row" style="flex-wrap:wrap;margin-bottom:10px">
+      <label style="flex:1;min-width:140px">Child's name <input id="childName" /></label>
+      <label style="width:100px">Grade <input id="childGrade" type="number" min="1" max="12" /></label>
+      <label style="flex:1;min-width:140px">What they call you <input id="parentTitle" /></label>
+    </div>
+    <div class="row" style="flex-wrap:wrap">
+      <label style="flex:1;min-width:160px">Voice <select id="voice"></select></label>
+      <label style="flex:2;min-width:220px">Gemini API key <input id="key" type="password" placeholder="leave blank to keep current" /></label>
       <button id="saveSettings" style="align-self:flex-end">Save</button>
     </div>
     <div class="muted" id="setMsg" style="margin-top:8px"></div>
@@ -173,6 +178,9 @@ async function loadAll() {
   $("notes").innerHTML = (L.parent_notes || []).slice().reverse().map(n => `<li>${esc(n.date.slice(0,10))}: ${esc(n.note)}</li>`).join("");
 
   const st = await (await fetch("/api/state")).json();
+  $("childName").value = L.name || "";
+  $("childGrade").value = L.grade || 3;
+  $("parentTitle").value = L.parent_title || "Mom";
   $("voice").innerHTML = st.voices.map(([v, d]) => `<option value="${v}" ${v === st.voice ? "selected" : ""}>${v} (${d})</option>`).join("");
 }
 
@@ -182,10 +190,19 @@ $("saveNote").onclick = async () => {
   $("note").value = ""; $("noteMsg").textContent = "Saved. The tutor reads it next session."; loadAll();
 };
 $("saveSettings").onclick = async () => {
-  await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voice: $("voice").value }) });
+  await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: $("childName").value,
+      grade: Number($("childGrade").value) || 3,
+      parent_title: $("parentTitle").value,
+      voice: $("voice").value,
+    }),
+  });
   const k = $("key").value.trim();
   if (k) await fetch("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: k }) });
-  $("key").value = ""; $("setMsg").textContent = "Saved. Voice changes apply to the next session.";
+  $("key").value = ""; $("setMsg").textContent = "Saved."; loadAll();
 };
 
 async function loadVersion() {

@@ -124,6 +124,7 @@ class SettingsIn(BaseModel):
     voice: Optional[str] = None
     name: Optional[str] = None
     parent_title: Optional[str] = None
+    grade: Optional[int] = None
 
 
 @app.post("/api/settings")
@@ -133,6 +134,8 @@ def settings(body: SettingsIn):
         v = getattr(body, k)
         if v:
             rec[k] = v.strip()
+    if body.grade is not None:
+        rec["grade"] = max(1, min(12, body.grade))
     save_learner(rec)
     return {"ok": True}
 

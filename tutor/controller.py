@@ -72,13 +72,13 @@ def _fmt_conns(conns: str) -> str:
     return ", ".join(parts[:-1]) + f", or {parts[-1]}" if len(parts) > 2 else f"{parts[0]} or {parts[1]}"
 
 
-KERNEL_SYSTEM = """You generate a 2-kernel Sentence Combining scaffold for an intelligent Grade 3 boy (ADHD, loves Minecraft traps/mobs/mechanics, heavy metal, and absurd destruction; HATES babyish farm/zoo/pet sentences and HATES cringe slang).
-Given his active story/context (if any) and target connector set, output TWO short, concrete, action-packed simple sentences (5–8 words each) and 2 connectors (e.g. "when | because" or "but | so") that he can combine into ONE strong compound or complex sentence.
+KERNEL_SYSTEM = """You generate a 2-kernel Sentence Combining scaffold for an intelligent child (see LEARNER CONTEXT below; NEVER use babyish 1st-grade farm/zoo/pet trivia and NEVER use cringe slang).
+Given the active story/context (if any) and target connector set, output TWO short, concrete, action-packed simple sentences (5–8 words each) and 2 connectors (e.g. "when | because" or "but | so") that the student can combine into ONE strong compound or complex sentence.
 Rules:
-- NEVER write the combined sentence for him.
-- If he already introduced a cool subject/premise (e.g. diamond cow, nether fortress, wither, creeper trap), build BOTH kernels directly from HIS premise so his story continues!
-- If no premise exists yet, use a crisp, concrete Minecraft redstone trap, boss arena, or absurd contraption moment.
-- NEVER use babyish prompts (no "what a bear eats", "what color a cow is", "a cat sleeps", "magical fairy").
+- NEVER write the combined sentence for the student.
+- If the student already introduced a subject/premise, build BOTH kernels directly from THEIR premise so their story continues!
+- If no premise exists yet, draw naturally from their interests/notes in LEARNER CONTEXT (or a crisp, imaginative contraption/adventure moment if no interests are listed yet).
+- NEVER use babyish filler prompts (no "what a bear eats", "what color a cow is", "a cat sleeps").
 Return strict JSON:
 {"kernel_1":"Complete short sentence 1.",
  "kernel_2":"Complete short sentence 2.",
@@ -86,13 +86,16 @@ Return strict JSON:
  "ask_prompt":"Combine those two sentences into one sentence using 'when' or 'so' (or write your own complete sentence) to run the scene."}"""
 
 
-def generate_combine_scaffold(active_story: list[str], engaged_draft: str, rung: str) -> dict[str, str]:
-    """Fast (~0.4s) context-aware 2-kernel generator so 'idk'/'cow' drops initiation load without dropping sentence rigor."""
+def generate_combine_scaffold(rec: dict[str, Any], active_story: list[str], engaged_draft: str, rung: str) -> dict[str, str]:
+    """Fast (~0.4s) context-aware 2-kernel generator so 'idk'/minimal answers drop initiation load without dropping sentence rigor."""
     story_txt = "\n".join(f"- {s}" for s in active_story[-4:]) or "(none yet)"
+    notes_txt = "; ".join(n.get("note", "") for n in (rec.get("parent_notes") or [])[:6])
+    interests_txt = ", ".join((rec.get("model") or {}).get("interests") or [])
     connector_goal = (
         "when | because | if" if rung in ("B3.1_complex",) else "but | so | when"
     )
     prompt = (
+        f"LEARNER CONTEXT: Grade {rec.get('grade', 3)}. Notes: {notes_txt or '(none)'}. Interests: {interests_txt or '(open)'}.\n"
         f"Active story sentences so far:\n{story_txt}\n"
         f"Latest fragment/idea if any: {engaged_draft or '(none)'}\n"
         f"Preferred connectors: {connector_goal}"
@@ -140,6 +143,7 @@ class SessionController:
     def __init__(self, rec: dict[str, Any]):
         self.rec = rec
         self.name = rec.get("name") or "the student"
+        self.parent_title = rec.get("parent_title") or "your parent"
         self.phase: str = "OPENING"  # OPENING -> BUILDING -> WORD_STUDY -> WRAP
         self.rung: str = "B3.1_simple"  # B3.1_simple -> B3.1_compound -> B3.1_complex
         self.goal_label: str = "Sentences"
@@ -254,7 +258,7 @@ class SessionController:
                         f"SPELLING LOCKED IN: {self.name} spelled '{target_word}' accurately from memory! "
                         f"Confirm specifically how he nailed the '{self.word_target['parts']}' pattern in one plain sentence. "
                         + (
-                            "He has hit today's sentence goal—call save_piece with a fitting title so he and Dad can keep it, "
+                            f"He has hit today's sentence goal—call save_piece with a fitting title so {self.name} and {self.parent_title} can keep it, "
                             "and ask if he wants to add one bonus panel/sentence or wrap here."
                             if self.phase == "WRAP"
                             else f"Now return to sentence {self.goal_done + 1} of {self.goal_target}."
@@ -331,7 +335,7 @@ class SessionController:
                     "2-kernel Sentence Combining warm-up card on screen (show_card + ask_input) so he writes Sentence 1 right now."
                 )
             else:
-                scaf = generate_combine_scaffold(self.active_story, "", self.rung)
+                scaf = generate_combine_scaffold(self.rec, self.active_story, "", self.rung)
                 card_txt = (
                     f"Option A — Combine these two lines with {_fmt_conns(scaf['connectors'])}:\n"
                     f"  1. {scaf['kernel_1']}\n"
@@ -358,7 +362,7 @@ class SessionController:
             ideas = opening_ideas or []
             opt1 = ideas[0]["name"] if len(ideas) >= 1 else "3-Panel Trap Comic"
             opt2 = ideas[1]["name"] if len(ideas) >= 2 else "Cursed Command Compiler"
-            scaf = generate_combine_scaffold([], "", self.rung)
+            scaf = generate_combine_scaffold(self.rec, [], "", self.rung)
             card_txt = (
                 f"Quick start — combine these into 1 sentence with 'when' or 'so', OR type your own complete sentence:\n"
                 f"  1. {scaf['kernel_1']}\n"
@@ -402,7 +406,7 @@ class SessionController:
             self.draw_unlocked = False
             if self.refusal_streak == 1:
                 self.goal_target = 2
-                scaf = generate_combine_scaffold(self.active_story, "", "B3.1_compound")
+                scaf = generate_combine_scaffold(self.rec, self.active_story, "", "B3.1_compound")
                 ui_actions.append({"type": "goal", "text": self.goal_badge()})
                 ui_actions.append(
                     {
@@ -464,7 +468,7 @@ class SessionController:
             self.phase = "BUILDING"
             self.prev_norm_text = norm
             self.engaged_draft = raw
-            scaf = generate_combine_scaffold([], raw, self.rung)
+            scaf = generate_combine_scaffold(self.rec, [], raw, self.rung)
             ui_actions.append({"type": "goal", "text": self.goal_badge()})
             ui_actions.append(
                 {
@@ -506,7 +510,7 @@ class SessionController:
             self.prev_norm_text = norm
             self.draw_unlocked = False
 
-            scaf = generate_combine_scaffold(self.active_story, self.engaged_draft, self.rung)
+            scaf = generate_combine_scaffold(self.rec, self.active_story, self.engaged_draft, self.rung)
             ui_actions.append({"type": "goal", "text": self.goal_badge()})
 
             if self.avoidance_streak == 1:
@@ -859,7 +863,7 @@ class SessionController:
                         "id": "done_choices",
                         "kind": "choices",
                         "prompt": "Goal complete! Want to:",
-                        "options": ["Add a bonus complex sentence ('when' / 'because')", "Save & print for Dad"],
+                        "options": ["Add a bonus complex sentence ('when' / 'because')", f"Save & print for {self.parent_title}"],
                     },
                 }
             )
@@ -872,7 +876,7 @@ class SessionController:
             return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": directive}
 
         # Advance to next sentence in the artifact, stretching syntax up to B3.1 compound/complex!
-        scaf = generate_combine_scaffold(self.active_story, "", self.rung)
+        scaf = generate_combine_scaffold(self.rec, self.active_story, "", self.rung)
         conn_label = "when, because, or if" if self.rung == "B3.1_complex" else "but, so, or when"
         card_txt = (
             f"Next beat — combine these two ideas with {conn_label}, OR write your own complete sentence for Step {self.goal_done + 1}:\n"

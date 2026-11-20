@@ -61,7 +61,7 @@ For each sentence-like unit:
 For misspellings:
 - List ONLY genuine orthographic/phonological/morphological spelling errors (e.g. {"wrote":"traped","meant":"trapped"}, {"wrote":"becuse","meant":"because"}).
 - Do NOT list capitalization differences (e.g. "minecraft" vs "Minecraft") as misspellings.
-- Do NOT flag standard Minecraft or heavy-metal terms spelled normally (creeper, wither, redstone, nether, enderman, golem, pickaxe, Megadeth, Metallica).
+- Do NOT flag standard proper nouns, game terms, or domain vocabulary spelled normally (e.g. creeper, wither, redstone, nether, enderman, Megadeth, Metallica).
 
 Return strict JSON:
 {"sentences":[{"text":"...","complete":true,"issue":"none","capital_ok":true,"end_ok":true,"clause_type":"simple|compound|complex|fragment|run_on"}],

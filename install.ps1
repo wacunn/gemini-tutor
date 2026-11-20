@@ -1,4 +1,4 @@
-﻿# Gemini Tutor installer for Windows PC (PowerShell)
+# Gemini Tutor installer for Windows PC (PowerShell)
 #   irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/install.ps1 | iex
 # Safe to run again: updates the code while keeping your child's data and API key.
 
