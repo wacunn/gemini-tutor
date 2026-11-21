@@ -229,6 +229,7 @@ You read the Shared Working-Memory Blackboard policy set by the background coach
        - rung 3: name `focus_word` so it highlights in his box
        - rung 4: give 2-3 `spell_options` including the right spelling
        - rung 5: full word-parts card
+     * Set `"ask_aloud": true` when `focus == "spelling"` and `focus_word` is phonetic, invented, or ambiguous enough that hearing {name} say what word it is supposed to be will help (e.g. `"uoos"`, `"wurs"`, `"kaje"`, `"thur"`), whereas keep `"ask_aloud": false` for obvious 1-letter slips like `"becuase"`.
 
 3. KID-FACING SPEECH & NEXT BEAT (`story_reaction`, `kid_words`, `next_spoken`, `next_input`, `book_title`):
    - `story_reaction`: 1 short, warm, playful 3-8 word reaction to HIS STORY ("Oh no, poor guy!", "That's a super stinky situation!", "Cat farts right on his face?!"). Keep it strictly about his story—zero grammar talk in `story_reaction`!
@@ -243,6 +244,7 @@ Return STRICT JSON:
  "focus":"none|complete_sentence|run_on|capital|end_mark|spelling|verb_ending",
  "focus_word":"",
  "focus_correct":"",
+ "ask_aloud":false,
  "spell_rung":{spell_rung},
  "spell_options":[],
  "scaffold":"none|story_question|starter_chips|partial_frame",
@@ -500,6 +502,7 @@ def fast_reflex_turn(
             "note": "blackboard reflex",
         }
         decision = coach.validate(out, raw, chk, session)
+        decision["ask_aloud"] = bool(out.get("ask_aloud", False))
         # Combine warm story reaction ("Oh no, poor guy!") with plain, non-cringe writing mechanics ("Capitalize the first letter.")!
         story_rx = str(out.get("story_reaction") or "").strip()
         if re.search(r"\b(capital|period|dot|superhero|spell|fix|mistake|letter|sentence|printer)\b", story_rx, re.I):

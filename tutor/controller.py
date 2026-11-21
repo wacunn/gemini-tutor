@@ -15,6 +15,7 @@ Replacement-grade engine covering Ontario Grades 3–4 Language Strands B, C, an
 
 from __future__ import annotations
 
+import difflib
 import re
 import threading
 import time
@@ -322,6 +323,8 @@ class SessionController:
         self.pending_art_target: str = ""
         self.phase_after_art_check: str = "BUILDING"
         self.pause_for_art_check: bool = not test_mode
+        self.active_mic_request: dict[str, Any] | None = None
+        self.asked_aloud_words: set[str] = set()
 
     def spine_summary(self) -> str:
         if not self.project:
@@ -401,7 +404,9 @@ class SessionController:
         self.awaiting_codex_topic = False
         self.pending_art_target = ""
         self._cached_beat = None
-        self._suggested_title = "" 
+        self._suggested_title = ""
+        self.active_mic_request = None
+        self.asked_aloud_words.clear()
 
     def resume_loaded_project(self, proj: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
         """Saves any active project first, then resumes the selected saved project."""
@@ -659,15 +664,17 @@ class SessionController:
         return ui, f'Say plainly in 1 short sentence: "{spoken}"', spoken
 
     def start_fix_art_prompt(self, target: str) -> dict[str, Any]:
-        """Enters friendly-blame clarification mode for any specific beat or panel."""
+        """Enters friendly-blame clarification mode and turns ON the Center Green Mic so he can just say what the picture should show!"""
         self.pending_art_target = target
         if self.phase not in ("AWAITING_ART_CHECK", "REDRAW_CLARIFY"):
             self.phase_after_art_check = self.phase
         self.phase = "REDRAW_CLARIFY"
         self.last_kid_kind = "REDRAW_PROMPT"
+        orig_scene = projects.get_art_text(self.project, target) if self.project else ""
+        self.active_mic_request = {"purpose": "picture", "target": target, "sentence": orig_scene}
         spoken = (
-            "My bad—sometimes it takes a few sentences for me to really understand what's in your head! "
-            "Tell me a little more about what this picture should show, and I'll redraw it right now."
+            "My bad—sometimes it takes an extra detail for me to picture what's in your head! "
+            "Tell me into the green mic what this picture should show, and I'll redraw it right now."
         )
         return {
             "epoch": self.blackboard.bump_epoch(),
@@ -676,9 +683,17 @@ class SessionController:
             "ui": [
                 {"type": "remove", "id": "art_check_choices"},
                 {"type": "remove", "id": "starters"},
-                {"type": "input", "mode": "type", "prompt": "Tell me 1 more detail about what this picture should look like:"},
+                {
+                    "type": "tutor_mic",
+                    "action": "on",
+                    "purpose": "picture",
+                    "target_word": "",
+                    "sentence": orig_scene,
+                    "prompt": "Tell me out loud what this picture should show",
+                },
+                {"type": "input", "mode": "type", "prompt": "Say what the picture should show into the green mic (or type it here):"},
             ],
-            "directive": f'Take full friendly blame in 1-2 short sentences: "{spoken}"',
+            "directive": f'Take friendly blame in 1-2 short sentences and invite speaking into the green mic: "{spoken}"',
         }
 
     def _continue_after_art_approved(self, ui_actions: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1094,6 +1109,140 @@ class SessionController:
         return ws_card
 
     @staticmethod
+    def _should_ask_word_aloud(wrote: str, meant: str, llm_ask_aloud: bool = False) -> bool:
+        """Decides when turning on the Center Green Mic ('Maybe say what this word is?') will genuinely help."""
+        w = (wrote or "").strip().lower()
+        m = (meant or "").strip().lower()
+        if not w or not m:
+            return False
+        if llm_ask_aloud:
+            return True
+        if w[0] != m[0]:
+            return True
+        ratio = difflib.SequenceMatcher(None, w, m).ratio()
+        return ratio < 0.68
+
+    def _launch_tutor_mic_word_plan(
+        self,
+        sentence: str,
+        wrote: str,
+        meant_guess: str,
+        story_rx: str = "",
+        extra_ms: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        """Summons the Tutor-Controlled Center Green Mic asking him to say what `wrote` is supposed to be."""
+        self.last_kid_kind = "TUTOR_MIC_WORD"
+        self.draw_unlocked = False
+        self.had_revision = True
+        self.asked_aloud_words.add(wrote.lower())
+        rest = [m for m in (extra_ms or []) if m.get("wrote") and m.get("meant") and m["wrote"].lower() != wrote.lower()]
+        self.active_mic_request = {
+            "purpose": "word",
+            "wrote": wrote,
+            "meant_guess": meant_guess,
+            "sentence": sentence,
+            "extra_ms": rest,
+        }
+        self.coach_session["last_request"] = {
+            "focus": "spelling",
+            "focus_word": wrote,
+            "focus_correct": meant_guess,
+            "focus_options": [meant_guess] if meant_guess else [],
+            "spell_rung": 3,
+            "misspelled": [wrote],
+            "sentence": sentence,
+            "chk": None,
+        }
+        rx_p = f"{story_rx.strip()} " if story_rx and story_rx.strip() else ""
+        spoken = f"{rx_p}Maybe say out loud what word '{wrote}' is supposed to be so I can help spell it?"
+        ui_mic = [
+            {
+                "type": "tutor_mic",
+                "action": "on",
+                "purpose": "word",
+                "target_word": wrote,
+                "sentence": sentence,
+                "prompt": f"Say out loud what word “{wrote}” is",
+            },
+            {
+                "type": "input",
+                "mode": "type",
+                "prompt": f"Say what “{wrote}” is into the green mic (or type the fix right here):",
+                "prefill": sentence,
+                "select_word": wrote,
+            },
+        ]
+        self.ui_locked_this_turn.update({"ask_input", "show_choices"})
+        mic_dec = {
+            "accept": False,
+            "focus": "spelling",
+            "focus_word": wrote,
+            "focus_correct": meant_guess,
+            "spell_rung": 3,
+            "scaffold": "tutor_mic_word",
+            "kid_words": spoken,
+            "rationale": f"Turned on Center Green Mic for '{wrote}' so he can say the word aloud and help clarify/sound it out.",
+            "guardrail": "tutor_mic_word",
+            "latency_s": 0.0,
+        }
+        self.last_coach = mic_dec
+        return {
+            "epoch": self.blackboard.bump_epoch(),
+            "kind": self.last_kid_kind,
+            "ui": ui_mic,
+            "spoken_fallback": spoken,
+            "directive": f'Ask warmly in 1-2 short sentences (the green mic in the center will turn on automatically right after you ask): "{spoken}"',
+            "coach": mic_dec,
+        }
+
+    def handle_voice_clip_result(self, transcript: str, intended_word: str, purpose: str) -> dict[str, Any]:
+        """Processes the short audio clip captured by the Tutor-Controlled Center Green Mic and turns the mic OFF."""
+        epoch = self.blackboard.bump_epoch()
+        req = self.active_mic_request or {}
+        self.active_mic_request = None
+        eff_purpose = purpose or req.get("purpose") or "story"
+
+        if eff_purpose == "word":
+            base_sent = str(req.get("sentence") or self.pending_spell_sentence or ((self.coach_session.get("last_request") or {}).get("sentence") or "")).strip()
+            old_wrote = str(req.get("wrote") or (self.word_target or {}).get("wrote") or ((self.coach_session.get("last_request") or {}).get("focus_word") or "")).strip()
+            extra_ms = req.get("extra_ms") or []
+            word_clean = (intended_word or "").strip().lower()
+            if not word_clean and transcript:
+                toks = _words(transcript)
+                word_clean = toks[-1].lower() if toks else ""
+            if not word_clean:
+                word_clean = str(req.get("meant_guess") or "").strip().lower()
+            if base_sent and old_wrote and word_clean:
+                ui_sp: list[dict[str, Any]] = [
+                    {"type": "tutor_mic", "action": "off"},
+                    {"type": "remove", "id": "say_word_help"},
+                ]
+                card = self._launch_inline_word_help(ui_sp, base_sent, old_wrote, word_clean, extra_targets=extra_ms)
+                # Remove redundant mic button since he JUST spoke the word into the green mic!
+                ui_sp = [u for u in ui_sp if not (u.get("type") == "item" and u.get("item", {}).get("id") == "say_word_help")]
+                sp_line = f"Got it—'{card['word']}'! Here's how '{card['word']}' works: {card['parts']} ({card['note']}). Type '{card['word']}' right over '{old_wrote}' in your box!"
+                return {
+                    "epoch": epoch,
+                    "kind": "SPOKEN_WORD_HELP",
+                    "spoken_fallback": sp_line,
+                    "ui": ui_sp,
+                    "directive": f'Confirm the word they just said warmly and explain its spelling parts in 1-2 short sentences: "{sp_line}"',
+                }
+
+        if eff_purpose == "picture" and transcript:
+            if req.get("target"):
+                self.pending_art_target = req["target"]
+            self.phase = "REDRAW_CLARIFY"
+            res = self.classify_and_advance(transcript, "spoken")
+            res["ui"] = [{"type": "tutor_mic", "action": "off"}] + res.get("ui", [])
+            return res
+
+        # Default ("story"): turn spoken idea into pre-filled draft in his box!
+        res = self.classify_and_advance(transcript, "spoken")
+        res["ui"] = [{"type": "tutor_mic", "action": "off"}] + res.get("ui", [])
+        return res
+
+    @staticmethod
     def _make_spell_choices(wrote: str, meant: str) -> list[str]:
         """Builds 3 plausible multiple-choice spellings (always including `meant` + `wrote` + 1 orthographic distractor)."""
         w_clean = wrote.strip()
@@ -1408,6 +1557,12 @@ class SessionController:
             rest_ms = [m for m in ms_rem if m["wrote"].lower() != m0["wrote"].lower()]
             cs["consecutive_fixes"] = cs.get("consecutive_fixes", 0) + 1
             cs["pushed"] = cs.get("pushed", 0) + 1
+            if m0["wrote"].lower() not in self.asked_aloud_words and self._should_ask_word_aloud(m0["wrote"], m0["meant"], bool(decision.get("ask_aloud"))):
+                return (
+                    "fix",
+                    self._launch_tutor_mic_word_plan(raw, m0["wrote"], m0["meant"], story_rx=decision.get("story_reaction", ""), extra_ms=rest_ms),
+                    effective_chk,
+                )
             return (
                 "fix",
                 self._launch_quick_spell_mc_plan(
@@ -1485,6 +1640,31 @@ class SessionController:
             self.spell_pick = None
             return "accept", decision, effective_chk
 
+        # TUTOR-CONTROLLED MIC FOR UNCLEAR / PHONETIC MISSPELLINGS ("Maybe say what this word is?"):
+        if (
+            decision["focus"] == "spelling"
+            and decision.get("focus_word")
+            and decision["focus_word"].lower() not in self.asked_aloud_words
+            and self._should_ask_word_aloud(
+                decision["focus_word"],
+                decision.get("focus_correct", ""),
+                bool(decision.get("ask_aloud")),
+            )
+        ):
+            cs["consecutive_fixes"] = cs.get("consecutive_fixes", 0) + 1
+            cs["pushed"] = cs.get("pushed", 0) + 1
+            return (
+                "fix",
+                self._launch_tutor_mic_word_plan(
+                    raw,
+                    decision["focus_word"],
+                    decision.get("focus_correct", ""),
+                    story_rx=decision.get("story_reaction", ""),
+                    extra_ms=ms_rem,
+                ),
+                effective_chk,
+            )
+
         cs["consecutive_fixes"] = cs.get("consecutive_fixes", 0) + 1
         cs["pushed"] = cs.get("pushed", 0) + 1
         cs["last_request"] = {
@@ -1560,6 +1740,9 @@ class SessionController:
         self.ui_locked_this_turn.clear()
         self.last_coach = None
         epoch = self.blackboard.bump_epoch()
+        had_mic_req = self.active_mic_request is not None
+        if how in ("typed", "tap", "handwritten"):
+            self.active_mic_request = None
         raw = (text or "").strip()
         norm = _norm(raw)
         wlist = _words(raw)
@@ -2092,18 +2275,26 @@ class SessionController:
 
             if "say the word out loud" in norm:
                 self.last_kid_kind = "VOICE_WORD_PROMPT"
+                wt_wrote = (self.word_target or {}).get("wrote") or (self.spell_pick or {}).get("wrote") or ""
+                wt_sent = self.pending_spell_sentence or (self.spell_pick or {}).get("sentence") or ""
+                wt_guess = (self.word_target or {}).get("word") or (self.spell_pick or {}).get("correct") or ""
+                self.active_mic_request = {"purpose": "word", "wrote": wt_wrote, "meant_guess": wt_guess, "sentence": wt_sent, "extra_ms": []}
                 ui_actions.append({"type": "remove", "id": "say_word_help"})
-                ui_actions.append({"type": "input", "mode": "talk_word", "prompt": "Mic is on for 1 word—say the word out loud so I can help spell it!"})
+                ui_actions.append({"type": "tutor_mic", "action": "on", "purpose": "word", "target_word": wt_wrote, "sentence": wt_sent, "prompt": f"Say out loud what word “{wt_wrote or 'that'}” is"})
+                ui_actions.append({"type": "input", "mode": "type", "prompt": "Green mic is ON—say the word out loud so I can help spell it!"})
                 self.ui_locked_this_turn.add("ask_input")
-                sp_line = "Go ahead and say just that word out loud so I know the exact word you want!"
+                sp_line = "I turned on the green mic—say just that word out loud so I know the exact word you want!"
                 return {"epoch": epoch, "kind": self.last_kid_kind, "spoken_fallback": sp_line, "ui": ui_actions, "directive": f'Say in 1 short sentence: "{sp_line}"'}
 
             if norm == _norm(coach.SWITCH_OPTIONS["voice"]):
                 self.last_kid_kind = "VOICE_OFFER"
+                self.active_mic_request = {"purpose": "story", "sentence": ""}
                 ui_actions.append({"type": "remove", "id": "unstick"})
-                ui_actions.append({"type": "input", "mode": "talk", "prompt": "Tap the mic and just say what happens next."})
+                ui_actions.append({"type": "tutor_mic", "action": "on", "purpose": "story", "target_word": "", "sentence": "", "prompt": "Tell me out loud what happens next"})
+                ui_actions.append({"type": "input", "mode": "type", "prompt": "Green mic is ON—say what happens next out loud!"})
                 self.ui_locked_this_turn.add("ask_input")
-                return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": "In ONE short line, tell him to tap the mic and just say what happens next—you'll put his words in the box."}
+                sp_line = "I turned on the green mic—just say what happens next out loud, and I'll put your words in the box!"
+                return {"epoch": epoch, "kind": self.last_kid_kind, "spoken_fallback": sp_line, "ui": ui_actions, "directive": f'Say in 1 short sentence: "{sp_line}"'}
 
             if norm == _norm(coach.SWITCH_OPTIONS["pause"]):
                 self.phase = "WRAP"
@@ -2341,7 +2532,10 @@ class SessionController:
                     ui_actions.append({"type": "item", "item": {"id": "starters", "kind": "starters", "options": d["chips"]}})
                 if d["options"]:
                     ui_actions.append({"type": "item", "item": {"id": "unstick", "kind": "choices", "prompt": "", "options": d["options"]}})
-                inp: dict[str, Any] = {"type": "input", "mode": "talk" if d["move"] == "voice_offer" else "type", "prompt": d["input_prompt"]}
+                if d["move"] == "voice_offer":
+                    self.active_mic_request = {"purpose": "story", "sentence": ""}
+                    ui_actions.append({"type": "tutor_mic", "action": "on", "purpose": "story", "target_word": "", "sentence": "", "prompt": "Tell me out loud what happens next"})
+                inp: dict[str, Any] = {"type": "input", "mode": "type", "prompt": d["input_prompt"]}
                 if d["move"] == "partial_frame":
                     inp["prefill"] = d["prefill"].rstrip() + " "
                     self.engaged_draft = d["prefill"]

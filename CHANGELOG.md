@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0
+- **Tutor-Controlled Center Green Microphone (`static/index.html`, `static/style.css`, `static/app.js`, `tutor/media.py`, `tutor/controller.py`, `tutor/live.py`, `tutor/prompt.py`):**
+  - Hid the manual corner mic button so the tutor controls when the microphone turns on and off.
+  - When a misspelling is phonetic or unclear (e.g. `"uoos"`, `"wurs"`), when fixing a picture (**↻ Not quite — fix picture**), or when stuck, the tutor asks *"Maybe say out loud what word `'uoos'` is supposed to be?"* and pops up a large, pulsing **green microphone right in the center of the screen** (`● Mic is ON — speak now!`, waiting until the tutor finishes speaking so it never records itself).
+  - Automatically detects end-of-speech (~1s after a word, ~1.4s after a sentence), turns the green mic OFF and hides it immediately, transcribes the clip in context via `transcribe_voice_clip` (resolving homophones like `whose` vs `who's` from his sentence), and displays the exact spelling breakdown (`wh + ose`) to lock into his sentence.
+
 ## 1.0.3
 - **Warm Story Reactions + Direct Grammar Terms (`tutor/blackboard.py`, `tutor/controller.py`, `tutor/prompt.py`, `tutor/coach.py`, `tutor/live.py`):**
   - Restored playful, warm reactions to his story ("Oh no, poor guy!", "That's a super stinky situation!") while keeping writing-rule instructions strictly plain and direct ("Capitalize the first letter", "Add a period at the end"—never "big and tall like a superhero" or "little dot").

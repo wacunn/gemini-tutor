@@ -347,6 +347,202 @@ function micStop() {
   send({ type: "mic_paused" });
 }
 
+// ---------- Tutor-Controlled Center Green Microphone (16 kHz WAV short-clip capture) ----------
+const centerMic = {
+  open: false,
+  recording: false,
+  purpose: "word",
+  targetWord: "",
+  sentence: "",
+  prompt: "",
+  chunks: [],
+  speechFrames: 0,
+  silentFramesAfterSpeech: 0,
+  totalFrames: 0,
+  waitTimer: null,
+  maxTimer: null,
+  stream: null,
+  ctx: null,
+  node: null,
+};
+
+function encodeWav16k(int16Chunks) {
+  let samples = 0;
+  for (const c of int16Chunks) samples += c.length;
+  const byteLen = samples * 2;
+  const buf = new ArrayBuffer(44 + byteLen);
+  const dv = new DataView(buf);
+  const wStr = (off, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); };
+  wStr(0, "RIFF");
+  dv.setUint32(4, 36 + byteLen, true);
+  wStr(8, "WAVE");
+  wStr(12, "fmt ");
+  dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true);
+  dv.setUint16(22, 1, true);
+  dv.setUint32(24, 16000, true);
+  dv.setUint32(28, 32000, true);
+  dv.setUint16(32, 2, true);
+  dv.setUint16(34, 16, true);
+  wStr(36, "data");
+  dv.setUint32(40, byteLen, true);
+  const out16 = new Int16Array(buf, 44, samples);
+  let pos = 0;
+  for (const c of int16Chunks) {
+    out16.set(c, pos);
+    pos += c.length;
+  }
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 8192) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  }
+  return "data:audio/wav;base64," + btoa(bin);
+}
+
+function stopCenterMic(sendClip = false) {
+  clearInterval(centerMic.waitTimer);
+  clearTimeout(centerMic.maxTimer);
+  centerMic.waitTimer = null;
+  centerMic.maxTimer = null;
+  const wasRec = centerMic.recording;
+  const chunks = centerMic.chunks.slice();
+  const hadSpeech = centerMic.speechFrames >= 2;
+  const meta = { purpose: centerMic.purpose, target_word: centerMic.targetWord, sentence: centerMic.sentence };
+
+  centerMic.open = false;
+  centerMic.recording = false;
+  centerMic.chunks = [];
+  state.micOn = false;
+  try { centerMic.stream && centerMic.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+  try { centerMic.ctx && centerMic.ctx.close(); } catch (_) {}
+  centerMic.stream = centerMic.ctx = centerMic.node = null;
+
+  const ov = $("centerMic");
+  if (ov) ov.hidden = true;
+  const ring = $("centerMicRing");
+  if (ring) ring.style.transform = "scale(1)";
+
+  if (sendClip && wasRec && chunks.length > 0 && hadSpeech) {
+    setAsk("Listening to what you said…", null);
+    const wavB64 = encodeWav16k(chunks);
+    send({ type: "voice_clip", wav_b64: wavB64, ...meta });
+  }
+}
+
+async function startCenterMicRecording() {
+  if (!centerMic.open || centerMic.recording) return;
+  clearInterval(centerMic.waitTimer);
+  centerMic.waitTimer = null;
+  stopPlayback();
+  try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (_) {}
+  try {
+    centerMic.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+    });
+  } catch (e) {
+    $("centerMicCard")?.classList.add("waiting");
+    $("centerMicStatus").textContent = "Tap the green mic to allow microphone (or click Type instead)";
+    return;
+  }
+  if (!centerMic.open) {
+    try { centerMic.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    return;
+  }
+  centerMic.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await centerMic.ctx.audioWorklet.addModule("/static/mic-worklet.js");
+  const src = centerMic.ctx.createMediaStreamSource(centerMic.stream);
+  centerMic.node = new AudioWorkletNode(centerMic.ctx, "mic-processor");
+  centerMic.chunks = [];
+  centerMic.speechFrames = 0;
+  centerMic.silentFramesAfterSpeech = 0;
+  centerMic.totalFrames = 0;
+  centerMic.recording = true;
+  state.micOn = true;
+
+  $("centerMicCard")?.classList.remove("waiting");
+  $("centerMicStatus").textContent = "● Mic is ON — speak now!";
+  $("centerMicDone").hidden = false;
+
+  const silenceCutoff = centerMic.purpose === "word" ? 24 : 36; // ~0.96s after a word, ~1.44s after a sentence
+  centerMic.node.port.onmessage = (e) => {
+    if (!centerMic.recording) return;
+    const pcmCopy = new Int16Array(e.data.pcm);
+    const lvl = Number(e.data.level) || 0;
+    centerMic.chunks.push(pcmCopy);
+    centerMic.totalFrames++;
+    const ring = $("centerMicRing");
+    if (ring) ring.style.transform = `scale(${(1 + Math.min(0.45, lvl * 6.5)).toFixed(2)})`;
+
+    if (lvl > 0.014) {
+      centerMic.speechFrames++;
+      centerMic.silentFramesAfterSpeech = 0;
+      if (centerMic.speechFrames >= 2) {
+        $("centerMicStatus").textContent = "● Hearing you…";
+      }
+    } else if (centerMic.speechFrames >= 3) {
+      centerMic.silentFramesAfterSpeech++;
+      if (centerMic.silentFramesAfterSpeech >= silenceCutoff) {
+        stopCenterMic(true);
+      }
+    }
+  };
+  const mute = centerMic.ctx.createGain();
+  mute.gain.value = 0;
+  src.connect(centerMic.node).connect(mute).connect(centerMic.ctx.destination);
+
+  clearTimeout(centerMic.maxTimer);
+  centerMic.maxTimer = setTimeout(() => {
+    if (centerMic.open) stopCenterMic(centerMic.speechFrames >= 2);
+  }, 12000);
+}
+
+function showCenterMic(cfg) {
+  stopCenterMic(false);
+  begin();
+  centerMic.open = true;
+  centerMic.purpose = cfg.purpose || "word";
+  centerMic.targetWord = cfg.target_word || "";
+  centerMic.sentence = cfg.sentence || "";
+  centerMic.prompt = cfg.prompt || "Say it out loud";
+
+  $("centerMicTitle").textContent = centerMic.prompt;
+  $("centerMicDone").hidden = true;
+  $("centerMic").hidden = false;
+
+  // Wait briefly for the tutor's spoken prompt to finish so we don't record the tutor's own voice!
+  let waitedTicks = 0;
+  if (tutorAudible()) {
+    $("centerMicCard")?.classList.add("waiting");
+    $("centerMicStatus").textContent = "Get ready — mic turns ON right as I finish asking… (or tap green mic now)";
+  } else {
+    $("centerMicStatus").textContent = "● Turning mic ON…";
+  }
+  centerMic.waitTimer = setInterval(() => {
+    waitedTicks++;
+    if (!centerMic.open) {
+      clearInterval(centerMic.waitTimer);
+      return;
+    }
+    // Give 350ms for first PCM audio packet to arrive, then start as soon as tutor stops speaking (or after 6.5s max)
+    if ((waitedTicks >= 3 && !tutorAudible()) || waitedTicks >= 54) {
+      clearInterval(centerMic.waitTimer);
+      centerMic.waitTimer = null;
+      startCenterMicRecording();
+    }
+  }, 120);
+}
+
+$("centerMicBtn").onclick = () => {
+  if (!centerMic.recording) startCenterMicRecording();
+  else stopCenterMic(true);
+};
+$("centerMicDone").onclick = () => stopCenterMic(true);
+$("centerMicDismiss").onclick = () => {
+  stopCenterMic(false);
+  input.focus();
+};
+
 setInterval(() => {
   const g = $("glow");
   if (!g) return;
@@ -393,7 +589,6 @@ input.addEventListener("input", () => {
   input.style.height = "auto";
   input.style.height = Math.min(input.scrollHeight, 200) + "px";
   $("sendBtn").hidden = !input.value.trim();
-  $("micBtn").hidden = !!input.value.trim();
 });
 input.addEventListener("keydown", (e) => {
   if (!state.typing.first && e.key.length === 1) state.typing.first = performance.now();
@@ -415,6 +610,7 @@ $("endBtn").onclick = endSession;
 function sendText() {
   const text = input.value.trim();
   if (!text) return;
+  stopCenterMic(false);
   begin();
   const ms = state.typing.first ? Math.round(performance.now() - state.typing.first) : 0;
   addKid(esc(text));
@@ -423,7 +619,6 @@ function sendText() {
   input.value = "";
   input.style.height = "auto";
   $("sendBtn").hidden = true;
-  $("micBtn").hidden = false;
   state.typing = { first: 0, backspaces: 0 };
   setAsk("Reading your line…", null);
 }
@@ -729,7 +924,6 @@ function insertStarter(text) {
   input.style.height = "auto";
   input.style.height = Math.min(input.scrollHeight, 200) + "px";
   $("sendBtn").hidden = false;
-  $("micBtn").hidden = true;
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
 }
@@ -1082,6 +1276,10 @@ function handle(m) {
       if (m.id === "activity") removeCanvas("activity");
       else document.getElementById("item-" + m.id)?.remove();
       break;
+    case "tutor_mic":
+      if (m.action === "on") showCenterMic(m);
+      else stopCenterMic(false);
+      break;
     case "cover_word":
       coverWordCard();
       break;
@@ -1108,7 +1306,6 @@ function handle(m) {
           input.style.height = "auto";
           input.style.height = Math.min(input.scrollHeight, 200) + "px";
           $("sendBtn").hidden = !input.value.trim();
-          $("micBtn").hidden = !!input.value.trim();
           let selStart = input.value.length;
           let selEnd = input.value.length;
           if (Array.isArray(m.select_range) && m.select_range.length === 2) {

@@ -879,6 +879,45 @@ class TutorSession:
         elif kind == "app_note":
             await self.notify(f"[{m.get('text', '')}]")
 
+        elif kind == "voice_clip":
+            await self.ui({"type": "tutor_mic", "action": "off"})
+            b64 = (m.get("wav_b64") or "").split(",", 1)[-1]
+            if not b64:
+                return
+            wav_bytes = base64.b64decode(b64)
+            purpose = str(m.get("purpose") or "word").strip()
+            tword = str(m.get("target_word") or "").strip()
+            sctx = str(m.get("sentence") or self.ctrl.spine_summary() or "").strip()
+            try:
+                res = await asyncio.wait_for(
+                    asyncio.to_thread(media.transcribe_voice_clip, wav_bytes, purpose, tword, sctx),
+                    timeout=5.5,
+                )
+            except Exception as e:
+                self.log.add("error", where="voice_clip", error=str(e))
+                res = {"transcript": "", "intended_word": ""}
+            transcript = (res.get("transcript") or "").strip()
+            intended = (res.get("intended_word") or "").strip()
+            if not transcript and not intended:
+                await self.ui({"type": "status", "message": "Didn't hear anything clearly—you can type it in the box below (or tap 'Say the word out loud' to try again)."})
+                return
+            shown = intended if (purpose == "word" and intended and not transcript) else (transcript or intended)
+            self.kid_events += 1
+            self.turn += 1
+            self.log.add("kid_said", text=shown, intended_word=intended, purpose=purpose)
+            await self.ui({"type": "kid_caption", "turn": self.turn, "text": f"🎤 {shown}"})
+            plan = await asyncio.to_thread(self.ctrl.handle_voice_clip_result, transcript, intended, purpose)
+            self.log.add("ctrl_plan", how="voice_clip", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
+            await self.apply_controller_ui(plan["ui"], epoch=plan.get("epoch"))
+            render_note = ""
+            if plan.get("redraw_art"):
+                render_note = await self._run_redraw_art(plan["redraw_art"])
+            await self.from_kid(
+                f'[{self.name} spoke into the green mic ({purpose}): "{shown}"' + (f' -> intended word "{intended}"' if intended else "") + "]",
+                plan["directive"] + render_note,
+                spoken_fallback=plan.get("spoken_fallback", ""),
+            )
+
         elif kind == "mic_paused":
             if self.live:
                 try:
@@ -1269,6 +1308,29 @@ class TutorSession:
                 data = {"text": a.get("data_json")}
             await self.ui({"type": "to_activity", "data": data})
             return {"ok": True}
+
+        if name == "turn_on_mic":
+            purpose = str(a.get("purpose") or "story").strip().lower()
+            if purpose not in ("word", "picture", "story"):
+                purpose = "story"
+            tword = str(a.get("target_word") or "").strip()
+            prompt_lbl = str(a.get("prompt") or ("Say that word out loud" if purpose == "word" else "Tell me out loud")).strip()
+            self.ctrl.active_mic_request = {
+                "purpose": purpose,
+                "wrote": tword,
+                "meant_guess": "",
+                "sentence": self.ctrl.pending_spell_sentence or "",
+                "extra_ms": [],
+            }
+            await self.ui({
+                "type": "tutor_mic",
+                "action": "on",
+                "purpose": purpose,
+                "target_word": tword,
+                "sentence": self.ctrl.pending_spell_sentence or "",
+                "prompt": prompt_lbl,
+            })
+            return {"ok": True, "status": "Green center microphone will activate automatically as soon as you finish speaking."}
 
         if name == "note":
             self.log.add("note", category=a.get("category", "other"), detail=a.get("detail", ""))

@@ -116,12 +116,12 @@
     <div class="dock" id="dock">
       <div class="ask" id="ask" hidden><svg class="ask-spark"><use href="#spark" /></svg><span id="askText"></span></div>
       <div class="composer" id="composer">
-        <textarea id="input" rows="1" placeholder="Type, write, or talk" autocomplete="off" spellcheck="false"></textarea>
+        <textarea id="input" rows="1" placeholder="Type here (or use the pen)" autocomplete="off" spellcheck="false"></textarea>
         <div class="composer-actions">
           <button class="icon-btn" id="penBtn" title="Write with a pen">
             <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zm17.7-10.2a1 1 0 0 0 0-1.42l-2.33-2.33a1 1 0 0 0-1.42 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
           </button>
-          <button class="icon-btn mic" id="micBtn" title="Talk">
+          <button class="icon-btn mic" id="micBtn" title="Talk" hidden>
             <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg>
           </button>
           <button class="icon-btn send" id="sendBtn" title="Send" hidden>
@@ -130,6 +130,24 @@
         </div>
       </div>
       <div class="live-glow" id="glow"></div>
+    </div>
+
+    <!-- Tutor-Controlled Center Green Microphone -->
+    <div class="center-mic-overlay" id="centerMic" hidden>
+      <div class="center-mic-card" id="centerMicCard">
+        <div class="center-mic-wrap">
+          <div class="center-mic-ring" id="centerMicRing"></div>
+          <button type="button" class="center-mic-btn" id="centerMicBtn" title="Speak now">
+            <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg>
+          </button>
+        </div>
+        <div class="center-mic-title" id="centerMicTitle">Say what this word is</div>
+        <div class="center-mic-status" id="centerMicStatus">● Mic is ON — listening…</div>
+        <div class="center-mic-actions">
+          <button type="button" class="pill-btn" id="centerMicDone" hidden>Done talking ✓</button>
+          <button type="button" class="text-btn" id="centerMicDismiss">Type instead</button>
+        </div>
+      </div>
     </div>
 
     <!-- Pen sheet -->

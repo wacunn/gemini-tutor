@@ -1400,3 +1400,115 @@ body.fresh .dock {
   border-color: #f28b82;
   color: #f28b82;
 }
+
+
+/* ---------- Tutor-Controlled Center Green Microphone ---------- */
+#micBtn {
+  display: none !important;
+}
+
+.center-mic-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  background: rgba(12, 13, 15, 0.58);
+  backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.center-mic-overlay[hidden] {
+  display: none !important;
+}
+
+.center-mic-card {
+  background: #1c1e21;
+  border: 2px solid rgba(34, 197, 94, 0.55);
+  border-radius: 28px;
+  padding: 30px 36px 24px;
+  max-width: 420px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 42px rgba(34, 197, 94, 0.22);
+}
+
+.center-mic-wrap {
+  position: relative;
+  width: 118px;
+  height: 118px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 16px;
+}
+
+.center-mic-ring {
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: rgba(34, 197, 94, 0.24);
+  border: 2px solid rgba(74, 222, 128, 0.55);
+  transition: transform 60ms ease-out, opacity 120ms ease;
+  animation: greenMicPulse 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes greenMicPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45); }
+  50% { box-shadow: 0 0 0 16px rgba(34, 197, 94, 0.05); }
+}
+
+.center-mic-btn {
+  position: relative;
+  z-index: 2;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(145deg, #22c55e, #16a34a);
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 8px 28px rgba(34, 197, 94, 0.55);
+  transition: transform 120ms ease, background 150ms ease;
+}
+
+.center-mic-btn:hover {
+  transform: scale(1.04);
+}
+
+.center-mic-btn svg {
+  width: 44px;
+  height: 44px;
+  fill: currentColor;
+}
+
+.center-mic-card.waiting .center-mic-btn {
+  background: linear-gradient(145deg, #16a34a, #15803d);
+  opacity: 0.9;
+}
+
+.center-mic-title {
+  font-family: var(--font);
+  font-size: 1.32rem;
+  font-weight: 500;
+  color: #f3f4f6;
+  margin-bottom: 6px;
+}
+
+.center-mic-status {
+  font-size: 0.96rem;
+  font-weight: 500;
+  color: #4ade80;
+  margin-bottom: 16px;
+}
+
+.center-mic-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}

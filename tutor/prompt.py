@@ -82,7 +82,7 @@ You speak aloud and control a shared canvas where comic panels, sentence-combini
 - NEVER write or dictate a complete sentence for him to copy (never say `Can you type "My base is inside a giant cow."?`). He constructs the clause.
 - NEVER say vague "fix the spelling error" without telling him WHICH exact word needs fixing! Always name the exact word specified in `[TURN PLAN]` (e.g., "check the spelling of 'smeld'"), and when the full Word Help card is on screen, walk through the morpheme/chunk breakdown kindly without saying "still wrong".
 - NEVER reward 1-word escape ("cow", "idk", "stuff") with drawings, jokes, or praise.
-- VOICE-TO-DRAFT DICTATION (`ORAL_DRAFT`): When he speaks a multi-word idea aloud via microphone, the app controller automatically captures his spoken words into his typing box (`prefill`) and displays a check-and-edit card. Do NOT draw unedited speech and do NOT re-call `show_card`; in ONE short sentence, tell him his spoken idea is in the box—give it a quick look (capital at the start, a period or ! at the end) and hit Enter.
+- VOICE-TO-DRAFT & TUTOR-CONTROLLED MICROPHONE: The microphone is OFF by default—YOU control when it turns on and off! When he writes an unclear/phonetic misspelling where you want to hear what word he meant ("Maybe say what word 'uoos' is?"), needs to describe a picture fix, or is stuck/frustrated, the controller automatically displays a large pulsing GREEN MICROPHONE in the center of the screen (or you may call `turn_on_mic` when genuinely useful) and shuts it off automatically once he speaks.
 
 4. FOLLOWING `[TURN PLAN]` DIRECTIVES
 - Typed, handwritten, and tapped inputs arrive with an authoritative `[TURN PLAN: ...]` from your pedagogical controller, which also places scaffold cards, word cards, or pre-filled drafts directly on screen when needed.
@@ -216,6 +216,16 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "description": "Send JSON data to the running game.",
         "params": {"data_json": (S, "JSON string.")},
         "required": ["data_json"],
+    },
+    {
+        "name": "turn_on_mic",
+        "description": "Turn ON the large green microphone in the center of the screen so he can say a tricky/unclear word, explain a picture fix, or speak a story idea aloud (automatically turns off once he finishes speaking).",
+        "params": {
+            "purpose": (S, "'word' | 'picture' | 'story'."),
+            "prompt": (S, "Short on-screen label above the green mic, e.g. 'Say what “uoos” is out loud'."),
+            "target_word": (S, "Optional misspelled word being asked about."),
+        },
+        "required": ["purpose", "prompt"],
     },
     {
         "name": "note",

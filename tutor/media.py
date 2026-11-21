@@ -20,7 +20,7 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from .config import DATA, FALLBACK_MODEL, FAST_MODEL, genai_client
+from .config import DATA, FALLBACK_MODEL, FAST_MODEL, LITE_MODEL, genai_client
 from .record import new_id
 
 MEDIA = DATA / "media"
@@ -268,3 +268,64 @@ def read_handwriting(png_bytes: bytes, context: str = "", skip_letter_check: boo
     if skip_letter_check:
         out["letter_issue"] = None
     return out
+
+
+VOICE_WORD_SYSTEM = """You are listening to a short audio clip of an 8-year-old student answering their tutor.
+The student wrote a sentence containing an unclear/misspelled word (`target_word`), and the tutor turned on the microphone and asked: "Maybe say what this word is?"
+- Listen carefully to the audio clip and use `sentence_context` to resolve homophones (e.g. "whose" vs "who's", "their" vs "there", "worse" vs "wars").
+- If the audio is silent, empty, or just room noise, return empty strings (NEVER return "no speech detected" or "[silence]").
+- Return STRICT JSON:
+{"transcript": "exact words spoken by child, or empty string",
+ "intended_word": "the single correctly-spelled word (or two-word phrase like 'no one') they meant for target_word, or empty string"}"""
+
+VOICE_UTTERANCE_SYSTEM = """Transcribe cleanly what the 8-year-old student just said out loud into the microphone.
+- If the audio is silent or only room noise, return `{"transcript": ""}` (NEVER output "<no speech detected>" or "[silence]").
+- Use `story_context` only to spell character names accurately; keep the child's actual spoken words.
+- Return STRICT JSON:
+{"transcript": "what they said, or empty string"}"""
+
+
+def transcribe_voice_clip(
+    wav_bytes: bytes,
+    purpose: str = "word",
+    target_word: str = "",
+    sentence_context: str = "",
+) -> dict[str, str]:
+    """Fast (~0.6s) context-aware transcription of a tutor-controlled short mic clip."""
+    from . import blackboard
+
+    if not wav_bytes or len(wav_bytes) < 400:
+        return {"transcript": "", "intended_word": ""}
+    client = genai_client(timeout_ms=10000)
+    sys_inst = VOICE_WORD_SYSTEM if purpose == "word" else VOICE_UTTERANCE_SYSTEM
+    ctx_msg = (
+        f"purpose: {purpose}\n"
+        f"target_word: {target_word or '(none)'}\n"
+        f"sentence_or_story_context: {sentence_context or '(none)'}"
+    )
+    for model in (LITE_MODEL, FAST_MODEL, FALLBACK_MODEL):
+        try:
+            resp = client.models.generate_content(
+                model=model,
+                contents=[types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav"), ctx_msg],
+                config=types.GenerateContentConfig(
+                    system_instruction=sys_inst,
+                    temperature=0.0,
+                    response_mime_type="application/json",
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            )
+            raw_txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", (resp.text or "").strip())
+            out = json.loads(raw_txt)
+            if isinstance(out, dict):
+                tr = str(out.get("transcript") or "").strip()
+                iw = str(out.get("intended_word") or "").strip(".,!?;:\"' ")
+                if re.search(r"\b(?:no\s+speech|silence|inaudible)\b", tr, re.I):
+                    tr = ""
+                if re.search(r"\b(?:no\s+speech|silence|inaudible)\b", iw, re.I):
+                    iw = ""
+                return {"transcript": tr, "intended_word": iw}
+        except Exception as e:
+            blackboard.QUOTA.note_error("voice_clip", e)
+            continue
+    return {"transcript": "", "intended_word": ""}
