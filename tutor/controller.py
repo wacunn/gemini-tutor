@@ -1307,6 +1307,35 @@ class SessionController:
                     "ui": ui_actions,
                     "directive": f"He picked '{raw}', but it's '{sp['correct']}'. Without saying wrong, point to the parts '{card['parts']}' in one short sentence and have him type it into his sentence.",
                 }
+            if norm == _norm(coach.SWITCH_OPTIONS["twist"]):
+                self.last_kid_kind = "TWIST_CARD"
+                beat = ai_direct_next_beat(
+                    self.rec,
+                    "He was stuck. Invent ONE wild, funny surprise event that crashes into HIS story right now (gross or absurd is great), "
+                    "say it in one punchy line, then ask what his hero does about it.",
+                    self.active_story,
+                    spine_context=self.spine_summary(),
+                    connector_goal="when | because | but | so",
+                )
+                ui_actions.append({"type": "remove", "id": "unstick"})
+                self._beat_input(ui_actions, beat)
+                self.ui_locked_this_turn.update({"ask_input", "show_choices"})
+                return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": f"Deliver this surprise twist with energy in 1–2 short sentences: {beat['spoken_prompt']}"}
+
+            if norm == _norm(coach.SWITCH_OPTIONS["voice"]):
+                self.last_kid_kind = "VOICE_OFFER"
+                ui_actions.append({"type": "remove", "id": "unstick"})
+                ui_actions.append({"type": "input", "mode": "talk", "prompt": "Tap the mic and just say what happens next."})
+                self.ui_locked_this_turn.add("ask_input")
+                return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": "In ONE short line, tell him to tap the mic and just say what happens next—you'll put his words in the box."}
+
+            if norm == _norm(coach.SWITCH_OPTIONS["pause"]):
+                self.phase = "WRAP"
+                self.last_kid_kind = "PROJECT_PICK"
+                ui_actions.append({"type": "remove", "id": "unstick"})
+                saved = f" '{self.project.get('title')}' is saved, and the PDF button on the right has everything so far." if self.project else ""
+                return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": f"He wants to stop for today. In ONE short, warm line, wrap up on a win.{saved} No pressure, no guilt."}
+
             if "add another middle twist" in norm and self.project and self.project.get("stage") == "spine_middle":
                 self.last_kid_kind = "PROJECT_PICK"
                 ui_actions.append({"type": "remove", "id": "spine_more_choices"})
@@ -1357,7 +1386,7 @@ class SessionController:
                 self.ui_locked_this_turn.add("ask_input")
                 return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": f"Word '{raw}' added to box—ask in 1 short sentence to finish the complete sentence."}
 
-            if any(k in norm for k in ("continue ", "full comic book", "graphic novel", "codex", "field guide", "fact", "pitch", "why we should")):
+            if any(k in norm for k in ("continue ", "full comic book", "graphic novel", "new comic", "codex", "field guide", "fact", "pitch", "why we should")):
                 self.last_kid_kind = "PROJECT_PICK"
                 self.avoidance_streak = 0
                 self.refusal_streak = 0
@@ -1435,6 +1464,60 @@ class SessionController:
                     "In ONE short plain sentence, confirm you're right here and invite finishing the current step on screen."
                 ),
             }
+
+        # ---------------- 3C. DISENGAGEMENT -> ADAPTIVE COACH (falls back to the legacy rules below) ----------------
+        is_refusal = any(re.search(p, norm) for p in REFUSAL_PATTERNS)
+        is_avoid = (
+            norm in AVOIDANCE_WORDS
+            or bool(norm and norm == self.prev_norm_text and len(wlist) <= 2)
+            or (len(wlist) <= 1 and (norm in AVOIDANCE_WORDS or not chk or all(s.get("issue") != "none" for s in (chk.get("sentences") or []))))
+            or bool(re.search(r"\b(can we just|just draw|its fine|it's fine)\b", norm))
+        )
+        first_turn_single_word = idx == 0 and len(wlist) == 1 and norm not in AVOIDANCE_WORDS and not is_refusal
+        if self.coach_enabled and (is_refusal or is_avoid) and not first_turn_single_word and how in ("typed", "handwritten", "spoken"):
+            sig = dict(self.turn_signals or {})
+            self.turn_signals = {}
+            sig["minutes"] = round((time.time() - self.coach_session["started"]) / 60, 1)
+            with self._coach_lock:
+                d = coach.decide_disengaged(
+                    self.rec,
+                    self.coach_session,
+                    raw,
+                    how,
+                    sig,
+                    self._coach_context(),
+                    self.spine_summary() or "\n".join(self.active_story[-6:]),
+                    bool(self.project),
+                )
+                if d and not self.test_mode:
+                    save_learner(self.rec)
+            if d:
+                self.last_coach = {**d, "accept": False, "focus": "disengaged", "scaffold": d["move"]}
+                self.last_kid_kind = "DISENGAGED"
+                self.prev_norm_text = norm
+                self.draw_unlocked = False
+                if self.phase == "OPENING":
+                    self.phase = "BUILDING"
+                ui_actions.append({"type": "goal", "text": self.goal_badge()})
+                if d["chips"] and d["move"] in ("starters", "twist", "voice_offer", "switch_offer", "wrap_offer"):
+                    self.coach_session["offered_chips"] = d["chips"]
+                    ui_actions.append({"type": "item", "item": {"id": "starters", "kind": "starters", "options": d["chips"]}})
+                if d["options"]:
+                    ui_actions.append({"type": "item", "item": {"id": "unstick", "kind": "choices", "prompt": "", "options": d["options"]}})
+                inp: dict[str, Any] = {"type": "input", "mode": "talk" if d["move"] == "voice_offer" else "type", "prompt": d["input_prompt"]}
+                if d["move"] == "partial_frame":
+                    inp["prefill"] = d["prefill"].rstrip() + " "
+                    self.engaged_draft = d["prefill"]
+                ui_actions.append(inp)
+                self.ui_locked_this_turn.update({"ask_input", "show_choices", "show_card"})
+                return {
+                    "kind": self.last_kid_kind,
+                    "ui": ui_actions,
+                    "directive": (
+                        f'{self.name} sent "{raw}". Say this in your own natural voice (1–2 short sentences, same meaning, no nagging, '
+                        f'no school words, no drawing): "{d["kid_words"]}"'
+                    ),
+                }
 
         # ---------------- 4. EXPLICIT REFUSAL ----------------
         if any(re.search(p, norm) for p in REFUSAL_PATTERNS):

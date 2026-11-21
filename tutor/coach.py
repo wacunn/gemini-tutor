@@ -90,7 +90,7 @@ These goals conflict turn by turn. Your job is to balance them FOR HIM, TODAY, u
 
 HOW YOU DECIDE EACH TURN
 - Estimate today's state ONLY from the BEHAVIOUR FACTS. Start at "medium" and move it with evidence: short or shrinking sentences, lowercase starts, "idk"/pushback, ignored requests, slowing down, or many minutes in => lower; long detailed sentences, quick compliance, self-corrections => higher. Do not call him "high energy" just because his story is fun.
-- Decide: accept now (art draws immediately) OR ask for exactly ONE change first. Never stack corrections. Everything you don't ask about goes in "deferred" (it's saved for a later 'going to print' editing pass), so leaving things is fine.
+- Decide: accept now (art draws immediately) OR ask for exactly ONE change first. Never stack corrections. Everything you don't ask about goes in "deferred" (logged for the parent to see), so leaving things is fine.
 - Complete sentences (who/what + does what) are his #1 school gap; weigh them heavily. But you may still accept an imperfect sentence when pressing would cost more than it teaches today.
 - Good-energy days: push a bit harder and occasionally (about 1 in 4 turns) TEST a slightly harder ask to learn whether he's ready. Low-energy days: accept more, scaffold more, keep art flowing, suggest voice.
 - Never ask for the same fix twice in a row if he just ignored it; switch to more support or accept and defer.
@@ -456,7 +456,7 @@ def validate(out: dict[str, Any], raw: str, chk: dict[str, Any], session: dict[s
     d["scaffold"] = sc if sc in SCAFFOLDS else "none"
     ns = str(d.get("next_scaffold") or "starter_chips").strip().lower()
     d["next_scaffold"] = ns if ns in ("none", "starter_chips") else "starter_chips"
-    d["chips"] = [str(c).strip() for c in (d.get("chips") or []) if str(c).strip()][:3]
+    d["chips"] = [x for x in (as_starter(c) for c in (d.get("chips") or [])) if x][:3]
     try:
         d["spell_rung"] = max(0, min(5, int(d.get("spell_rung") or 0)))
     except (TypeError, ValueError):
@@ -618,6 +618,18 @@ def behaviour_facts(session: dict[str, Any], raw: str, signals: dict[str, Any]) 
     )
 
 
+def as_starter(chip: str) -> str:
+    """Chips must be starters to finish, never whole sentences to copy."""
+    c = re.sub(r"\s+", " ", str(chip or "")).strip().strip('"')
+    c = re.sub(r"(…|\.\.\.)\s*$", "", c)
+    words = c.split()
+    if not words:
+        return ""
+    if re.search(r"[.!?]$", c) or len(words) > 7:
+        words = [w.rstrip(".!?,") for w in words[: min(5, max(3, len(words) - 2))]]
+    return " ".join(words).rstrip(",") + "…"
+
+
 def chip_used(raw: str, offered: list[str]) -> bool:
     r = re.sub(r"[^a-z' ]", "", raw.lower()).strip()
     for c in offered or []:
@@ -626,3 +638,101 @@ def chip_used(raw: str, offered: list[str]) -> bool:
         if head and r.startswith(head):
             return True
     return False
+
+
+# ---------------------------------------------------------------- disengagement ("idk", "this is boring", one-word answers)
+
+DISENGAGE_MOVES = ("starters", "partial_frame", "twist", "switch_offer", "voice_offer", "wrap_offer")
+SWITCH_OPTIONS = {
+    "twist": "Surprise me with a twist",
+    "game": "Make a mini-game instead",
+    "comic": "Start a new comic",
+    "voice": "Talk it out with the mic",
+    "pause": "Pause for today",
+}
+
+DISENGAGE_SYSTEM = """You are the adaptive coach inside a comic-book and story app for {name}, a Grade {grade} boy with ADHD.
+He just sent something that signals he's stuck, tired, bored, or pushing back (e.g. "idk", "this is boring", a single word, the same short thing again).
+Decide the best next move FOR HIM, TODAY, from the evidence. Options:
+- "starters": 2-3 tappable sentence STARTERS (3-6 words ending in "…", never whole sentences) from HIS story so he only has to finish an idea.
+- "partial_frame": put half a sentence from his story in his box for him to finish.
+- "twist": offer a wild, funny surprise event in his story to re-spark interest (he still writes what happens).
+- "switch_offer": offer a different activity (mini-game, new comic) when this one has clearly gone stale.
+- "voice_offer": suggest saying the idea out loud with the mic (good on low-energy days).
+- "wrap_offer": offer to stop for today on a win when he's clearly done (many pushbacks, long session, low effort signal).
+PRINCIPLES (evidence on ADHD, task avoidance and choice):
+- Respect "no" immediately. Zero nagging, zero pep talks, zero guilt. One short line.
+- Lower the demand and give him a choice; don't reward "idk" with free art, but make the next step tiny and fun.
+- Don't repeat the move that just failed; escalate support or offer a switch/wrap as pushback repeats.
+- Language: a sharp, funny comic collaborator. NEVER school words (complete sentence, punctuation, grammar, connector, clause, tier). You are an AI tutor, not his friend.
+Return STRICT JSON:
+{{"today_state":{{"energy":"high|medium|low","willingness":"high|medium|low","note":"short"}},
+ "move":"starters|partial_frame|twist|switch_offer|voice_offer|wrap_offer",
+ "kid_words":"1-2 short sentences to say",
+ "input_prompt":"very short line for the input bar",
+ "chips":["starter…"],
+ "prefill":"half sentence for partial_frame, else empty",
+ "options":["twist|game|comic|voice|pause" keys to show as buttons, 1-3 of them],
+ "rationale":"1-2 sentences for the parent",
+ "hypothesis_updates":[{{"id":"H5","direction":"for|against","evidence":"short"}}]}}"""
+
+
+def decide_disengaged(
+    rec: dict[str, Any],
+    session: dict[str, Any],
+    raw: str,
+    how: str,
+    signals: dict[str, Any],
+    context: str,
+    story: str,
+    has_project: bool,
+) -> dict[str, Any] | None:
+    model = ensure_model(rec)
+    name = rec.get("name") or "the student"
+    behaviour = behaviour_facts(session, raw, signals)
+    recent_moves = ", ".join(session.get("disengage_moves") or []) or "none yet"
+    prompt = f"""LEARNER: {name}, Grade {rec.get('grade', 3)}. Parent notes:
+{chr(10).join('- ' + n.get('note', '') for n in (rec.get('parent_notes') or [])[:8]) or '(none)'}
+WHAT WORKS FOR HIM: {'; '.join(model.get('what_works') or []) or '(nothing recorded yet)'}
+HYPOTHESES: 
+{_hyp_summary(model)}
+BEHAVIOUR FACTS:
+{behaviour}
+Disengagement moves already tried this session (most recent last): {recent_moves}
+WHERE HE IS: {context} (has a saved book open: {has_project})
+STORY SO FAR:
+{story or '(just starting)'}
+HE JUST SENT ({how}): "{raw}"
+"""
+    t0 = time.time()
+    try:
+        out = _call(DISENGAGE_SYSTEM.format(name=name, grade=rec.get("grade", 3)), prompt)
+    except Exception:
+        out = None
+    if not out:
+        return None
+    d = dict(out)
+    mv = str(d.get("move") or "starters").strip().lower()
+    d["move"] = mv if mv in DISENGAGE_MOVES else "starters"
+    d["kid_words"] = _sanitize(str(d.get("kid_words") or "").strip())
+    d["input_prompt"] = _sanitize(str(d.get("input_prompt") or "").strip()) or d["kid_words"][:90]
+    d["chips"] = [x for x in (as_starter(c) for c in (d.get("chips") or [])) if x][:3]
+    d["prefill"] = str(d.get("prefill") or "").strip()
+    opts = [str(o).strip().lower() for o in (d.get("options") or []) if str(o).strip().lower() in SWITCH_OPTIONS]
+    if d["move"] == "twist" and "twist" not in opts:
+        opts = ["twist"] + opts
+    if d["move"] == "voice_offer" and "voice" not in opts:
+        opts = ["voice"] + opts
+    if d["move"] == "wrap_offer" and "pause" not in opts:
+        opts = opts + ["pause"]
+    if d["move"] == "switch_offer" and not ({"game", "comic"} & set(opts)):
+        opts = opts + ["game"]
+    d["options"] = [SWITCH_OPTIONS[o] for o in dict.fromkeys(opts)][:3]
+    if d["move"] == "partial_frame" and not d["prefill"]:
+        d["move"] = "starters"
+    if d["move"] == "starters" and not d["chips"] and not d["options"]:
+        d["options"] = [SWITCH_OPTIONS["twist"], SWITCH_OPTIONS["voice"]]
+    d["latency_s"] = round(time.time() - t0, 2)
+    session["disengage_moves"] = (session.get("disengage_moves") or [])[-7:] + [d["move"]]
+    apply_learning(model, {**d, "accept": False, "focus": "disengaged:" + d["move"], "scaffold": d["move"]}, raw)
+    return d

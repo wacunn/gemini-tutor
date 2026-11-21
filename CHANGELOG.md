@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1
+- **The coach now handles "idk", "this is boring", one-word answers, and "can we just draw it" (`tutor/coach.py`, `tutor/controller.py`):**
+  - Instead of fixed scripted replies, the coach looks at how he's doing and what it already tried this session, then picks a move: sentence starters, a half-finished sentence from his story, a surprise twist, "say it with the mic," switching to a mini-game or new comic, or stopping for today on a win. It changes tactics if a move doesn't work and never nags. The old rules remain only as a fallback.
+  - New buttons: **Surprise me with a twist**, **Talk it out with the mic**, **Pause for today**.
+  - Starter chips are always short openers ending in "…", never whole sentences to copy.
+- **No separate editing pass:** issues the coach chooses not to raise are just logged for the parent; the existing **Download PDF** button is the book.
+
 ## 0.9.0
 - **Adaptive AI Coach replaces the hard-coded correction rules (`tutor/coach.py`, `tutor/controller.py`):**
   - Each writing turn, an AI coach reads the writing check, how he is behaving right now (speed, backspaces, pushback, whether he followed the last ask, starter-chip use, minutes in), and a saved learner model (unprompted skill evidence, hypotheses being tested on him, what works, recent days' energy). It then decides: draw it now, or ask for ONE change, and how much help to give.
@@ -10,7 +17,7 @@
   - Clean sentences skip the coach entirely and draw instantly; the coach learns from them in the background.
   - The next story question + starters now use `gemini-3.1-flash-lite` (about 40% faster, same quality in tests). The coach and writing check stay on `gemini-3.5-flash` (the small model was less accurate and less consistent in simulations).
 - **Kid-facing language cleanup:** removed "Tier", "complete sentence", "connector", and "Act I/II/III" from prompts, the goal pill, and the voice tutor's instructions.
-- **Parent page:** new "How the coach is adapting to him" panel (unprompted skill rates, today's energy, hypotheses with evidence for/against, what works, things saved for a later editing pass), a full coach decision log with reasons, and a "Ready to start cursive" setting.
+- **Parent page:** new "How the coach is adapting to him" panel (unprompted skill rates, today's energy, hypotheses with evidence for/against, what works, things it chose to let go), a full coach decision log with reasons, and a "Ready to start cursive" setting.
 
 ## 0.8.1
 - **Defaulted Art Style to Notebook Ink Doodle (`tutor/media.py`, `tutor/projects.py`, `tutor/live.py`, `static/app.js`):**

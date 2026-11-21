@@ -393,7 +393,7 @@
       <div class="muted">${esc(lastDay.note || "")}</div>
       <div class="muted" style="margin-top:6px">Last ${decs.length} decisions: ${accepted} accepted straight to art, ${pushed} asked for one change</div></div>
     <div class="card"><h3>Hypotheses being tested on him</h3>${(C.hypotheses || []).map(h => `<div style="margin:5px 0"><span class="pill">${esc(h.id)}</span> ${esc(h.text)} <span class="${h.for > h.against ? "ok" : h.against > h.for ? "warn" : "muted"}">(${h.for || 0} for / ${h.against || 0} against)</span></div>`).join("") || '<div class="muted">Starts after his first writing turn.</div>'}</div>
-    <div class="card"><h3>What works for him</h3>${list(C.what_works)}<h3 style="margin-top:12px">Saved for the editing pass</h3>${list((C.deferred || []).slice(-8).reverse().map(x => x.issue))}</div>`;
+    <div class="card"><h3>What works for him</h3>${list(C.what_works)}<h3 style="margin-top:12px">Let go (logged for you)</h3>${list((C.deferred || []).slice(-8).reverse().map(x => x.issue))}</div>`;
         $("coachLog").innerHTML = decs.slice(0, 40).map(x => `<div class="${x.accept ? "g" : "k"}">${esc((x.time || "").slice(5, 16).replace("T", " "))} · “${esc(x.sentence)}” → <b>${x.accept ? "accept" : "ask: " + esc(x.focus) + (x.spell_rung ? " (rung " + x.spell_rung + ")" : "")}</b>${x.guardrail ? ` <span class="pill">guardrail: ${esc(x.guardrail)}</span>` : ""}<div class="muted" style="margin-left:14px">${esc(x.rationale || "")}${x.kid_words && !x.accept ? `<br>said: “${esc(x.kid_words)}”` : ""}</div></div>`).join("") || '<div class="muted">No decisions yet.</div>';
 
         const rows = L.sessions.filter(s => s.metrics).map(s =>
