@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.2
+- **Plain, Matter-of-Fact Voice — Zero "Blippi" / Preschool Metaphors (`tutor/prompt.py`, `tutor/blackboard.py`, `tutor/coach.py`, `tutor/controller.py`, `tutor/live.py`):**
+  - Eliminated kids'-TV cheerleading and cringe metaphors ("put a little dot", "big and tall like a superhero", "super stinky situation!"). Routine mechanics now speak plain, direct sentences ("Add a period at the end.", "Capitalize the first letter.").
+- **Explicit Structural Plot Board Prompts & Zero Plot-Suggesting (`tutor/controller.py`, `tutor/blackboard.py`):**
+  - Removed unsolicited plot-suggesting starter chips ("Dylan drinks a potion…") and either/or leading plot questions. Every Plot Board step now explicitly names the structural slot (**Step 1 — The Beginning**, **Step 2 — The Ending at the very end of the whole book**, **Step 3 — Middle Event #1 right after the beginning**) so the child never confuses "what happens next" with the book's Finale, and book titles only use concepts from the child's own sentence.
+- **Wrong-Slot / Undo Recovery & 1-Word Fix Recovery (`tutor/projects.py`, `tutor/controller.py`, `static/app.js`):**
+  - Saying *"that wasn't the end, you asked what happened next"* automatically moves that sentence into **Middle Event #1** and reopens **The Ending** instead of treating the complaint as a picture redraw; added **`↶ Undo / change this sentence`** directly on the picture-check card.
+  - Missing-capital prompts now highlight only the first character (`select_range: [0, 1]`), and typing just the capitalized first word (`"He"`) or punctuation (`"."`) splices cleanly into the pending sentence instead of triggering disengagement prompts.
+
 ## 1.0.1
 - **Homework Standard — Capitals, End Punctuation & Zero Skipped Spelling (`tutor/controller.py`, `tutor/live.py`):**
   - Every sentence now requires a starting capital letter and ending `.`, `!`, or `?` before unlocking artwork (fast ~1.5s turn with the sentence pre-filled in the box and cursor placed right at the fix).

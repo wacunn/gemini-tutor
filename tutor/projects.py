@@ -519,6 +519,68 @@ def latest_art_target(proj: dict[str, Any]) -> str:
     return ""
 
 
+def undo_or_move_beat(proj: dict[str, Any], target: str, move_end_to_middle: bool = False, sandbox: bool | None = None) -> tuple[str, str]:
+    """Undoes the beat at `target` (returning its text so the child can edit/replace it),
+    OR when `move_end_to_middle=True` moves an accidental `spine:end` sentence into `middle_beats[0]` and reopens `spine_end`!"""
+    sp = proj.setdefault("spine", {})
+    if move_end_to_middle and sp.get("end"):
+        moved_txt = str(sp.get("end") or "")
+        mbs = list(middle_beats_list(sp))
+        mbs.append(
+            {
+                "text": moved_txt,
+                "image": sp.get("end_image"),
+                "src": sp.get("end_src"),
+                "status": sp.get("end_status") or ("done" if sp.get("end_image") else None),
+                "verified": False,
+            }
+        )
+        sp["middle_beats"] = mbs
+        sp["middle"] = " ".join(b.get("text", "") for b in mbs)
+        sp["end"] = ""
+        sp["end_image"] = None
+        sp["end_src"] = None
+        sp["end_status"] = None
+        sp["end_verified"] = False
+        proj["stage"] = "spine_end"
+        save_project(proj, sandbox=sandbox)
+        return moved_txt, "moved_to_middle"
+
+    if target == "spine:beginning":
+        old_txt = str(sp.get("beginning") or "")
+        sp["beginning"] = ""
+        sp["beginning_image"] = None
+        sp["beginning_src"] = None
+        sp["beginning_status"] = None
+        sp["beginning_verified"] = False
+        proj["stage"] = "spine_beginning"
+        save_project(proj, sandbox=sandbox)
+        return old_txt, "undone"
+
+    if target == "spine:end":
+        old_txt = str(sp.get("end") or "")
+        sp["end"] = ""
+        sp["end_image"] = None
+        sp["end_src"] = None
+        sp["end_status"] = None
+        sp["end_verified"] = False
+        proj["stage"] = "spine_end"
+        save_project(proj, sandbox=sandbox)
+        return old_txt, "undone"
+
+    if target.startswith("spine:middle_"):
+        removed = remove_art_beat(proj, target, sandbox=sandbox)
+        proj["stage"] = "spine_middle"
+        save_project(proj, sandbox=sandbox)
+        return removed, "undone"
+
+    if target.startswith("panel:"):
+        removed = remove_art_beat(proj, target, sandbox=sandbox)
+        return removed, "undone"
+
+    return "", "noop"
+
+
 def remove_art_beat(proj: dict[str, Any], target: str, sandbox: bool | None = None) -> str:
     """Removes an accidental/unwanted middle twist or panel so a book never gets permanently stuck."""
     sp = proj.setdefault("spine", {})

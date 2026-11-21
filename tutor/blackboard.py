@@ -171,8 +171,8 @@ class WorkingMemoryBlackboard:
             "ask_mode": "ask_one",  # "ask_one" | "accept_flow"
             "priority_skills": ["complete_sentence", "spelling", "verb_ending", "end_mark", "capital"],
             "spell_rung": 3,
-            "scaffold": "starter_chips",
-            "use_starters": True,
+            "scaffold": "none",
+            "use_starters": False,
             "suggest_pen": False,
         }
         self.next_beat_cache: dict[str, dict[str, Any]] = {}
@@ -230,10 +230,14 @@ You read the Shared Working-Memory Blackboard policy set by the background coach
        - rung 4: give 2-3 `spell_options` including the right spelling
        - rung 5: full word-parts card
 
-3. KID-FACING SPEECH & NEXT BEAT (`kid_words`, `next_spoken`, `next_input`, `starters`, `book_title`):
-   - NEVER use school words: complete sentence, punctuation, connector, conjunction, clause, fragment, run-on, grammar, tier, Act I/II/III. ("capital", "period", "spelling" are fine.)
-   - If `accept: false`: `kid_words` = 1-2 short, funny comic-world sentences asking for that ONE fix; `input_prompt` = short bar cue.
-   - If `accept: true`: `kid_words` = 1 punchy reaction to his story beat; `next_spoken` = 1-2 specific story questions for the NEXT beat ({next_goal}) reminding him of what just happened; `next_input` = short question for the input bar; `starters` = 2-3 short `"…"` sentence openers (3-6 words, never full sentences!); `book_title` = punchy 2-5 word comic title with clean spelling (e.g. "Dylan and the Farting Cat").
+3. KID-FACING SPEECH & NEXT BEAT (`kid_words`, `next_spoken`, `next_input`, `book_title`):
+   - TONE: Calm, plain, matter-of-fact—NEVER Blippi, NEVER kids'-TV hype ("Whoa!", "Super stinky!", "Oh no, poor guy!", "Comic gold!", "Epic!"), NEVER babyish metaphors ("little dot", "big and tall like a superhero", "crash the printer").
+   - Just use normal direct words: "Add a period at the end.", "Capitalize the first letter.", "Check the spelling of 'fase'."
+   - ZERO PLOT SUGGESTING: NEVER invent story ideas, potions, rockets, or "Does X or Y happen?" choices! Ask short, OPEN questions ("How does the whole story end?", "What happens next?") using ONLY what {name} already wrote.
+   - `starters`: leave `[]` empty unless he wrote "idk".
+   - `book_title`: 2-4 words using ONLY words/concepts ALREADY in his sentence (never invent future plot words like "Blast" or "Revenge"!).
+   - If `accept: false`: `kid_words` = 1 short, plain sentence asking directly for that ONE fix; `input_prompt` = short bar cue.
+   - If `accept: true`: `kid_words` = brief 2-5 word plain acknowledgment ("Got it.", "Okay, locked in."); `next_spoken` = 1 short, open question for {next_goal} with ZERO plot suggestions; `next_input` = short open question for the input bar.
 
 Return STRICT JSON:
 {{"check":{{"sentences":[{{"text":"...","complete":true,"issue":"none","capital_ok":true,"end_ok":true,"clause_type":"simple|compound|complex|fragment|run_on"}}],"misspellings":[],"grammar_fixes":[]}},
@@ -339,10 +343,10 @@ def local_reflex_fallback(
         "scaffold": "none",
         "chips": [],
         "prefill": raw,
-        "kid_words": "Nice—sending that straight to the comic artist!",
+        "kid_words": "Got it.",
         "input_prompt": next_goal[:90],
         "deferred": [],
-        "next_scaffold": "starter_chips" if policy.get("use_starters", True) else "none",
+        "next_scaffold": "none",
         "today_state": {"energy": policy.get("energy", "medium"), "willingness": policy.get("willingness", "medium"), "note": "instant local reflex"},
         "rationale": "Instant local reflex kept turn under 1s while API was busy/rate-limited.",
         "guardrail": "local_reflex",
@@ -356,14 +360,14 @@ def local_reflex_fallback(
                 focus="complete_sentence",
                 scaffold="partial_frame",
                 prefill=raw.rstrip(".!? ") + " ",
-                kid_words="Almost ready to draw—finish what happens in that line so the artist knows what to sketch!",
-                input_prompt="Finish what happens right in the box and hit Enter",
+                kid_words="That's part of a sentence—finish what happens so it's a complete thought.",
+                input_prompt="Finish the sentence in the box and hit Enter",
             )
         elif has_runon:
             decision.update(
                 accept=False,
                 focus="run_on",
-                kid_words="Whoa, a lot happens at once! Split 'and then' with a period so each moment pops.",
+                kid_words="Split 'and then' into two sentences with a period and a capital letter.",
                 input_prompt="Split 'and then' into two sentences with a period",
             )
         elif policy.get("ask_mode") == "ask_one" and ms:
@@ -374,8 +378,8 @@ def local_reflex_fallback(
                 focus_word=m0["wrote"],
                 focus_correct=m0["meant"],
                 spell_rung=3,
-                kid_words=f"Love that scene! Quick check on \"{m0['wrote']}\" before we ink the panel.",
-                input_prompt=f"Fix \"{m0['wrote']}\" in your sentence and hit Enter",
+                kid_words=f"Check the spelling of '{m0['wrote']}' in your box and hit Enter.",
+                input_prompt=f"Fix '{m0['wrote']}' in your sentence and hit Enter",
             )
         elif policy.get("ask_mode") == "ask_one" and gf:
             g0 = gf[0]
@@ -385,21 +389,21 @@ def local_reflex_fallback(
                 focus="verb_ending",
                 focus_word=g0["wrote"],
                 focus_correct=opts[0],
-                kid_words=f"Great twist! Check \"{g0['wrote']}\"—try \"{opts[0]}\" so the action fits.",
-                input_prompt=f"Update \"{g0['wrote']}\" in your sentence and hit Enter",
+                kid_words=f"Change '{g0['wrote']}' to '{opts[0]}' in your box and hit Enter.",
+                input_prompt=f"Change '{g0['wrote']}' to '{opts[0]}' and hit Enter",
             )
-        elif policy.get("ask_mode") == "ask_one" and no_end and policy.get("energy") == "high":
+        elif policy.get("ask_mode") == "ask_one" and no_end:
             decision.update(
                 accept=False,
                 focus="end_mark",
-                kid_words="Slap a period or ! on the end so the letterer knows the line is done!",
-                input_prompt="Add a . or ! at the end and hit Enter",
+                kid_words="Add a period (or ! or ?) at the end of your sentence.",
+                input_prompt="Add a period, !, or ? at the end and hit Enter",
             )
 
     beat = {
-        "spoken_prompt": f"Got it: \"{raw[:70]}\"! {next_goal}",
+        "spoken_prompt": next_goal,
         "input_prompt": next_goal[:95],
-        "starters": ["When that happened…", "Because of that…", "Suddenly, …"] if policy.get("use_starters", True) else [],
+        "starters": [],
         "kernel_1": "",
         "kernel_2": "",
         "connectors": "when | because | but",
@@ -487,29 +491,49 @@ def fast_reflex_turn(
             out["focus_word"] = pick_ms["wrote"]
             out["focus_correct"] = pick_ms["meant"]
             out["spell_rung"] = max(3, int(policy.get("spell_rung", 3)))
-            out["kid_words"] = f"Love that wild scene! Quick check on '{pick_ms['wrote']}' before the comic printer draws it."
+            out["kid_words"] = f"Check the spelling of '{pick_ms['wrote']}' in your box and hit Enter."
             out["input_prompt"] = f"Fix '{pick_ms['wrote']}' in your sentence and hit Enter"
 
-        out["next_scaffold"] = "starter_chips" if policy.get("use_starters", True) else "none"
+        out["next_scaffold"] = "none"
         out["today_state"] = {
             "energy": policy.get("energy", "medium"),
             "willingness": policy.get("willingness", "medium"),
             "note": "blackboard reflex",
         }
         decision = coach.validate(out, raw, chk, session)
-        for k in ("kid_words", "input_prompt"):
-            if coach.SCHOOL_VOCAB.search(decision.get(k) or ""):
-                decision[k] = coach._sanitize(decision.get(k) or "")
+        # Deterministic plain, zero-Blippi phrasing for all routine writing fixes!
+        foc = decision.get("focus")
+        if not decision.get("accept"):
+            if foc == "capital":
+                decision["kid_words"] = "Capitalize the first letter at the start of your sentence."
+                decision["input_prompt"] = "Capitalize the first letter at the start and hit Enter"
+            elif foc == "end_mark":
+                decision["kid_words"] = "Add a period (or ! or ?) at the end of your sentence."
+                decision["input_prompt"] = "Add a period, !, or ? at the end and hit Enter"
+            elif foc == "spelling" and decision.get("focus_word"):
+                decision["kid_words"] = f"Check the spelling of '{decision['focus_word']}' (highlighted in your box) and hit Enter."
+                decision["input_prompt"] = f"Fix '{decision['focus_word']}' in your sentence and hit Enter"
+            elif foc == "verb_ending" and decision.get("focus_word"):
+                opt0 = decision.get("focus_correct") or ""
+                decision["kid_words"] = f"Change '{decision['focus_word']}' to '{opt0}' in your box and hit Enter."
+                decision["input_prompt"] = f"Change '{decision['focus_word']}' to '{opt0}' and hit Enter"
+            elif foc == "complete_sentence":
+                decision["kid_words"] = "That's part of a sentence—finish what happens so it's a complete thought."
+                decision["input_prompt"] = "Finish the sentence in the box and hit Enter"
+            elif foc == "run_on":
+                decision["kid_words"] = "Split 'and then' into two sentences with a period and a capital letter."
+                decision["input_prompt"] = "Split 'and then' into two sentences with a period"
+        else:
+            decision["kid_words"] = ""
+
         decision["latency_s"] = round(time.time() - t0, 2)
 
-        starters = [coach.as_starter(s) for s in (out.get("starters") or [])]
-        starters = [s for s in starters if s][:3]
-        next_spoken = coach._sanitize(str(out.get("next_spoken") or next_goal).strip())
-        next_input = coach._sanitize(str(out.get("next_input") or next_spoken[:90]).strip())
+        next_spoken = str(out.get("next_spoken") or next_goal).strip()
+        next_input = str(out.get("next_input") or next_spoken[:90]).strip()
         beat = {
             "spoken_prompt": next_spoken,
             "input_prompt": next_input,
-            "starters": starters if policy.get("use_starters", True) else [],
+            "starters": [],
             "book_title": str(out.get("book_title") or "").strip()[:56],
             "kernel_1": "",
             "kernel_2": "",

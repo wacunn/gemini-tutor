@@ -756,6 +756,7 @@ function renderItem(it) {
           el.querySelectorAll(".chip").forEach((x) => (x.disabled = true));
           b.classList.add("picked");
           begin();
+          addKid(esc(b.textContent));
           send({ type: "tap", value: b.textContent, prompt: it.prompt });
         };
       });
@@ -1110,7 +1111,10 @@ function handle(m) {
           $("micBtn").hidden = !!input.value.trim();
           let selStart = input.value.length;
           let selEnd = input.value.length;
-          if (m.select_word) {
+          if (Array.isArray(m.select_range) && m.select_range.length === 2) {
+            selStart = Math.max(0, Math.min(input.value.length, Number(m.select_range[0]) || 0));
+            selEnd = Math.max(selStart, Math.min(input.value.length, Number(m.select_range[1]) || 0));
+          } else if (m.select_word) {
             const escRe = String(m.select_word).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             const match = new RegExp(`\\b${escRe}\\b`, "i").exec(input.value) || new RegExp(escRe, "i").exec(input.value);
             if (match) {

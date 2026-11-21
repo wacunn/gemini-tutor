@@ -72,24 +72,18 @@ def _fmt_conns(conns: str) -> str:
     return ", ".join(parts[:-1]) + f", or {parts[-1]}" if len(parts) > 2 else f"{parts[0]} or {parts[1]}"
 
 
-DIRECTOR_SYSTEM = """You are a sharp, curious AI story & writing director working with a smart Grade 3–4 child with ADHD (NEVER babyish, NEVER cringe slang, NEVER robotic worksheet language).
-Your job: generate the exact next prompt by reading THEIR actual characters, plot, or claim so far!
-
+DIRECTOR_SYSTEM = """You are a calm, clear writing & story director working with a smart Grade 3–4 child with ADHD.
 CRITICAL RULES:
-1. ALWAYS REMIND + ASK SPECIFICALLY: Briefly remind them of the exact detail from their story/pitch so they don't have to hold it in working memory, then ask a curious, specific question ('where', 'why', 'how', 'what goes wrong first when...') that zooms into THIS exact beat!
-   - BAD (generic static script): "Your story is all set, so let's zoom into Panel 1. Write one complete sentence describing the very first moment."
-   - GOOD: "Bob just got a small, smelly cat! Where on earth did he find it, and why did he bring it home?"
-   - GOOD: "Okay, that cat stinks. What disaster does the smell cause first—and why?"
-2. Let the QUESTION draw out the skill: 'why' questions invite "because", 'what happened when' invites "when", 'but then' invites "but". NEVER name grammar ideas. Never say: complete sentence, punctuation, connector, conjunction, clause, grammar, Act I/II/III, tier.
-3. Keep `spoken_prompt` to 1–2 crisp, natural sentences.
-4. `starters`: 2–3 short tappable sentence STARTERS (3–6 words, ending in "…") built from THEIR characters that use the target linking words (e.g. "Bob barfed because…", "When the cat walked in, …"). Starters, never full sentences.
-5. Also output `kernel_1` and `kernel_2`: two short (5–8 word) optional spark sentences using THEIR exact characters/topic (never write the combined sentence for them).
+1. ZERO PLOT SUGGESTING: NEVER invent story events, magic potions, rockets, monsters, or either/or plot choices ("Does he drink a potion or blast off?"). It is 100% THEIR story!
+2. REMIND + ASK OPENLY: Briefly name what JUST happened in their own words so they know which panel/step they are on, then ask ONE short, open question ("What happens in Panel 2?", "What does Dylan do right after that?", "Why did that happen?").
+3. TONE: Plain, normal, matter-of-fact adult voice. Zero hype ("Whoa!", "Super stinky!", "Comic gold!", "Epic!"), zero baby talk.
+4. Leave `starters` as `[]`.
 Return strict JSON:
-{"spoken_prompt":"1-2 natural sentences reminding them of their story + asking a specific question for this beat.",
- "input_prompt":"Short 1-line specific question for the input bar.",
- "starters":["Bob barfed because…","When the cat…"],
- "kernel_1":"Short optional spark sentence 1 from their story.",
- "kernel_2":"Short optional spark sentence 2 from their story.",
+{"spoken_prompt":"1-2 plain, open sentences referencing only what they already wrote + asking what happens in this panel/step.",
+ "input_prompt":"Short 1-line open question for the input bar.",
+ "starters":[],
+ "kernel_1":"Short sentence 1 from their story.",
+ "kernel_2":"Short sentence 2 from their story.",
  "connectors":"when | because | but"}"""
 
 
@@ -174,9 +168,20 @@ def generate_combine_scaffold(
 
 
 def _infer_book_title(beginning_sentence: str, suggested: str = "") -> str:
+    src_words = {
+        blackboard.COMMON_TYPOS.get(w.lower(), w.lower()).rstrip("s")
+        for w in re.findall(r"[A-Za-z0-9']+", beginning_sentence or "")
+    }
     sug = (suggested or "").strip().strip('"\'.!?')
-    if sug and sug.lower() not in {"punchy comic title", "untitled", "untitled graphic novel"} and 2 <= len(sug.split()) <= 7:
-        return sug
+    if sug and sug.lower() not in {"punchy comic title", "untitled", "untitled graphic novel"} and 2 <= len(sug.split()) <= 6:
+        sug_content = [
+            w.lower().rstrip("s")
+            for w in re.findall(r"[A-Za-z0-9']+", sug)
+            if w.lower() not in {"the", "a", "an", "and", "of", "in", "on", "to", "his", "her", "story", "adventure", "trouble"}
+        ]
+        # Only accept `suggested` if EVERY content word actually came from the child's sentence!
+        if sug_content and all(any(sw.startswith(sc[:4]) or sc.startswith(sw[:4]) for sw in src_words if len(sw) >= 3) for sc in sug_content if len(sc) >= 4):
+            return sug
     words = re.findall(r"[A-Za-z0-9']+", beginning_sentence or "")
     stop = {
         "the", "a", "an", "in", "on", "at", "when", "once", "there", "was", "is", "are", "were",
@@ -615,17 +620,13 @@ class SessionController:
             }
         )
         self.ui_locked_this_turn.update({"show_choices", "ask_input"})
-        reaction = ((self.last_coach or {}).get("kid_words") or "").strip()
-        lead = f"{reaction} " if reaction else ""
-        spoken = f"{lead}I'm drawing {label} right now—as soon as it pops up, tell me if I got your scene right or if I missed something!"
+        spoken = f"Drawing {label} now. Check the picture on the right when it appears to make sure it matches your story."
         return {
             "kind": self.last_kid_kind,
             "art_check_target": target,
             "spoken_fallback": spoken,
             "ui": ui_actions,
-            "directive": (
-                f'React warmly in 1 short sentence to their line, and tell them you are drawing {label} right now so they can check if the picture matches their story BEFORE you move to the next part. Do NOT ask the next story plot question yet!'
-            ),
+            "directive": f'Say ONLY this exact sentence calmly and plainly (no "Whoa!", no "Oh no!", no plot questions yet): "{spoken}"',
         }
 
     def prompt_after_art_rendered(self, target: str) -> tuple[list[dict[str, Any]], str, str]:
@@ -638,18 +639,22 @@ class SessionController:
                 "item": {
                     "id": "art_check_choices",
                     "kind": "choices",
-                    "prompt": "Did I draw your scene right, or did I miss something?",
-                    "options": ["✓ Looks right — next part!", "↻ Not quite — fix picture"],
+                    "prompt": "Does this picture & step match your story?",
+                    "options": [
+                        "✓ Looks right — next part!",
+                        "↻ Not quite — fix picture",
+                        "↶ Undo / change this sentence",
+                    ],
                 },
             },
             {
                 "type": "input",
                 "mode": "type",
-                "prompt": "Does the picture match your story? Tap 'Looks right' or tell me what to fix!",
+                "prompt": "Tap 'Looks right', 'Fix picture', or 'Undo / change this sentence':",
             },
         ]
-        spoken = "Take a look at your picture—did I get your scene right, or did I misunderstand something?"
-        return ui, f'Ask in 1 short sentence: "{spoken}"', spoken
+        spoken = "Check your picture—does it match your story, or should we fix or undo it?"
+        return ui, f'Say plainly in 1 short sentence: "{spoken}"', spoken
 
     def start_fix_art_prompt(self, target: str) -> dict[str, Any]:
         """Enters friendly-blame clarification mode for any specific beat or panel."""
@@ -720,79 +725,182 @@ class SessionController:
             return True
         return False
 
+    @staticmethod
+    def _is_wrong_slot_or_undo(raw: str) -> tuple[bool, bool]:
+        """Returns (matched, move_end_to_middle). Catches 'that wasn't the end, you asked what happened next' or 'undo / change this sentence'!"""
+        t = (raw or "").strip()
+        if not t or '"' in t or "“" in t:
+            return False, False
+        low = t.lower()
+        if re.search(
+            r"\b(wasn'?t the end|not the end|not the ending|not the finale|wasn'?t the finale|asked what happened next|"
+            r"that'?s what happens next|that was the middle|meant the middle|not how it ends)\b",
+            low,
+        ):
+            return True, True
+        if re.search(
+            r"\b(undo / change this sentence|undo this|take that back|go back a step|wrong step|delete that sentence|change this sentence)\b",
+            low,
+        ) or low in {"undo", "go back"}:
+            return True, False
+        return False, False
+
+    def _handle_wrong_slot_or_undo(self, epoch: int, move_end_to_middle: bool) -> dict[str, Any]:
+        assert self.project is not None
+        target = self.pending_art_target or projects.latest_art_target(self.project)
+        self.pending_art_target = ""
+        sp = self.project.get("spine") or {}
+        do_move = bool(move_end_to_middle and sp.get("end"))
+        old_txt, action = projects.undo_or_move_beat(self.project, target, move_end_to_middle=do_move, sandbox=self.test_mode)
+        ui_u: list[dict[str, Any]] = [
+            {"type": "remove", "id": "art_check_choices"},
+            {"type": "remove", "id": "starters"},
+            {"type": "item", "item": projects.project_ui_payload(self.project)},
+            {"type": "goal", "text": self.goal_badge()},
+        ]
+        if action == "moved_to_middle":
+            self.phase = "STORY_SPINE"
+            self.last_kid_kind = "STEP_MOVED"
+            ui_u.append(
+                {
+                    "type": "input",
+                    "mode": "type",
+                    "prompt": "Plot Board Step 2 — The Ending (very end of the whole book): How does the story finally end?",
+                    "prefill": "",
+                }
+            )
+            self.ui_locked_this_turn.update({"ask_input", "show_choices"})
+            spoken = (
+                f'My bad—I moved "{old_txt}" to Middle Event #1 right after the beginning, and cleared The Ending. '
+                "Now jump all the way to the very end of the whole book: how does the story finally end?"
+            )
+            return {
+                "epoch": epoch,
+                "kind": self.last_kid_kind,
+                "spoken_fallback": spoken,
+                "ui": ui_u,
+                "directive": f'Say ONLY this exact clarification calmly: "{spoken}"',
+            }
+
+        self.phase = "STORY_SPINE" if self.project.get("stage", "").startswith("spine_") else "BUILDING"
+        self.last_kid_kind = "STEP_UNDONE"
+        ui_u.append(
+            {
+                "type": "input",
+                "mode": "type",
+                "prompt": "Edit or replace your sentence below and hit Enter:",
+                "prefill": old_txt,
+            }
+        )
+        self.ui_locked_this_turn.update({"ask_input", "show_choices"})
+        spoken = "Undid that step and put your sentence back in the box so you can change or replace it."
+        return {
+            "epoch": epoch,
+            "kind": self.last_kid_kind,
+            "spoken_fallback": spoken,
+            "ui": ui_u,
+            "directive": f'Say ONLY this exact sentence calmly: "{spoken}"',
+        }
+
     def _beat_input(self, ui: list[dict[str, Any]], beat: dict[str, Any]) -> None:
-        """Next story question + (if the Coach thinks he still needs them) tappable sentence starters."""
+        """Next story question — never dumps unsolicited plot-suggesting starter chips onto open story beats."""
         ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": "", "hint_pen": bool(self.coach_session.get("suggest_pen"))})
-        starters = beat.get("starters") or []
-        if self.coach_session.get("next_scaffold", "starter_chips") == "starter_chips" and starters:
-            self.coach_session["offered_chips"] = starters
-            ui.append({"type": "item", "item": {"id": "starters", "kind": "starters", "options": starters}})
+        if beat.get("force_starters") and beat.get("starters"):
+            self.coach_session["offered_chips"] = beat["starters"]
+            ui.append({"type": "item", "item": {"id": "starters", "kind": "starters", "options": beat["starters"]}})
         else:
             self.coach_session["offered_chips"] = []
             ui.append({"type": "remove", "id": "starters"})
 
     def _prompt_spine_step(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
+        """Deterministic, crystal-clear Plot Board prompts—NEVER drops which structural step we are on and NEVER suggests plot ideas!"""
         assert self.project is not None
         stage = self.project.get("stage", "spine_beginning")
         sp = self.project.get("spine") or {}
         mbeats = projects.middle_beats_list(sp)
         self.phase = "STORY_SPINE"
+        self._cached_beat = None  # Never let an LLM paraphrase drop the structural Plot Board step!
+        ui.append({"type": "remove", "id": "starters"})
 
         if stage == "spine_beginning":
-            ui.append({"type": "input", "mode": "type", "prompt": "Kickoff (Unlocks Cover Art): Who is your main character and what weird trouble starts the story?", "prefill": ""})
-            self.ui_locked_this_turn.update({"show_card", "ask_input"})
-            return ui, (
-                f"{'Resuming' if resumed else 'Starting'} {self.name}'s Graphic Novel! "
-                "In 1–2 plain sentences, tell them they can pick any comic art style on the right, and we'll map the Kickoff, the Big Finale, and then all the wild twists in the middle—ask who the main character is and what kicks off the trouble (unlocks Cover Art)."
+            spoken = (
+                f"{'Welcome back to' if resumed else 'Starting'} your Graphic Novel. "
+                "Step 1 on the Plot Board is the Beginning: who is the main character, and what problem starts the story?"
             )
+            ui.append(
+                {
+                    "type": "input",
+                    "mode": "type",
+                    "prompt": "Plot Board Step 1 — The Beginning: Who is the main character, and what starts the story?",
+                    "prefill": "",
+                }
+            )
+            self.ui_locked_this_turn.update({"show_card", "ask_input"})
+            return ui, f'Say ONLY this exact prompt calmly and plainly: "{spoken}"'
 
         if stage == "spine_end":
-            beat = self._pop_or_direct_beat(
-                "Remind the student specifically of their Beginning, and ask a curious question jumping to the BIG FINALE at the very end of the book: how does this whole crazy story end up or pay off?",
-                "finally | so | when",
+            # Note: if `middle_beats` already has a moved beat (e.g. from "that wasn't the end"), acknowledge it cleanly!
+            spoken = (
+                "Step 2 on your Plot Board is the Ending. Before we fill in the middle, jump all the way to the very end of the whole book: "
+                "how does this story finally end?"
             )
-            self._beat_input(ui, beat)
+            ui.append(
+                {
+                    "type": "input",
+                    "mode": "type",
+                    "prompt": "Plot Board Step 2 — The Ending (very end of the whole book): How does the story finally end?",
+                    "prefill": "",
+                }
+            )
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
-            return ui, f"Cover Art is rendering! Deliver this specific Finale question in 1–2 plain sentences: {beat['spoken_prompt']}"
+            return ui, f'Say ONLY this exact prompt calmly and plainly (do NOT add any plot suggestions!): "{spoken}"'
 
-        # stage == "spine_middle": iterative middle twists bridging Beginning -> Big Finale!
+        # stage == "spine_middle": iterative middle events bridging Beginning -> Ending!
         n_mid = len(mbeats)
+        beg_short = (sp.get("beginning") or "")[:90].rstrip(". ")
+        end_short = (sp.get("end") or "")[:90].rstrip(". ")
         if n_mid == 0:
-            beat = self._pop_or_direct_beat(
-                "Remind the student specifically of where they START in the Beginning (they are STILL at the beginning location right now—NOT at the finale yet!), and ask what the FIRST big problem or wild twist in the middle is.",
-                "because | when | but",
+            spoken = (
+                f'Now we have the Beginning ("{beg_short}") and the Ending ("{end_short}"). '
+                "Going back to right after the beginning, what happens first in the middle?"
             )
-            self._beat_input(ui, beat)
-            self.ui_locked_this_turn.update({"show_card", "ask_input"})
-            return ui, f"Finale Art is rendering! Now start building the middle twists in 1–2 plain sentences: {beat['spoken_prompt']}"
-
-        if n_mid == 1:
-            beat = self._pop_or_direct_beat(
-                "Stay in the CURRENT location of Middle Twist #1 (they have NOT reached the finale yet!) and ask what happens NEXT right after Twist #1.",
-                "when | because | but",
+            ui.append(
+                {
+                    "type": "input",
+                    "mode": "type",
+                    "prompt": "Plot Board Step 3 — Middle Event #1 (right after the beginning): What happens first in the middle?",
+                    "prefill": "",
+                }
             )
-            self._beat_input(ui, beat)
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
-            return ui, f"Twist #1 Art is rendering! Ask what ELSE happens next in the middle in 1–2 plain sentences: {beat['spoken_prompt']}"
+            return ui, f'Say ONLY this exact prompt calmly and plainly (do NOT suggest plot events!): "{spoken}"'
 
-        beat = self._pop_or_direct_beat(
-            f"Stay in the EXACT CURRENT location/situation of Middle Twist #{n_mid} (do NOT say they are already at the finale setting!) and ask what happens next right after Twist #{n_mid}—or mention they can tap 'Start Chapter 1 panels'.",
-            "when | because | but | so",
-        )
+        last_mid = (mbeats[-1].get("text") or "")[:90].rstrip(". ")
         ui.append(
             {
                 "type": "item",
                 "item": {
                     "id": "spine_more_choices",
                     "kind": "choices",
-                    "prompt": f"{n_mid} middle twists locked! Add another middle event, or start drawing Chapter 1?",
+                    "prompt": f"{n_mid} middle event{'s' if n_mid != 1 else ''} on the Plot Board. Add another middle event, or start Chapter 1 panels?",
                     "options": ["Start Chapter 1 panels →", "Add another middle twist"],
                 },
             }
         )
-        self._beat_input(ui, beat)
+        spoken = (
+            f'Right after "{last_mid}", what happens next in the middle before the ending? '
+            "(Or tap Start Chapter 1 panels if your outline is ready.)"
+        )
+        ui.append(
+            {
+                "type": "input",
+                "mode": "type",
+                "prompt": f"Middle Event #{n_mid + 1}: What happens next in the middle? (Or tap 'Start Chapter 1 panels')",
+                "prefill": "",
+            }
+        )
         self.ui_locked_this_turn.update({"show_card", "show_choices", "ask_input"})
-        return ui, f"Twist #{n_mid} Art is rendering! Ask what else happens in the middle (or invite starting Chapter 1 panels) in 1–2 plain sentences: {beat['spoken_prompt']}"
+        return ui, f'Say ONLY this exact prompt calmly and plainly (do NOT suggest plot events!): "{spoken}"'
 
     def _prompt_next_book_panel(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
         assert self.project is not None
@@ -1321,7 +1429,7 @@ class SessionController:
                 "focus_word": g0["wrote"],
                 "focus_correct": opt0,
                 "focus_options": g0.get("options") or [],
-                "kid_words": f"Love that line! Quick fix on '{g0['wrote']}'—try '{opt0}' ({g0.get('rule', '')}).",
+                "kid_words": f"Change '{g0['wrote']}' to '{opt0}' ({g0.get('rule', '')}).",
                 "input_prompt": f"Change '{g0['wrote']}' to '{opt0}' in your box and hit Enter",
                 "guardrail": "homework_grammar_required",
             }
@@ -1329,27 +1437,33 @@ class SessionController:
         # HOMEWORK RULE 3: Every sentence MUST start with a Capital AND end with . ! or ? before moving on!
         if decision["accept"] and (miss_cap or miss_end):
             if miss_cap and miss_end:
-                kw = "Great scene! Add a capital letter at the start and a period or ! at the end so we can draw it."
-                ip = "Capitalize the first letter + add a . or ! at the end, then hit Enter"
+                kw = "Capitalize the first letter at the start and add a period at the end."
+                ip = "Capitalize the first letter + add a period at the end, then hit Enter"
                 cpos = 0
+                srange = [0, 1]
             elif miss_cap:
-                kw = "Almost ready to draw! Capitalize the first letter at the start of your sentence and hit Enter."
+                kw = "Capitalize the first letter at the start of your sentence."
                 ip = "Capitalize the first letter at the start and hit Enter"
                 cpos = 0
+                srange = [0, 1]
             else:
-                kw = "Almost ready to draw! Pop a period, !, or ? on the end of your sentence and hit Enter."
-                ip = "Add a . ! or ? at the end and hit Enter"
+                kw = "Add a period (or ! or ?) at the end of your sentence."
+                ip = "Add a period, !, or ? at the end and hit Enter"
                 cpos = len(raw)
+                srange = None
             decision = {
                 **decision,
                 "accept": False,
                 "focus": "capital" if miss_cap else "end_mark",
                 "cursor_pos": cpos,
+                "select_range": srange,
                 "kid_words": kw,
                 "input_prompt": ip,
                 "rationale": "Homework standard: starting capital and end mark (. ! ?) required before moving on.",
                 "guardrail": "homework_cap_period_required",
             }
+        elif not decision["accept"] and decision.get("focus") == "capital":
+            decision["select_range"] = [0, 1]
 
         # Bonus efficiency: if asking to fix a spelling word AND missing capital/period, mention both in the prompt so he can fix both in 1 shot!
         if not decision["accept"] and decision["focus"] == "spelling" and (miss_cap or miss_end):
@@ -1415,7 +1529,9 @@ class SessionController:
             self.coach_session["offered_chips"] = d["chips"]
             ui.append({"type": "item", "item": {"id": "starters", "kind": "starters", "options": d["chips"]}})
         if inp:
-            if isinstance(d.get("cursor_pos"), int):
+            if isinstance(d.get("select_range"), list) and len(d["select_range"]) == 2:
+                inp["select_range"] = d["select_range"]
+            elif isinstance(d.get("cursor_pos"), int):
                 inp["cursor_pos"] = d["cursor_pos"]
             ui.append(inp)
         self.ui_locked_this_turn.update({"ask_input", "show_choices", "show_card", "show_word"})
@@ -1423,10 +1539,7 @@ class SessionController:
             "kind": self.last_kid_kind,
             "ui": ui,
             "spoken_fallback": d.get("kid_words") or d.get("input_prompt") or "",
-            "directive": (
-                f'Say this to {self.name} in your own natural voice (1–2 short sentences, same meaning, no extra corrections, '
-                f'no school words like "complete sentence" or "punctuation"): "{d["kid_words"]}"'
-            ),
+            "directive": f'Say ONLY this exact sentence calmly and matter-of-factly (no "Whoa!", no "Oh no!", no superhero/dot metaphors): "{d["kid_words"]}"',
             "coach": {k: d.get(k) for k in ("accept", "focus", "focus_word", "spell_rung", "scaffold", "rationale", "guardrail", "today_state", "latency_s")},
         }
 
@@ -1450,9 +1563,15 @@ class SessionController:
         self.turn_index += 1
         self.last_kid_text = raw
 
+        # ---------------- 00-PRE. WRONG STORY SLOT / UNDO STEP ("that wasn't the end. you asked what happened next.") ----------------
+        if self.project and self.phase not in ("INLINE_WORD_HELP", "WORD_STUDY"):
+            is_undo, move_end = self._is_wrong_slot_or_undo(raw)
+            if is_undo:
+                return self._handle_wrong_slot_or_undo(epoch, move_end)
+
         # ---------------- 00. PICTURE APPROVAL & COLLABORATIVE REDRAW ("Did I draw your scene right?") ----------------
         if self.phase == "AWAITING_ART_CHECK" and self.pending_art_target:
-            if any(k in norm for k in ("looks right", "looks good", "next part", "keep going", "nailed it")) or norm in {"yes", "yep", "yeah", "good", "ok", "okay", "next", "right"}:
+            if any(k in norm for k in ("looks right", "looks good", "next part", "keep going", "nailed it", "matches my story")) or norm in {"yes", "yep", "yeah", "good", "ok", "okay", "next", "right"}:
                 res_plan = self._continue_after_art_approved([])
                 res_plan["epoch"] = epoch
                 return res_plan
@@ -2117,6 +2236,28 @@ class SessionController:
                     "In ONE short plain sentence, confirm you're right here and invite finishing the current step on screen."
                 ),
             }
+
+        # ---------------- 3B-FIX. SINGLE-WORD / PUNCTUATION FIX RECOVERY (e.g. typing "He" when asked to capitalize "he is sad, and in pain.") ----------------
+        last_req_fix = self.coach_session.get("last_request") or {}
+        prev_sent_fix = str(last_req_fix.get("sentence") or "").strip()
+        if prev_sent_fix and how in ("typed", "handwritten") and self.phase not in ("INLINE_WORD_HELP", "WORD_STUDY"):
+            lfoc = last_req_fix.get("focus")
+            prev_words_fix = _words(prev_sent_fix)
+            if lfoc == "capital" and len(wlist) == 1 and raw[:1].isupper() and prev_words_fix and wlist[0].lower() == prev_words_fix[0].lower():
+                raw = re.sub(rf"^\s*{re.escape(prev_words_fix[0])}\b", wlist[0], prev_sent_fix, count=1, flags=re.I)
+                norm = _norm(raw)
+                wlist = _words(raw)
+                self.last_kid_text = raw
+            elif lfoc == "end_mark" and raw in {".", "!", "?"}:
+                raw = prev_sent_fix.rstrip(".!? ") + raw
+                norm = _norm(raw)
+                wlist = _words(raw)
+                self.last_kid_text = raw
+            elif lfoc in ("spelling", "verb_ending") and 1 <= len(wlist) <= 2 and last_req_fix.get("focus_word") and norm not in AVOIDANCE_WORDS:
+                raw = _splice_word_into_sentence(prev_sent_fix, str(last_req_fix["focus_word"]), raw)
+                norm = _norm(raw)
+                wlist = _words(raw)
+                self.last_kid_text = raw
 
         # ---------------- 3C. DISENGAGEMENT -> ADAPTIVE COACH (falls back to the legacy rules below) ----------------
         is_refusal = any(re.search(p, norm) for p in REFUSAL_PATTERNS)

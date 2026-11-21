@@ -422,7 +422,7 @@ class TutorSession:
         fb = spoken_fallback or ((self.ctrl.last_coach or {}).get("kid_words") or "")
         full = (
             f"{prefix}{payload}{notes}\n"
-            f"[TURN PLAN (follow strictly; speak ONCE in 1-2 sentences and do NOT repeat after tool calls): {directive}]"
+            f"[TURN PLAN — SPEAK CALMLY AND MATTER-OF-FACTLY IN 1-2 PLAIN SENTENCES. DO NOT ADD 'Whoa!', 'Oh no!', 'Poor guy!', 'Super stinky!', JOKES, BABY METAPHORS ('little dot', 'big like a superhero'), OR PLOT SUGGESTIONS. DELIVER ONLY THIS: {directive}]"
         )
         await self._send_content(full, image, spoken_fallback=fb)
 
