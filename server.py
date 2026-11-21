@@ -65,22 +65,30 @@ class SetupIn(BaseModel):
 
 
 @app.get("/api/state")
-def state():
+def state(sandbox: int = 0):
     from tutor.projects import list_projects
 
+    is_sb = bool(sandbox)
     rec = load_learner()
     projs = [
         {
             "id": p["id"],
             "title": p.get("title", "Untitled"),
             "kind": p.get("kind", ""),
+            "badge": p.get("badge", "Book"),
+            "progress_label": p.get("progress_label", ""),
             "panel_count": p.get("panel_count", 0),
             "pdf_url": f"/api/project/{p['id']}/pdf",
         }
-        for p in list_projects()[:6]
+        for p in list_projects(sandbox=is_sb)[:20]
+    ]
+    acts = [
+        {"id": a["id"], "title": a.get("title", "Mini-Game"), "summary": a.get("summary", "")}
+        for a in list_activities(sandbox=is_sb)[:12]
     ]
     return {
         "has_key": bool(api_key()),
+        "sandbox": is_sb,
         "name": rec.get("name"),
         "grade": rec.get("grade"),
         "parent_title": rec.get("parent_title"),
@@ -88,7 +96,38 @@ def state():
         "voices": VOICES,
         "sessions": len(rec.get("sessions", [])),
         "projects": projs,
-        "pieces": [{"id": p["id"], "title": p["title"], "audience": p.get("audience", "")} for p in list_pieces()[:12]],
+        "activities": acts,
+        "pieces": [{"id": p["id"], "title": p["title"], "audience": p.get("audience", "")} for p in list_pieces(sandbox=is_sb)[:12]],
+    }
+
+
+@app.get("/api/library")
+def library(sandbox: int = 0):
+    from tutor.projects import list_projects
+
+    is_sb = bool(sandbox)
+    return {
+        "sandbox": is_sb,
+        "projects": [
+            {
+                "id": p["id"],
+                "title": p.get("title", "Untitled"),
+                "kind": p.get("kind", ""),
+                "badge": p.get("badge", "Book"),
+                "progress_label": p.get("progress_label", ""),
+                "panel_count": p.get("panel_count", 0),
+                "pdf_url": f"/api/project/{p['id']}/pdf",
+            }
+            for p in list_projects(sandbox=is_sb)[:30]
+        ],
+        "activities": [
+            {"id": a["id"], "title": a.get("title", "Mini-Game"), "summary": a.get("summary", "")}
+            for a in list_activities(sandbox=is_sb)[:15]
+        ],
+        "pieces": [
+            {"id": p["id"], "title": p["title"], "audience": p.get("audience", "")}
+            for p in list_pieces(sandbox=is_sb)[:15]
+        ],
     }
 
 
@@ -236,6 +275,35 @@ def version_info():
     return {"version": updater.local_version(), "repo": updater.REPO}
 
 
+@app.get("/api/health")
+async def health_check():
+    """Verifies REST + Live v1alpha WebSocket connectivity with the configured API key."""
+    from tutor.config import FAST_MODEL, LIVE_FALLBACK_MODELS, api_key, genai_client
+
+    if not api_key():
+        return {"ok": False, "error": "No Gemini API key configured yet."}
+    try:
+        def _rest():
+            c = genai_client()
+            r = c.models.generate_content(model=FAST_MODEL, contents="OK")
+            return bool(r.text)
+
+        await asyncio.to_thread(_rest)
+    except Exception as e:
+        return {"ok": False, "stage": "rest", "error": str(e)[:240]}
+
+    c_live = genai_client(live=True)
+    last_err = ""
+    for m in LIVE_FALLBACK_MODELS:
+        try:
+            async with c_live.aio.live.connect(model=m, config={"response_modalities": ["AUDIO"]}):
+                return {"ok": True, "live_model": m, "rest_model": FAST_MODEL}
+        except Exception as e:
+            last_err = str(e)[:240]
+            continue
+    return {"ok": False, "stage": "live_websocket", "error": last_err}
+
+
 @app.get("/api/update/check")
 async def update_check():
     from tutor import updater
@@ -327,6 +395,44 @@ def media_file(mid: str):
     if not p.exists():
         raise HTTPException(404)
     return FileResponse(str(p), media_type="image/jpeg")
+
+
+class RenameIn(BaseModel):
+    title: str
+
+
+@app.post("/api/project/{pid}/rename")
+def rename_proj(pid: str, body: RenameIn):
+    from tutor.projects import rename_project
+
+    p = rename_project(pid, body.title)
+    if not p:
+        raise HTTPException(404, "Project not found")
+    return {"ok": True, "title": p["title"]}
+
+
+@app.delete("/api/project/{pid}")
+def delete_proj(pid: str, sandbox: int = 0):
+    from tutor.projects import delete_project
+
+    delete_project(pid, sandbox=bool(sandbox))
+    return {"ok": True}
+
+
+@app.delete("/api/activity/{aid}")
+def delete_act(aid: str, sandbox: int = 0):
+    from tutor.record import delete_activity
+
+    delete_activity(aid, sandbox=bool(sandbox))
+    return {"ok": True}
+
+
+@app.delete("/api/piece/{pid}")
+def delete_pc(pid: str, sandbox: int = 0):
+    from tutor.record import delete_piece
+
+    delete_piece(pid, sandbox=bool(sandbox))
+    return {"ok": True}
 
 
 @app.get("/api/project/{pid}/pdf")

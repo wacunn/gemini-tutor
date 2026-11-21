@@ -14,7 +14,7 @@ from google import genai
 from google.genai import types
 
 from . import curriculum_tracker
-from .config import FALLBACK_MODEL, HYDROGEN_MODEL, REVIEW_MODEL, SESSIONS, api_key
+from .config import FALLBACK_MODEL, HYDROGEN_MODEL, REVIEW_MODEL, SESSIONS, api_key, genai_client
 from .observers import targets_text
 from .record import list_activities, load_learner, read_session, save_activity, save_learner
 
@@ -178,7 +178,7 @@ def review_session(session_id: str) -> dict[str, Any]:
         f"Return JSON with exactly these keys:\n{json.dumps(SCHEMA_HINT, indent=2)}"
     )
 
-    client = genai.Client(api_key=key)
+    client = genai_client()
     last_err = None
     result = None
     for model in (REVIEW_MODEL, HYDROGEN_MODEL, "gemini-3.1-pro-preview", FALLBACK_MODEL):

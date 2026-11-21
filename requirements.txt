@@ -1,5 +1,6 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 pydantic>=2.6
-google-genai>=1.50
+google-genai>=1.60
+certifi>=2024.2.2
 pillow>=10

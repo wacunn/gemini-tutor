@@ -3,8 +3,11 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+const IS_SANDBOX = new URLSearchParams(location.search).get("sandbox") === "1";
+
 const state = {
   name: "",
+  sandbox: IS_SANDBOX,
   ws: null,
   wsOpen: false,
   queue: [],
@@ -22,7 +25,7 @@ const state = {
 // ---------------------------------------------------------------- setup
 
 async function boot() {
-  const st = await (await fetch("/api/state")).json();
+  const st = await (await fetch(`/api/state?sandbox=${IS_SANDBOX ? 1 : 0}`)).json();
   state.name = st.name || "";
   if (!st.name || !st.has_key) {
     $("setup").hidden = false;
@@ -48,44 +51,148 @@ async function boot() {
     return;
   }
   $("app").hidden = false;
-  $("helloText").textContent = `Hi ${st.name}`;
-  renderHeroStarters(st.projects || []);
+  if (IS_SANDBOX) {
+    $("sandboxBanner").hidden = false;
+    $("sandboxLink").hidden = true;
+    $("helloText").textContent = "Parent Sandbox";
+  } else {
+    $("helloText").textContent = `Hi ${st.name}`;
+  }
+  renderHeroStarters(st.projects || [], st.activities || []);
+  wireLibrarySheet();
   $("input").focus();
-  fetch("/api/prewarm", { method: "POST" }).catch(() => {});
+  if (!IS_SANDBOX) fetch("/api/prewarm", { method: "POST" }).catch(() => {});
 }
 
-function renderHeroStarters(savedProjects) {
-  const box = $("heroStarters");
-  if (!box) return;
-  let html = "";
-  if (savedProjects.length) {
-    html += `<div><div class="starter-group-label">Continue Saved Book</div><div class="starter-row">` +
-      savedProjects.map((p) =>
-        `<div class="starter-card" data-open-proj="${esc(p.id)}"><div class="st-title">${esc(p.title)}</div><div class="st-sub">${p.panel_count} panel(s) saved · Click to continue (or <a href="${esc(p.pdf_url)}" target="_blank" onclick="event.stopPropagation()" style="color:var(--blue)">Download PDF</a>)</div></div>`
-      ).join("") + `</div></div>`;
-  }
-  html += `<div><div class="starter-group-label">Multi-Session Books (Save Progress &amp; Export PDF)</div><div class="starter-row">
-    <button type="button" class="starter-card" data-tap="Start a Full Comic Book (Save & PDF)"><div class="st-title">Full Comic Book (PDF Book)</div><div class="st-sub">Beginning → Middle → End story spine, then zoom in up to 100 panels with dialogue</div></button>
-    <button type="button" class="starter-card" data-tap="3-Source Fact & Invention Codex (PDF)"><div class="st-title">3-Source Fact &amp; Invention Codex</div><div class="st-sub">Read real science/engineering dossiers &amp; write illustrated encyclopedia pages</div></button>
-    <button type="button" class="starter-card" data-tap="4-Page Persuasive Pitch ('Why We Should…')"><div class="st-title">4-Page Persuasive Pitch</div><div class="st-sub">Build an illustrated Claim → Evidence → Counter-Argument → Deal book</div></button>
-  </div></div>
-  <div><div class="starter-group-label">Quick / Low-Friction Today (~10 Min · Voice or Typing)</div><div class="starter-row">
-    <button type="button" class="starter-card" data-tap="Quick 3-Panel Strip (10 min)"><div class="st-title">Quick 3-Panel Strip</div><div class="st-sub">Fast setup, twist, and payoff</div></button>
-    <button type="button" class="starter-card" data-tap="Build a Live Mini-Game (10 min)"><div class="st-title">Build a Live Mini-Game</div><div class="st-sub">Code a playable sentence-driven game on the spot</div></button>
-  </div></div>`;
-  box.innerHTML = html;
-  box.querySelectorAll("[data-open-proj]").forEach((el) => {
+function projectCardHtml(p) {
+  const meta = p.progress_label || `${p.panel_count || 0} panel(s)`;
+  return `<div class="starter-card" data-open-proj="${esc(p.id)}">
+    <div class="st-title">${esc(p.title)}</div>
+    <div class="st-sub">${esc(meta)} · Click to continue</div>
+    <div class="card-meta-actions" onclick="event.stopPropagation()">
+      <a href="${esc(p.pdf_url)}" target="_blank">Download PDF</a>
+      <button type="button" data-ren-proj="${esc(p.id)}" data-cur-title="${esc(p.title)}">✎ Rename</button>
+      <button type="button" class="del" data-del-proj="${esc(p.id)}" data-cur-title="${esc(p.title)}">× Delete</button>
+    </div>
+  </div>`;
+}
+
+function activityCardHtml(a) {
+  return `<div class="starter-card" data-open-act="${esc(a.id)}">
+    <div class="st-title">${esc(a.title || "Mini-Game")}</div>
+    <div class="st-sub">Live Mini-Game · Click to reopen</div>
+    <div class="card-meta-actions" onclick="event.stopPropagation()">
+      <a href="/activity/${esc(a.id)}" target="_blank">Open tab</a>
+      <button type="button" class="del" data-del-act="${esc(a.id)}" data-cur-title="${esc(a.title || "Game")}">× Delete</button>
+    </div>
+  </div>`;
+}
+
+function bindShelfActions(container, onMutate) {
+  container.querySelectorAll("[data-open-proj]").forEach((el) => {
     el.onclick = () => {
+      $("libSheet").hidden = true;
       begin();
-      addKid(`Continue “${esc(el.querySelector(".st-title")?.textContent || "Book")}”`);
+      addKid(`Open “${esc(el.querySelector(".st-title")?.textContent || "Book")}”`);
       send({ type: "open_project", id: el.dataset.openProj });
     };
   });
-  box.querySelectorAll("[data-tap]").forEach((el) => {
+  container.querySelectorAll("[data-open-act]").forEach((el) => {
+    el.onclick = () => {
+      $("libSheet").hidden = true;
+      begin();
+      addKid(`Reopen game “${esc(el.querySelector(".st-title")?.textContent || "Game")}”`);
+      send({ type: "open_activity_saved", id: el.dataset.openAct });
+    };
+  });
+  container.querySelectorAll("[data-ren-proj]").forEach((btn) => {
+    btn.onclick = async () => {
+      const next = prompt("New title for this book:", btn.dataset.curTitle || "");
+      if (!next || !next.trim()) return;
+      await fetch(`/api/project/${encodeURIComponent(btn.dataset.renProj)}/rename`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: next.trim() }),
+      });
+      if (state.wsOpen) send({ type: "rename_project", id: btn.dataset.renProj, title: next.trim() });
+      onMutate();
+    };
+  });
+  container.querySelectorAll("[data-del-proj]").forEach((btn) => {
+    btn.onclick = async () => {
+      if (!confirm(`Delete “${btn.dataset.curTitle || "this book"}”?`)) return;
+      await fetch(`/api/project/${encodeURIComponent(btn.dataset.delProj)}?sandbox=${IS_SANDBOX ? 1 : 0}`, { method: "DELETE" });
+      onMutate();
+    };
+  });
+  container.querySelectorAll("[data-del-act]").forEach((btn) => {
+    btn.onclick = async () => {
+      if (!confirm(`Delete game “${btn.dataset.curTitle || "Game"}”?`)) return;
+      await fetch(`/api/activity/${encodeURIComponent(btn.dataset.delAct)}?sandbox=${IS_SANDBOX ? 1 : 0}`, { method: "DELETE" });
+      onMutate();
+    };
+  });
+}
+
+async function refreshHeroShelf() {
+  const st = await (await fetch(`/api/state?sandbox=${IS_SANDBOX ? 1 : 0}`)).json();
+  renderHeroStarters(st.projects || [], st.activities || []);
+}
+
+function renderHeroStarters(savedProjects, savedActivities = []) {
+  const box = $("heroStarters");
+  if (!box) return;
+  let html = "";
+  if (savedProjects.length || savedActivities.length) {
+    html += `<div><div class="starter-group-label">${IS_SANDBOX ? "Sandbox Shelf (Isolated from child's books)" : "Saved Books, Strips &amp; Mini-Games (Continue Anytime)"}</div><div class="starter-row">` +
+      savedProjects.map(projectCardHtml).join("") +
+      savedActivities.slice(0, 4).map(activityCardHtml).join("") +
+      `</div></div>`;
+  }
+  html += `<div><div class="starter-group-label">Start a Brand-New Book (Save Multiple &amp; Export PDF)</div><div class="starter-row">
+    <button type="button" class="starter-card" data-new-kind="epic_graphic_novel"><div class="st-title">+ New Graphic Novel (PDF Book)</div><div class="st-sub">Beginning → Middle → End story spine, then zoom in up to 100 panels with dialogue</div></button>
+    <button type="button" class="starter-card" data-new-kind="epic_codex"><div class="st-title">+ New 3-Source Fact Codex</div><div class="st-sub">Read real science/engineering dossiers &amp; write illustrated encyclopedia pages</div></button>
+    <button type="button" class="starter-card" data-new-kind="medium_pitch"><div class="st-title">+ New 4-Page Persuasive Pitch</div><div class="st-sub">Build an illustrated Claim → Evidence → Counter-Argument → Deal book</div></button>
+  </div></div>
+  <div><div class="starter-group-label">Quick / Low-Friction Today (~10 Min · Voice or Typing)</div><div class="starter-row">
+    <button type="button" class="starter-card" data-new-kind="quick_strip"><div class="st-title">+ Quick 3-Panel Strip (PDF)</div><div class="st-sub">Fast setup, twist, and payoff</div></button>
+    <button type="button" class="starter-card" data-new-kind="quick_game"><div class="st-title">+ Build a Live Mini-Game</div><div class="st-sub">Code a playable sentence-driven game on the spot</div></button>
+  </div></div>`;
+  box.innerHTML = html;
+  bindShelfActions(box, refreshHeroShelf);
+  box.querySelectorAll("[data-new-kind]").forEach((el) => {
     el.onclick = () => {
       begin();
-      addKid(esc(el.querySelector(".st-title")?.textContent || el.dataset.tap));
-      send({ type: "tap", value: el.dataset.tap, prompt: "Starter menu" });
+      addKid(esc(el.querySelector(".st-title")?.textContent || "New Project"));
+      send({ type: "new_project", kind: el.dataset.newKind, title: "" });
+    };
+  });
+}
+
+async function openLibrarySheet() {
+  $("libSheet").hidden = false;
+  const lib = await (await fetch(`/api/library?sandbox=${IS_SANDBOX ? 1 : 0}`)).json();
+  const listEl = $("libList");
+  const cards = [
+    ...(lib.projects || []).map(projectCardHtml),
+    ...(lib.activities || []).map(activityCardHtml),
+  ];
+  listEl.innerHTML = cards.length ? cards.join("") : '<div class="muted" style="padding:6px 2px">No saved books yet—start one above!</div>';
+  bindShelfActions(listEl, openLibrarySheet);
+}
+
+function wireLibrarySheet() {
+  $("libBtn").onclick = openLibrarySheet;
+  $("libClose").onclick = () => ($("libSheet").hidden = true);
+  $("libNewRow").querySelectorAll("[data-new-kind]").forEach((btn) => {
+    btn.onclick = () => {
+      const title = ($("newProjTitle").value || "").trim();
+      $("newProjTitle").value = "";
+      $("libSheet").hidden = true;
+      begin();
+      const label = btn.querySelector(".st-title")?.textContent || "New Project";
+      addKid(esc(title ? `${label}: “${title}”` : label));
+      send({ type: "new_project", kind: btn.dataset.newKind, title });
     };
   });
 }
@@ -95,7 +202,7 @@ function renderHeroStarters(savedProjects) {
 function connect() {
   if (state.ws) return;
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/ws/live`);
+  const ws = new WebSocket(`${proto}://${location.host}/ws/live${IS_SANDBOX ? "?test=1" : ""}`);
   ws.binaryType = "arraybuffer";
   state.ws = ws;
   ws.onopen = () => {
@@ -462,9 +569,19 @@ function renderItem(it) {
     case "saved":
       upsertInline(it.id, `<div class="saved"><svg style="width:20px;height:20px"><use href="#spark"/></svg><span>Saved “${esc(it.title)}”</span><a href="${esc(it.url)}" target="_blank">Open</a> · <a href="/api/piece/${esc(it.id)}/pdf" target="_blank">Download PDF</a></div>`);
       break;
-    case "book_project":
-      canvasPane("book", "Book · PDF", renderBookProject(it));
+    case "book_project": {
+      const pane = canvasPane("book", "Book · PDF", renderBookProject(it));
+      const sw = pane.querySelector("[data-switch-book]");
+      if (sw) sw.onclick = openLibrarySheet;
+      const rn = pane.querySelector("[data-rename-cur]");
+      if (rn) {
+        rn.onclick = () => {
+          const next = prompt("Book title:", it.title || "");
+          if (next && next.trim()) send({ type: "rename_project", id: it.id, title: next.trim() });
+        };
+      }
       break;
+    }
     case "comic":
       canvasPane("comic", "Comic", renderComic(it));
       break;
@@ -486,16 +603,57 @@ function renderItem(it) {
   }
 }
 
+function renderSpineRow(label, text, src, status, placeholder) {
+  const thumb = src
+    ? `<div class="spine-thumb"><img src="${esc(src)}" alt=""></div>`
+    : status === "drawing"
+    ? `<div class="spine-thumb drawing"><div class="shimmer" style="height:100%"></div></div>`
+    : `<div class="spine-thumb empty"><span>Art unlocks</span></div>`;
+  return `<div class="spine-row-card">
+    <div class="spine-beat">
+      <strong>${esc(label)}</strong>
+      <div style="margin-top:4px">${text ? esc(text) : `<span class="muted">${esc(placeholder)}</span>`}</div>
+    </div>
+    ${thumb}
+  </div>`;
+}
+
 function renderBookProject(b) {
   const sp = b.spine || {};
   const hasSpine = b.proj_kind === "epic_graphic_novel" || sp.beginning || sp.middle || sp.end;
   const spineHtml = hasSpine
     ? `<div class="spine-box">
-        <div class="spine-beat"><strong>Act I · Beginning:</strong> ${sp.beginning ? esc(sp.beginning) : '<span class="muted">Mapping now…</span>'}</div>
-        <div class="spine-beat"><strong>Act II · Middle (But/When):</strong> ${sp.middle ? esc(sp.middle) : '<span class="muted">Up next…</span>'}</div>
-        <div class="spine-beat"><strong>Act III · End (So/Finally):</strong> ${sp.end ? esc(sp.end) : '<span class="muted">Up next…</span>'}</div>
+        ${renderSpineRow("Act I · Beginning (Cover Art)", sp.beginning, sp.beginning_src || b.cover_src, sp.beginning_status, "Write Act I to unlock your Cover Art!")}
+        ${renderSpineRow("Act II · Twist & Problem", sp.middle, sp.middle_src, sp.middle_status, "Write Act II to unlock Twist Art!")}
+        ${renderSpineRow("Act III · Climax & Ending", sp.end, sp.end_src, sp.end_status, "Write Act III to unlock Climax Art!")}
       </div>`
     : "";
+
+  const codexLiveHtml =
+    b.proj_kind === "epic_codex" && (b.codex_sketch_src || b.codex_sketch_status === "drawing" || (b.codex_draft_sentences || []).length)
+      ? `<div class="spine-box">
+          <div class="spine-row-card">
+            <div class="spine-beat">
+              <strong>Active Codex Specimen Draft</strong>
+              ${b.codex_sketch_caption ? `<div class="muted" style="font-size:.84rem;margin-top:3px">Inference: “${esc(b.codex_sketch_caption)}”</div>` : ""}
+              ${(b.codex_draft_sentences || []).length
+                ? `<div style="margin-top:8px">${b.codex_draft_sentences.map((s, idx) => `<div><span class="muted">${idx + 1}/3:</span> ${esc(s)}</div>`).join("")}</div>`
+                : `<div class="muted" style="margin-top:6px">Drafting 3-sentence Encyclopedia Entry…</div>`}
+            </div>
+            ${b.codex_sketch_src
+              ? `<div class="spine-thumb"><img src="${esc(b.codex_sketch_src)}" alt=""></div>`
+              : b.codex_sketch_status === "drawing"
+              ? `<div class="spine-thumb drawing"><div class="shimmer" style="height:100%"></div></div>`
+              : ""}
+          </div>
+        </div>`
+      : "";
+
+  const stepsDone =
+    (sp.beginning ? 1 : 0) + (sp.middle ? 1 : 0) + (sp.end ? 1 : 0) + (b.panel_count || 0);
+  const stepsGoal = b.proj_kind === "epic_graphic_novel" ? Math.max(5, stepsDone + 1) : (b.target_panels || 4);
+  const pct = Math.min(100, Math.round((stepsDone / Math.max(1, stepsGoal)) * 100));
+  const progHtml = `<div class="book-prog"><div class="book-prog-fill" style="width:${pct}%"></div></div>`;
 
   const chHtml = (b.chapters || [])
     .map((ch) => {
@@ -516,15 +674,23 @@ function renderBookProject(b) {
     .join("");
 
   return `<div class="book-head">
-      <div><div class="comic-title" style="margin:0">${esc(b.title || "Untitled Book")}</div>
-      <div class="muted" style="font-size:.86rem">${b.panel_count || 0} panel(s) auto-saved · Progresses across sessions</div></div>
+      <div>
+        <div class="comic-title" style="margin:0;display:flex;align-items:center;gap:10px">
+          <span>${esc(b.title || "Untitled Book")}</span>
+          <button type="button" class="text-btn" style="font-size:.82rem;padding:4px 8px" data-rename-cur="1" title="Rename this book">✎ Rename</button>
+        </div>
+        <div class="muted" style="font-size:.86rem">${esc(b.progress_label || `${b.panel_count || 0} panel(s)`)} · Auto-saved${b.sandbox ? " (Sandbox)" : ""}</div>
+      </div>
       <div class="book-actions">
+        <button type="button" class="pill-btn" data-switch-book="1">Save &amp; Switch / New</button>
         <a class="text-btn" href="${esc(b.web_url)}" target="_blank">Web view</a>
         <a class="btn-primary" href="${esc(b.pdf_url)}" target="_blank">Download PDF</a>
       </div>
     </div>
+    ${progHtml}
     ${spineHtml}
-    ${chHtml || '<div class="muted" style="padding:12px 2px">Panels will appear here as soon as your Story Spine locks in. You can download an updated PDF at any stage!</div>'}`;
+    ${codexLiveHtml}
+    ${chHtml || '<div class="muted" style="padding:8px 2px">Each completed beat unlocks live artwork right here and updates your downloadable PDF immediately!</div>'}`;
 }
 
 function renderComic(c) {
@@ -621,6 +787,9 @@ function handle(m) {
         $("goalPill").textContent = m.text;
       }
       break;
+    case "reward":
+      if (m.label) showRewardBadge(m.label);
+      break;
     case "input":
       setAsk(m.prompt, m.mode);
       if (typeof m.prefill === "string") {
@@ -664,6 +833,35 @@ function handle(m) {
       toast(m.message);
       break;
   }
+}
+
+function playRewardChime() {
+  try {
+    ensureAudio();
+    if (!playCtx) return;
+    const now = playCtx.currentTime;
+    [523.25, 659.25].forEach((freq, idx) => {
+      const osc = playCtx.createOscillator();
+      const gain = playCtx.createGain();
+      osc.type = "triangle";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.001, now + idx * 0.09);
+      gain.gain.exponentialRampToValueAtTime(0.06, now + idx * 0.09 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + idx * 0.09 + 0.24);
+      osc.connect(gain).connect(playCtx.destination);
+      osc.start(now + idx * 0.09);
+      osc.stop(now + idx * 0.09 + 0.25);
+    });
+  } catch (_) {}
+}
+
+function showRewardBadge(label) {
+  playRewardChime();
+  const el = document.createElement("div");
+  el.className = "reward-pill";
+  el.textContent = label;
+  stream.appendChild(el);
+  scrollDown();
 }
 
 function toast(text) {

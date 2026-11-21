@@ -19,17 +19,14 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from .config import FALLBACK_MODEL, FAST_MODEL, HYDROGEN_MODEL, api_key
+from .config import FALLBACK_MODEL, FAST_MODEL, HYDROGEN_MODEL, genai_client
 
 CHECK_MODEL = FAST_MODEL  # sub-second synchronous syntax/spelling check on hot path
 INVENT_MODEL = HYDROGEN_MODEL  # gemini-4-hydrogen for inventing tailored mechanics
 
 
 def _client() -> genai.Client:
-    key = api_key()
-    if not key:
-        raise RuntimeError("GEMINI_API_KEY not set")
-    return genai.Client(api_key=key)
+    return genai_client()
 
 
 def _json(text: str) -> Any:

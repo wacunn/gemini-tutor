@@ -14,7 +14,7 @@ from typing import Any, AsyncIterator
 from google import genai
 from google.genai import types
 
-from .config import BUILDER_MODEL, FALLBACK_MODEL, api_key
+from .config import BUILDER_MODEL, FALLBACK_MODEL, genai_client
 
 BRIDGE = """<script>
 (function(){
@@ -61,10 +61,7 @@ Hard requirements:
 
 
 def _client() -> genai.Client:
-    key = api_key()
-    if not key:
-        raise RuntimeError("GEMINI_API_KEY is not set")
-    return genai.Client(api_key=key)
+    return genai_client()
 
 
 def _clean_html(text: str) -> str:

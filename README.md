@@ -7,6 +7,7 @@ A local-first, voice + typing + stylus AI Language, Writing, Reading-to-Write, a
 - **3-Source Fact & Invention Codex (Reading Comprehension + Research Synthesis):** Presents 3 real science/engineering/history/acoustics sources (or generates a custom 3-source dossier on any topic the child asks to research), verifies causal inference (`C2.3 / C3.2`), builds a cohesive 3-sentence informational paragraph, and exports wide Encyclopedia PDF spreads.
 - **4-Page Persuasive Pitch Book (`POW+TREE`):** Scaffolds *Claim → Evidence (`because/since`) → Counter-Argument (`although/even though`) → Final Deal* into an illustrated PDF Case File.
 - **Quick Sprints & Voice-to-Draft Mode:** 3-Panel Strips, live HTML5 sentence-driven mini-games, spoken dictation-into-editable-box (`ORAL_DRAFT`) for low-energy ADHD days, and guaranteed daily Leitner Spaced Word Forge.
+- **Multi-Book Shelf & Parent Sandbox (`/?sandbox=1`):** Save and switch among multiple Graphic Novels, Codices, Persuasive Pitches, Strips, and Mini-Games via **Books / New**, or click **Parent Try-It** (`/?sandbox=1`) to test any studio and PDF export without touching your child's books, report card, or profile.
 
 ## One-Line Install (Mac, Windows PC & Chromebook)
 

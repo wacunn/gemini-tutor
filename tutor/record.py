@@ -109,21 +109,32 @@ def read_review(session_id: str) -> dict[str, Any] | None:
 
 # ---------- activities built on the spot ----------
 
-def save_activity(activity: dict[str, Any]) -> None:
-    ensure_dirs()
-    html = activity.pop("html", None)
+SANDBOX_ACTIVITIES: dict[str, dict[str, Any]] = {}
+SANDBOX_PIECES: dict[str, dict[str, Any]] = {}
+
+
+def save_activity(activity: dict[str, Any], sandbox: bool = False) -> None:
     aid = activity["id"]
+    if sandbox or aid.startswith("sbox_"):
+        prev = SANDBOX_ACTIVITIES.get(aid, {})
+        SANDBOX_ACTIVITIES[aid] = {**prev, **activity, "sandbox": True}
+        return
+    ensure_dirs()
+    act_copy = dict(activity)
+    html = act_copy.pop("html", None)
     if html is not None:
         (ACTIVITIES / f"{aid}.html").write_text(html, encoding="utf-8")
     meta_path = ACTIVITIES / f"{aid}.json"
     meta = {}
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    meta.update(activity)
+    meta.update(act_copy)
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
 
 def load_activity(aid: str) -> dict[str, Any] | None:
+    if aid in SANDBOX_ACTIVITIES:
+        return dict(SANDBOX_ACTIVITIES[aid])
     meta_path = ACTIVITIES / f"{aid}.json"
     html_path = ACTIVITIES / f"{aid}.html"
     if not meta_path.exists() or not html_path.exists():
@@ -133,7 +144,24 @@ def load_activity(aid: str) -> dict[str, Any] | None:
     return meta
 
 
-def list_activities() -> list[dict[str, Any]]:
+def delete_activity(aid: str, sandbox: bool = False) -> bool:
+    if aid in SANDBOX_ACTIVITIES:
+        del SANDBOX_ACTIVITIES[aid]
+        return True
+    if sandbox:
+        return False
+    removed = False
+    for ext in (".json", ".html"):
+        p = ACTIVITIES / f"{aid}{ext}"
+        if p.exists():
+            p.unlink()
+            removed = True
+    return removed
+
+
+def list_activities(sandbox: bool = False) -> list[dict[str, Any]]:
+    if sandbox:
+        return [{k: v for k, v in d.items() if k != "html"} for d in reversed(list(SANDBOX_ACTIVITIES.values()))]
     ensure_dirs()
     out = []
     for p in sorted(ACTIVITIES.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
@@ -146,17 +174,38 @@ def list_activities() -> list[dict[str, Any]]:
 
 # ---------- finished pieces of writing ----------
 
-def save_piece(piece: dict[str, Any]) -> None:
+def save_piece(piece: dict[str, Any], sandbox: bool = False) -> None:
+    pid = piece["id"]
+    if sandbox or pid.startswith("sbox_"):
+        SANDBOX_PIECES[pid] = {**piece, "sandbox": True}
+        return
     ensure_dirs()
-    (PIECES / f"{piece['id']}.json").write_text(json.dumps(piece, indent=2), encoding="utf-8")
+    (PIECES / f"{pid}.json").write_text(json.dumps(piece, indent=2), encoding="utf-8")
 
 
 def load_piece(pid: str) -> dict[str, Any] | None:
+    if pid in SANDBOX_PIECES:
+        return dict(SANDBOX_PIECES[pid])
     p = PIECES / f"{pid}.json"
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
 
-def list_pieces() -> list[dict[str, Any]]:
+def delete_piece(pid: str, sandbox: bool = False) -> bool:
+    if pid in SANDBOX_PIECES:
+        del SANDBOX_PIECES[pid]
+        return True
+    if sandbox:
+        return False
+    p = PIECES / f"{pid}.json"
+    if p.exists():
+        p.unlink()
+        return True
+    return False
+
+
+def list_pieces(sandbox: bool = False) -> list[dict[str, Any]]:
+    if sandbox:
+        return list(reversed(list(SANDBOX_PIECES.values())))
     ensure_dirs()
     out = []
     for p in sorted(PIECES.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):

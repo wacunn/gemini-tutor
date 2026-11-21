@@ -12,7 +12,7 @@ from google import genai
 from google.genai import types
 
 from . import thinking
-from .config import FALLBACK_MODEL, HYDROGEN_MODEL, api_key
+from .config import FALLBACK_MODEL, HYDROGEN_MODEL, genai_client
 
 CURATED_PACKS: list[dict[str, Any]] = [
     {
@@ -104,7 +104,7 @@ Return strict JSON:
 def pick_pack(already_used: list[str] | None = None, custom_topic: str = "") -> dict[str, Any]:
     if custom_topic.strip():
         try:
-            client = genai.Client(api_key=api_key())
+            client = genai_client()
             for model in (HYDROGEN_MODEL, FALLBACK_MODEL):
                 try:
                     r = client.models.generate_content(

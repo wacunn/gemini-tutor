@@ -18,7 +18,7 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from .config import DATA, FALLBACK_MODEL, api_key
+from .config import DATA, FALLBACK_MODEL, genai_client
 from .record import new_id
 
 MEDIA = DATA / "media"
@@ -28,10 +28,7 @@ VISION_MODEL = FALLBACK_MODEL  # gemini-3.5-flash
 
 
 def _client() -> genai.Client:
-    key = api_key()
-    if not key:
-        raise RuntimeError("GEMINI_API_KEY not set")
-    return genai.Client(api_key=key)
+    return genai_client()
 
 
 def media_path(mid: str) -> Path:

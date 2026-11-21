@@ -245,6 +245,7 @@
       </div>
       <div class="row">
         <button id="topUpdBtn" hidden>Update available — Update now</button>
+        <a href="/?sandbox=1"><button type="button" class="ghost">Try Tutor (Parent Sandbox)</button></a>
         <a href="/">Back to tutor</a>
       </div>
     </div>
@@ -292,6 +293,7 @@
           <div class="muted" id="updMsg">Installed version</div>
         </div>
         <div class="row">
+          <button id="testConn" class="ghost">Test Gemini connection</button>
           <button id="checkUpd" class="ghost">Check for updates</button>
           <button id="applyUpd" hidden>Update now</button>
           <button id="clearHist" class="ghost">Clear test sessions</button>
@@ -395,8 +397,14 @@
           });
         });
 
-        $("acts").innerHTML = d.activities.map(a => `<div class="card"><h3>${esc(a.title)}</h3><div class="muted">${esc(a.summary || a.description?.slice(0, 160) || "")}</div>${a.how_it_went ? `<div style="margin-top:6px">${esc(a.how_it_went)}</div>` : ""}<a href="/activity/${esc(a.id)}" target="_blank">Open</a></div>`).join("") || '<div class="muted">Nothing built yet.</div>';
-        $("books").innerHTML = (d.projects || []).map(p => `<div class="card"><h3>${esc(p.title || "Untitled Book")}</h3><div class="muted">${p.panel_count ?? 0} page/panel(s) · ${esc((p.kind || "").replace(/_/g, " "))}</div>${p.spine?.beginning ? `<div style="margin-top:6px;font-size:.86rem" class="muted">Arc: ${esc(p.spine.beginning.slice(0, 120))}</div>` : ""}<div class="row" style="margin-top:12px"><a href="/api/project/${esc(p.id)}/pdf" target="_blank"><button type="button">Download PDF</button></a><a href="/project/${esc(p.id)}" target="_blank">Web view</a></div></div>`).join("") || '<div class="card muted">No multi-session books started yet.</div>';
+        $("acts").innerHTML = d.activities.map(a => `<div class="card"><h3>${esc(a.title)}</h3><div class="muted">${esc(a.summary || a.description?.slice(0, 160) || "")}</div>${a.how_it_went ? `<div style="margin-top:6px">${esc(a.how_it_went)}</div>` : ""}<div class="row" style="margin-top:10px"><a href="/activity/${esc(a.id)}" target="_blank">Open</a><button type="button" class="ghost" data-del-act="${esc(a.id)}" style="padding:4px 10px;font-size:.8rem">Delete</button></div></div>`).join("") || '<div class="muted">Nothing built yet.</div>';
+        $("books").innerHTML = (d.projects || []).map(p => `<div class="card"><h3>${esc(p.title || "Untitled Book")}</h3><div class="muted">${esc(p.progress_label || `${p.panel_count ?? 0} page/panel(s)`)}</div>${p.spine?.beginning ? `<div style="margin-top:6px;font-size:.86rem" class="muted">Arc: ${esc(p.spine.beginning.slice(0, 120))}</div>` : ""}<div class="row" style="margin-top:12px"><a href="/api/project/${esc(p.id)}/pdf" target="_blank"><button type="button">Download PDF</button></a><a href="/project/${esc(p.id)}" target="_blank">Web view</a><button type="button" class="ghost" data-del-book="${esc(p.id)}" style="padding:5px 12px;font-size:.82rem">Delete</button></div></div>`).join("") || '<div class="card muted">No multi-session books started yet.</div>';
+        document.querySelectorAll("[data-del-book]").forEach(b => {
+          b.onclick = async () => { if (!confirm("Delete this saved book?")) return; await fetch("/api/project/" + b.dataset.delBook, { method: "DELETE" }); loadAll(); };
+        });
+        document.querySelectorAll("[data-del-act]").forEach(b => {
+          b.onclick = async () => { if (!confirm("Delete this saved game?")) return; await fetch("/api/activity/" + b.dataset.delAct, { method: "DELETE" }); loadAll(); };
+        });
 
         const sd = d.spelling_deck || {};
         $("spellingDeck").innerHTML = `<div class="card"><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:12px"><div><h3>Active Spaced Retrieval Queue (Ontario B2.1–B2.3 + Student Errors)</h3><div class="muted">${sd.mastered ?? 0} mastered · ${sd.in_progress ?? 0} in spaced review · ${sd.due_now ?? 0} due today</div></div></div>${(sd.cards || []).length ? `<div style="margin-top:10px">${sd.cards.map(c => `<span class="pill">${esc(c.word)} (${esc(c.parts || c.word)}) · Box ${c.box}/5</span>`).join("")}</div>` : '<div class="muted" style="margin-top:8px">Populates automatically from session spelling &amp; systematic Ontario morphology units.</div>'}</div>`;
@@ -470,6 +478,13 @@
         $("ver").textContent = "Version " + v.version;
         return v.version;
       }
+      $("testConn").onclick = async () => {
+        $("updMsg").textContent = "Testing Gemini Text & Live Voice connection…";
+        const r = await (await fetch("/api/health")).json();
+        $("updMsg").textContent = r.ok
+          ? `✓ Connected cleanly (Live model: ${r.live_model}, Text model: ${r.rest_model})`
+          : `✗ Connection error (${r.stage || "api"}): ${r.error}`;
+      };
       $("checkUpd").onclick = async () => {
         $("updMsg").textContent = "Checking…";
         const r = await (await fetch("/api/update/check")).json();

@@ -23,7 +23,7 @@ from google.genai import types
 
 from . import curriculum_tracker as ct
 from . import projects, research_packs, spelling_srs, thinking
-from .config import FALLBACK_MODEL, FAST_MODEL, api_key
+from .config import FALLBACK_MODEL, FAST_MODEL, genai_client
 from .record import save_learner
 
 PLANNER_MODEL = FAST_MODEL
@@ -70,18 +70,73 @@ def _fmt_conns(conns: str) -> str:
     return ", ".join(parts[:-1]) + f", or {parts[-1]}" if len(parts) > 2 else f"{parts[0]} or {parts[1]}"
 
 
-KERNEL_SYSTEM = """You generate a 2-kernel Sentence Combining scaffold for an intelligent child (see LEARNER CONTEXT below; NEVER use babyish 1st-grade farm/zoo/pet trivia and NEVER use cringe slang).
-Given the active story/book context (if any) and target connector/tier, output TWO short, concrete, action-packed simple sentences (5–8 words each) and 2–3 connectors that the student can combine into ONE strong sentence.
-Rules:
-- NEVER write the combined sentence for the student.
-- If a Story Spine or active story exists, build BOTH kernels directly from THEIR story/chapter so the plot advances causally!
-- If no premise exists yet, draw naturally from their interests/notes in LEARNER CONTEXT (or a crisp contraption/adventure moment if none listed).
-- NEVER use babyish filler prompts ("what a bear eats", "what color a cow is", "a cat sleeps").
+DIRECTOR_SYSTEM = """You are a sharp, curious AI story & writing director working with a smart Grade 3–4 child with ADHD (NEVER babyish, NEVER cringe slang, NEVER robotic worksheet language).
+Your job: generate the exact next prompt by reading THEIR actual characters, plot, or claim so far!
+
+CRITICAL RULES:
+1. ALWAYS REMIND + ASK SPECIFICALLY: Briefly remind them of the exact detail from their story/pitch so they don't have to hold it in working memory, then ask a curious, specific question ('where', 'why', 'how', 'what goes wrong first when...') that zooms into THIS exact beat!
+   - BAD (generic static script): "Your story is all set, so let's zoom into Panel 1. Write one complete sentence describing the very first moment."
+   - GOOD (specific AI story director): "At the start of your story, Bob gets a small, smelly cat! For Panel 1, where did Bob find that smelly cat, or why did he decide to bring it home? Tell me in one complete sentence!"
+   - GOOD (Act II complication): "Okay, Bob has his tiny smelly cat! For the middle of your story, what big problem does that awful smell cause for Bob—write a complete sentence using 'because', 'when', or 'but'!"
+2. Keep `spoken_prompt` to 1–2 crisp, natural sentences ending with the clear sentence/connector expectation.
+3. Also output `kernel_1` and `kernel_2`: two short (5–8 word) optional spark sentences using THEIR exact characters/topic (never write the combined sentence for them).
 Return strict JSON:
-{"kernel_1":"Complete short sentence 1.",
- "kernel_2":"Complete short sentence 2.",
- "connectors":"when | so",
- "ask_prompt":"Combine those two sentences into one sentence using 'when' or 'so' (or write your own complete sentence) to run the scene."}"""
+{"spoken_prompt":"1-2 natural sentences reminding them of their story + asking a specific question for this beat + naming the complete-sentence/connector goal.",
+ "input_prompt":"Short 1-line specific question + complete-sentence cue for the input bar.",
+ "kernel_1":"Short optional spark sentence 1 from their story.",
+ "kernel_2":"Short optional spark sentence 2 from their story.",
+ "connectors":"when | because | but"}"""
+
+
+def ai_direct_next_beat(
+    rec: dict[str, Any],
+    step_goal: str,
+    active_story: list[str],
+    spine_context: str = "",
+    connector_goal: str = "when | because | but",
+) -> dict[str, str]:
+    story_txt = "\n".join(f"- {s}" for s in active_story[-6:]) or "(none yet)"
+    notes_txt = "; ".join(n.get("note", "") for n in (rec.get("parent_notes") or [])[:5])
+    prompt = (
+        f"LEARNER: Grade {rec.get('grade', 3)}. Notes: {notes_txt or '(none)'}.\n"
+        f"STORY SPINE / BOOK CONTEXT SO FAR:\n{spine_context or '(starting now)'}\n"
+        f"RECENT SENTENCES WRITTEN BY STUDENT:\n{story_txt}\n"
+        f"CURRENT BEAT & SKILL GOAL:\n{step_goal}\n"
+        f"TARGET CONNECTORS: {connector_goal}"
+    )
+    try:
+        client = genai_client()
+        for model in (PLANNER_MODEL, FALLBACK_MODEL):
+            try:
+                resp = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=DIRECTOR_SYSTEM,
+                        temperature=0.45,
+                        response_mime_type="application/json",
+                    ),
+                )
+                out = thinking._json(resp.text)
+                if isinstance(out, dict) and out.get("spoken_prompt") and out.get("input_prompt"):
+                    return {
+                        "spoken_prompt": str(out["spoken_prompt"]).strip(),
+                        "input_prompt": str(out["input_prompt"]).strip(),
+                        "kernel_1": str(out.get("kernel_1") or "The door creaks open.").strip(),
+                        "kernel_2": str(out.get("kernel_2") or "Something unexpected jumps out.").strip(),
+                        "connectors": str(out.get("connectors") or connector_goal).strip(),
+                    }
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return {
+        "spoken_prompt": step_goal,
+        "input_prompt": step_goal,
+        "kernel_1": "The iron pressure plate clicks.",
+        "kernel_2": "A hidden piston drops the floor over lava.",
+        "connectors": connector_goal,
+    }
 
 
 def generate_combine_scaffold(
@@ -91,58 +146,81 @@ def generate_combine_scaffold(
     rung: str,
     spine_context: str = "",
 ) -> dict[str, str]:
-    story_txt = "\n".join(f"- {s}" for s in active_story[-5:]) or "(none yet)"
-    notes_txt = "; ".join(n.get("note", "") for n in (rec.get("parent_notes") or [])[:6])
-    interests_txt = ", ".join((rec.get("model") or {}).get("interests") or [])
     connector_goal = "when | because | if" if rung in ("B3.1_complex",) else "but | so | when"
-    prompt = (
-        f"LEARNER CONTEXT: Grade {rec.get('grade', 3)}. Notes: {notes_txt or '(none)'}. Interests: {interests_txt or '(open)'}.\n"
-        + (f"BOOK CONTEXT:\n{spine_context}\n" if spine_context else "")
-        + f"Recent sentences:\n{story_txt}\n"
-        f"Latest fragment/idea if any: {engaged_draft or '(none)'}\n"
-        f"Preferred connectors: {connector_goal}"
+    d = ai_direct_next_beat(
+        rec,
+        f"Help the student write the next complete sentence (latest fragment if any: {engaged_draft or 'none'}).",
+        active_story,
+        spine_context=spine_context,
+        connector_goal=connector_goal,
     )
-    try:
-        client = genai.Client(api_key=api_key())
-        for model in (PLANNER_MODEL, FALLBACK_MODEL):
-            try:
-                resp = client.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=KERNEL_SYSTEM,
-                        temperature=0.4,
-                        response_mime_type="application/json",
-                    ),
-                )
-                out = thinking._json(resp.text)
-                if isinstance(out, dict) and out.get("kernel_1") and out.get("kernel_2"):
-                    return {
-                        "kernel_1": str(out["kernel_1"]).strip(),
-                        "kernel_2": str(out["kernel_2"]).strip(),
-                        "connectors": str(out.get("connectors") or "when | so").strip(),
-                        "ask_prompt": str(
-                            out.get("ask_prompt")
-                            or "Combine the two lines on the card into one complete sentence."
-                        ).strip(),
-                    }
-            except Exception:
-                continue
-    except Exception:
-        pass
     return {
-        "kernel_1": "The iron pressure plate clicks.",
-        "kernel_2": "A hidden piston drops the floor over lava.",
-        "connectors": "when | so",
-        "ask_prompt": "Combine those two lines into one complete sentence using 'when' or 'so' (or write your own).",
+        "kernel_1": d["kernel_1"],
+        "kernel_2": d["kernel_2"],
+        "connectors": d["connectors"],
+        "ask_prompt": d["input_prompt"],
     }
 
 
 def _infer_book_title(beginning_sentence: str) -> str:
     words = re.findall(r"[A-Za-z0-9']+", beginning_sentence or "")
-    stop = {"the", "a", "an", "in", "on", "at", "when", "once", "there", "was", "is", "were", "he", "she", "they", "his", "her", "deep"}
+    stop = {"the", "a", "an", "in", "on", "at", "when", "once", "there", "was", "is", "were", "he", "she", "they", "his", "her", "deep", "gets", "got", "then"}
     picked = [w.capitalize() for w in words if w.lower() not in stop][:4]
     return " ".join(picked) if len(picked) >= 2 else "Original Graphic Novel"
+
+
+def _phrase_around_word(sentence: str, word: str) -> str:
+    tokens = sentence.split()
+    wlow = word.lower().strip(".,!?;:\"'()[]")
+    for i, tok in enumerate(tokens):
+        if tok.lower().strip(".,!?;:\"'()[]") == wlow:
+            lo = max(0, i - 1)
+            hi = min(len(tokens), i + 2)
+            return " ".join(tokens[lo:hi])
+    return word
+
+
+def _specific_spelling_pointer(sentence: str, wrote: str, meant: str, tier: int) -> str:
+    """Names the exact misspelled word (never vague 'fix spelling') and gives an age-appropriate clue at early tiers."""
+    w_low, m_low = wrote.lower(), meant.lower()
+    if " " in meant.strip():
+        n_words = len(meant.strip().split())
+        snip = _phrase_around_word(sentence, wrote)
+        return f'"{wrote}" in "{snip}" (hint: split into {n_words} separate words)'
+    if len(wrote) <= 3 and len(meant) <= 4:
+        snip = _phrase_around_word(sentence, wrote)
+        if m_low.endswith("th") and not w_low.endswith("th"):
+            return f'"{wrote}" in "{snip}" (hint: ends with "-th")'
+        return f'"{wrote}" in "{snip}" (check the exact spelling of this short word)' if tier <= 3 else f'"{wrote}" in "{snip}"'
+    if tier > 3:
+        return f'the spelling of "{wrote}"'
+    if m_low.endswith("ed") and not w_low.endswith("ed"):
+        return f'"{wrote}" (hint: base word + "-ed" past-tense ending)'
+    if m_low.endswith(("ed", "ing", "er", "est", "able")) and abs(len(meant) - len(wrote)) == 1:
+        return f'"{wrote}" (hint: check whether a letter doubles or silent-e drops before the ending)'
+    return f'"{wrote}" (hint: {len(meant)} letters, starts "{meant[:2]}…")'
+
+
+def _splice_word_into_sentence(sentence: str, wrote: str, replacement: str) -> str:
+    if not sentence:
+        return replacement
+    pat = re.compile(rf"\b{re.escape(wrote)}\b", re.IGNORECASE)
+
+    def _repl(m: re.Match[str]) -> str:
+        orig = m.group(0)
+        if orig[:1].isupper() and replacement[:1].isalpha():
+            return replacement[:1].upper() + replacement[1:]
+        return replacement
+
+    out, count = pat.subn(_repl, sentence, count=1)
+    if count == 0:
+        out = sentence.replace(wrote, replacement, 1)
+    out = out.strip()
+    if out and out[0].isalpha() and not out[0].isupper():
+        out = out[0].upper() + out[1:]
+    if out and not re.search(r'[.!?]["\')\]]*$', out):
+        out += "."
+    return out
 
 
 class SessionController:
@@ -191,6 +269,10 @@ class SessionController:
         self.active_mechanic: str = ""
 
         self.misspellings: list[dict[str, str]] = []
+        self.pending_spell_sentence: str = ""
+        self.pending_spell_targets: list[dict[str, str]] = []
+        self.phase_before_inline_help: str = "BUILDING"
+        self.inline_word_help_tries: int = 0
         self.word_target: dict[str, Any] | None = None
         self.word_study_done: bool = False
         self.word_study_tries: int = 0
@@ -253,12 +335,27 @@ class SessionController:
 
     # ---------------- GENRE STUDIO LAUNCHERS & PROMPTS ----------------
 
+    def _save_current_if_needed(self) -> None:
+        if self.project and projects.is_project_nonempty(self.project):
+            projects.save_project(self.project, sandbox=self.test_mode)
+
+    def _reset_item_buffers(self) -> None:
+        self.engaged_draft = ""
+        self.hint_step = 0
+        self.tier_nudged_this_item = False
+        self.pending_spell_sentence = ""
+        self.pending_spell_targets = []
+        self.inline_word_help_tries = 0
+        self.awaiting_codex_topic = False
+
     def resume_loaded_project(self, proj: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
-        """Genre-aware resume for any saved project (Graphic Novel, Research Codex, or Persuasive Pitch)."""
+        """Saves any active project first, then resumes the selected saved project."""
+        if self.project and self.project.get("id") != proj.get("id"):
+            self._save_current_if_needed()
+        self._reset_item_buffers()
         self.project = proj
-        for p in projects.all_panels(proj)[-6:]:
-            if p.get("caption"):
-                self.active_story.append(p["caption"])
+        self.goal_done = 0
+        self.active_story = [p["caption"] for p in projects.all_panels(proj)[-6:] if p.get("caption")]
         ui: list[dict[str, Any]] = [
             {"type": "item", "item": projects.project_ui_payload(proj)},
             {"type": "goal", "text": self.goal_badge()},
@@ -274,46 +371,83 @@ class SessionController:
             return self._prompt_pitch_step(ui)
         if proj.get("stage", "").startswith("spine_"):
             return self._prompt_spine_step(ui, resumed=True)
-        self.session_panels_target = 4
+        self.session_panels_target = 3 if pkind == "quick_strip" else 4
         return self._prompt_next_book_panel(ui, resumed=True)
 
-    def start_or_resume_project(self, choice_label: str) -> tuple[list[dict[str, Any]], str]:
+    def create_or_switch_project(self, kind: str, title: str = "") -> tuple[list[dict[str, Any]], str]:
+        """Saves any active book cleanly and starts a brand-new book/strip/game without overwriting previous ones."""
+        self._save_current_if_needed()
+        self._reset_item_buffers()
+        self.goal_done = 0
+        self.codex_step = 0
+        self.codex_buf = []
+        self.tree_step = 0
+        self.research_pack = None
         ui: list[dict[str, Any]] = []
+        clean_t = (title or "").strip()
+
+        if kind == "quick_game":
+            self.project = None
+            self.phase = "BUILDING"
+            self.active_mechanic = clean_t or "Live Mini-Game"
+            ui.append({"type": "goal", "text": self.goal_badge()})
+            return ui, (
+                f"Start a brand-new live HTML5 mini-game{f' titled {clean_t!r}' if clean_t else ''}. "
+                "Call build_activity NOW with a concrete spec where EVERY round requires typing or repairing a complete sentence, "
+                "and put a 2-kernel Sentence Combining warm-up card on screen while it builds."
+            )
+
+        self.project = projects.create_project(
+            kind,
+            self.name,
+            self.parent_title,
+            title=clean_t,
+            persist=bool(clean_t),
+            sandbox=self.test_mode,
+        )
+        ui.append({"type": "item", "item": projects.project_ui_payload(self.project)})
+        ui.append({"type": "goal", "text": self.goal_badge()})
+
+        if kind == "epic_graphic_novel":
+            self.phase = "STORY_SPINE"
+            self.session_panels_target = 2
+            return self._prompt_spine_step(ui, resumed=False)
+        if kind == "epic_codex":
+            self.phase = "BUILDING"
+            return self._prompt_codex_step(ui, new_entry=True)
+        if kind == "medium_pitch":
+            self.phase = "BUILDING"
+            self.session_panels_target = 4
+            return self._prompt_pitch_step(ui)
+        # quick_strip (3-panel saved comic strip -> PDF!)
+        self.phase = "BUILDING"
+        self.session_panels_target = 3
+        return self._prompt_next_book_panel(ui, resumed=False)
+
+    def start_or_resume_project(self, choice_label: str) -> tuple[list[dict[str, Any]], str]:
         low = choice_label.lower()
 
-        if low.startswith("continue ") and not self.test_mode:
-            saved = projects.list_projects()
+        if low.startswith("continue "):
+            saved = projects.list_projects(sandbox=self.test_mode)
             if saved:
                 return self.resume_loaded_project(saved[0])
 
-        if "full comic book" in low or "graphic novel" in low:
-            self.project = projects.create_project("epic_graphic_novel", self.name, self.parent_title, persist=not self.test_mode)
-            self.phase = "STORY_SPINE"
-            # Session 1 maps the 3-Act Spine + first 2 illustrated panels + Word Forge (~12-15 min)
-            self.session_panels_target = 2
-            ui.append({"type": "item", "item": projects.project_ui_payload(self.project)})
-            ui.append({"type": "goal", "text": self.goal_badge()})
-            return self._prompt_spine_step(ui, resumed=False)
+        if "full comic book" in low or "graphic novel" in low or "another comic" in low or "new comic" in low:
+            return self.create_or_switch_project("epic_graphic_novel")
 
         if "codex" in low or "field guide" in low or "fact" in low:
-            self.project = projects.create_project(
-                "epic_codex", self.name, self.parent_title, title=f"{self.name}'s Research & Invention Codex", persist=not self.test_mode
-            )
-            self.phase = "BUILDING"
-            ui.append({"type": "item", "item": projects.project_ui_payload(self.project)})
-            return self._prompt_codex_step(ui, new_entry=True)
+            return self.create_or_switch_project("epic_codex")
 
         if "pitch" in low or "why we should" in low or "persuasive" in low:
-            self.project = projects.create_project(
-                "medium_pitch", self.name, self.parent_title, title=f"Official Case File for {self.parent_title}", persist=not self.test_mode
-            )
-            self.phase = "BUILDING"
-            self.tree_step = 0
-            self.session_panels_target = 4
-            ui.append({"type": "item", "item": projects.project_ui_payload(self.project)})
-            return self._prompt_pitch_step(ui)
+            return self.create_or_switch_project("medium_pitch")
 
-        return ui, ""
+        if "3-panel" in low or "quick strip" in low:
+            return self.create_or_switch_project("quick_strip")
+
+        if "mini-game" in low or "live game" in low:
+            return self.create_or_switch_project("quick_game")
+
+        return [], ""
 
     def _prompt_codex_step(self, ui: list[dict[str, Any]], new_entry: bool = False, custom_topic: str = "") -> tuple[list[dict[str, Any]], str]:
         """Drives Strand C Reading Comprehension + D1.3 3-Source Synthesis + D2.1 Informational Paragraph Building."""
@@ -362,38 +496,45 @@ class SessionController:
         )
 
     def _prompt_pitch_step(self, ui: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
-        """Drives SRSD POW+TREE 4-Page Persuasive Book (Topic/Claim -> Reason -> Counter-Argument -> Ending)."""
+        """Drives SRSD POW+TREE 4-Page Persuasive Book using live AI follow-up questions tied to the student's actual claim."""
         assert self.project is not None
         ui.append({"type": "goal", "text": self.goal_badge()})
-        steps = [
-            (
-                f"Page 1 of 4 · T = Topic & Bold Claim (for {self.parent_title})",
-                f"Pick something real or hilariously ambitious to pitch to {self.parent_title} (e.g. a backyard contraption, a new game rule, a late-night build).\n"
-                "Write Page 1's clear Claim in 1 complete sentence (e.g. 'We need to build ...' or 'Our house should have ...').",
-                f"Write Page 1: your bold claim for {self.parent_title} in one complete sentence.",
+        if self.tree_step == 0:
+            title = f"Page 1 of 4 · T = Topic & Bold Claim (for {self.parent_title})"
+            body = (
+                f"Pick something real or hilariously ambitious to pitch to {self.parent_title} (e.g. a backyard contraption, a new house rule, a wild pet, a late-night build).\n"
+                "Write Page 1's Claim in 1 complete sentence—it unlocks Page 1's illustration immediately!"
+            )
+            ask = f"Write Page 1: what are you pitching to {self.parent_title}? (1 complete sentence)"
+            ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": title, "text": body}})
+            ui.append({"type": "input", "mode": "type", "prompt": ask, "prefill": ""})
+            self.ui_locked_this_turn.update({"show_card", "ask_input"})
+            return ui, f"Starting a 4-Page Illustrated Pitch Book for {self.parent_title}. Invite their bold Page 1 claim in 1 complete sentence."
+
+        step_specs = {
+            1: (
+                "Page 2 of 4 · R = Strongest Reason & Proof ('because / since')",
+                f"Remind them of their Page 1 pitch, ask a specific WHY/HOW question proving why it will work, and require 1–2 complete sentences using 'because' or 'since'.",
+                "because | since",
             ),
-            (
-                "Page 2 of 4 · R = Strongest Reason & Evidence ('because / since')",
-                "A real pitch proves WHY it works.\nWrite 1–2 complete sentences using 'because' or 'since' giving your strongest concrete reason.",
-                "Write Page 2 using 'because' or 'since' to prove why your idea works.",
+            2: (
+                f"Page 3 of 4 · E = Beat {self.parent_title}'s #1 Objection ('although / even though')",
+                f"Remind them of their pitch, guess the exact practical thing {self.parent_title} will worry about, and ask how they solve it starting with 'Although' or 'Even though'.",
+                "although | even though",
             ),
-            (
-                f"Page 3 of 4 · E = Beat {self.parent_title}'s Biggest Objection ('although / even though')",
-                f"Smart persuaders answer the objection BEFORE {self.parent_title} says it!\n"
-                f"Start with 'Although' or 'Even though' to name what {self.parent_title} might worry about, and explain how you solve it.",
-                "Start Page 3 with 'Although' or 'Even though' to answer the biggest objection.",
+            3: (
+                "Page 4 of 4 · E = Final Deal & Test Run ('if / so')",
+                f"Remind them of their pitch and solution, and ask what concrete first test or deal they propose to {self.parent_title} using 'if' or 'so' to finish the Pitch PDF.",
+                "if | so",
             ),
-            (
-                "Page 4 of 4 · E = Ending & Final Deal ('so / if')",
-                "Close the case! Write 1 strong final sentence using 'if' or 'so' proposing the exact deal or first test.",
-                "Write Page 4's closing deal sentence using 'if' or 'so' to finish the Pitch PDF!",
-            ),
-        ]
-        title, body, ask = steps[min(self.tree_step, 3)]
+        }
+        title, goal_desc, conns = step_specs[min(self.tree_step, 3)]
+        beat = ai_direct_next_beat(self.rec, goal_desc, self.active_story, connector_goal=conns)
+        body = f"{beat['spoken_prompt']}\n\nOptional Sparks:\n  • {beat['kernel_1']}\n  • {beat['kernel_2']}"
         ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": title, "text": body}})
-        ui.append({"type": "input", "mode": "type", "prompt": ask, "prefill": ""})
+        ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
         self.ui_locked_this_turn.update({"show_card", "ask_input"})
-        return ui, f"Persuasive Pitch Book (SRSD TREE) step {self.tree_step + 1}/4: {ask}"
+        return ui, f"Say this story-specific prompt naturally in 1–2 sentences: {beat['spoken_prompt']}"
 
     def _prompt_spine_step(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
         assert self.project is not None
@@ -403,42 +544,55 @@ class SessionController:
 
         if stage == "spine_beginning":
             card_txt = (
-                "Great comic books map the whole causal story BEFORE Panel 1 (SRSD Story Blueprint):\n"
-                "  • ACT I — BEGINNING (Who + Where + Goal): Who is the hero, where are they, and what do they want?\n"
-                "  • ACT II — MIDDLE ('BUT / WHEN / BECAUSE'): What goes wrong because of Act I?\n"
-                "  • ACT III — END ('SO / FINALLY'): How does the final showdown resolve?\n\n"
-                "Step 1: Write 1–2 complete sentences for ACT I (or tap the Mic to speak it first, then edit in the box)."
+                "Every step unlocks live comic art right on your book canvas:\n"
+                "  • ACT I — BEGINNING (Unlocks Cover Art!): Who is the main character, where are they, and what kicks off the story?\n"
+                "  • ACT II — MIDDLE ('BUT / WHEN / BECAUSE' · Unlocks Twist Art!): What goes sideways because of Act I?\n"
+                "  • ACT III — END ('SO / FINALLY' · Unlocks Climax Art!): How does it resolve before we zoom into Chapter 1?\n\n"
+                "Write 1–2 complete sentences for ACT I (or tap the Mic to speak it first, then edit in the box)!"
             )
-            ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": "Graphic Novel Blueprint · Step 1 of 3: The Beginning", "text": card_txt}})
-            ui.append({"type": "input", "mode": "type", "prompt": "Write 1–2 complete sentences for THE BEGINNING (who your hero is, where they are, and their goal).", "prefill": ""})
+            ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": "Graphic Novel Studio · Act I: The Beginning (Unlocks Cover Art!)", "text": card_txt}})
+            ui.append({"type": "input", "mode": "type", "prompt": "Act I (Unlocks Cover Art!): Who is your hero, where are they, and what starts the story? (1–2 complete sentences)", "prefill": ""})
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
             return ui, (
-                f"{'Resuming' if resumed else 'Starting'} {self.name}'s multi-chapter Graphic Novel (saves across weeks & exports to PDF!). "
-                "Explain in 1–2 plain sentences that mapping Beginning → Middle → End first makes every chapter connect, and ask for ACT I (The Beginning)."
+                f"{'Resuming' if resumed else 'Starting'} {self.name}'s Graphic Novel! "
+                "Mention in 1–2 plain sentences that Act I unlocks the book's Cover Art right away, and ask who the main character is and what starts the story."
             )
 
         if stage == "spine_middle":
-            card_txt = (
-                f"ACT I (Locked): \"{sp.get('beginning','')}\"\n\n"
-                "ACT II — THE MIDDLE (Causal Complication — Required Connector: 'But', 'When', or 'Because'):\n"
-                "  Strong stories link by CAUSE, never 'and then'.\n"
-                "  Write 1–2 complete sentences using 'But', 'When', 'Until', or 'Because' showing how everything goes sideways!"
+            beat = ai_direct_next_beat(
+                self.rec,
+                "We just locked Act I (Beginning) and unlocked Cover Art! Remind the student specifically of their Act I setup, ask a curious story question about what big problem or complication happens NEXT because of Act I, and ask for 1–2 complete sentences using 'because', 'when', or 'but' (which unlocks Act II Twist Art).",
+                self.active_story,
+                spine_context=self.spine_summary(),
+                connector_goal="because | when | but",
             )
-            ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": "Graphic Novel Blueprint · Step 2 of 3: The Middle ('But / When')", "text": card_txt}})
-            ui.append({"type": "input", "mode": "type", "prompt": "Write ACT II using 'but', 'when', 'until', or 'because' so it links causally to Act I.", "prefill": ""})
+            card_txt = (
+                f"ACT I (Cover Art Drawing!): \"{sp.get('beginning','')}\"\n\n"
+                f"ACT II — THE MIDDLE (Unlocks Twist Art!):\n  {beat['spoken_prompt']}\n\n"
+                f"Optional Story Sparks:\n  • {beat['kernel_1']}\n  • {beat['kernel_2']}"
+            )
+            ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": "Act II · What Goes Wrong? ('Because / When / But')", "text": card_txt}})
+            ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
-            return ui, f"Act I locked. Ask for ACT II (THE MIDDLE) linked causally with 'but', 'when', or 'because'."
+            return ui, f"Cover Art is rendering! Deliver this specific story-grounded prompt in 1–2 plain sentences: {beat['spoken_prompt']}"
 
+        beat = ai_direct_next_beat(
+            self.rec,
+            "We have Act I and Act II! Remind the student specifically of the problem in Act II, ask a curious question about how the characters solve, survive, or turn the problem around in the finale (Act III), and ask for 1–2 complete sentences using 'so', 'finally', or 'when' (which unlocks Act III Climax Art!).",
+            self.active_story,
+            spine_context=self.spine_summary(),
+            connector_goal="so | finally | when",
+        )
         card_txt = (
             f"ACT I: \"{sp.get('beginning','')}\"\n"
             f"ACT II: \"{sp.get('middle','')}\"\n\n"
-            "ACT III — THE END (Causal Climax & Resolution — Required Connector: 'So', 'Therefore', 'Finally', or 'When'):\n"
-            "  Write 1–2 complete sentences showing how the climax resolves Act II—then we zoom into Chapter 1, Panel 1!"
+            f"ACT III — THE END (Unlocks Climax Art!):\n  {beat['spoken_prompt']}\n\n"
+            f"Optional Story Sparks:\n  • {beat['kernel_1']}\n  • {beat['kernel_2']}"
         )
-        ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": "Graphic Novel Blueprint · Step 3 of 3: The End ('So / Finally')", "text": card_txt}})
-        ui.append({"type": "input", "mode": "type", "prompt": "Write ACT III using 'so', 'finally', or 'when'—then we zoom into Chapter 1, Panel 1!", "prefill": ""})
+        ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": "Act III · The Climax & Ending ('So / Finally / When')", "text": card_txt}})
+        ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
         self.ui_locked_this_turn.update({"show_card", "ask_input"})
-        return ui, "Act II locked. Ask for ACT III (THE END) using 'so', 'finally', or 'when', then we zoom into Panel 1."
+        return ui, f"Act II Art is rendering! Deliver this specific story-grounded Act III question in 1–2 plain sentences: {beat['spoken_prompt']}"
 
     def _prompt_next_book_panel(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
         assert self.project is not None
@@ -448,44 +602,62 @@ class SessionController:
         next_pnum = pcount + 1
         ch_num = len(self.project.get("chapters") or [1])
         tier = self.current_tier()
-        tier_info = ct.TIER_DESCRIPTIONS.get(tier, ct.TIER_DESCRIPTIONS[1])
         sp = self.project.get("spine") or {}
 
+        act_name = "Act I (Beginning)" if ch_num <= 2 else ("Act II (Middle)" if ch_num <= 10 else "Act III (Climax & End)")
         act_focus = sp.get("beginning", "") if ch_num <= 2 else (sp.get("middle", "") if ch_num <= 10 else sp.get("end", ""))
-        rung_for_scaf = "B3.1_complex" if tier >= 2 else "B3.1_simple"
-        scaf = generate_combine_scaffold(self.rec, self.active_story, "", rung_for_scaf, spine_context=self.spine_summary())
 
         if tier == 1:
-            req_line = "Panel Goal: 1 complete sentence (Who + Does What + Capital & .) zooming into JUST this single moment."
+            tier_req = "Ask for 1 complete sentence (Capital + Who/What + Action + Period)."
+            conns = "when | so"
         elif tier == 2:
-            req_line = f"Panel Goal ({tier_info['name']}): Include {_fmt_conns(scaf['connectors'])} to show cause or timing!"
+            tier_req = "Ask for 1 complete sentence using 'when', 'because', 'but', or 'so' to show cause or timing."
+            conns = "when | because | but"
         elif tier == 3 and next_pnum % 2 == 0:
-            req_line = (
-                f"Panel Goal ({tier_info['name']}): Include punctuated character dialogue in quotes "
-                '(e.g. "Watch the floor!" shouted Max.) so a real speech bubble renders on the panel!'
-            )
+            tier_req = 'Ask them to include punctuated character speech in quotation marks (e.g. "Watch out!" yelled Bob.) so a real comic speech bubble appears on the panel!'
+            conns = "when | because"
         elif tier >= 4:
-            req_line = (
-                f"Panel Goal ({tier_info['name']}): Open with a scene-setting phrase + comma (e.g. 'Beneath the bridge, ...'), "
-                "use a vivid action verb, and include causal flow or dialogue!"
+            tier_req = "Ask them to open with a scene-setting where/when phrase + comma and use a vivid action verb."
+            conns = "when | although | because"
+        else:
+            tier_req = "Ask for 1–2 complete sentences driving the scene forward."
+            conns = "when | because | so"
+
+        if next_pnum == 1 and act_focus:
+            zoom_goal = (
+                f"We are zooming into Chapter 1, Panel 1 of {act_name}: \"{act_focus}\". "
+                "DO NOT ask a generic prompt like 'describe the first moment'! Instead, remind them of what happens in Act I "
+                "and ask a specific, curious zoom-in question (e.g. WHERE they got/found X, WHY they went there, or HOW the very first scene starts) "
+                f"that hasn't been explained yet! {tier_req}"
+            )
+        elif act_focus:
+            zoom_goal = (
+                f"We are on Chapter {ch_num}, Panel {next_pnum} (currently inside {act_name}: \"{act_focus}\"). "
+                "Remind them briefly of what JUST happened in the last panel, and ask a specific, curious story question ('why', 'where', 'how', 'what happens right after...') "
+                f"that zooms into the very next beat toward {act_name}! {tier_req}"
             )
         else:
-            req_line = f"Panel Goal ({tier_info['name']}): {tier_info['prompt_hint']}"
+            zoom_goal = f"We are on Panel {next_pnum} of a 3-panel comic strip. Ask a specific, curious question for Panel {next_pnum}. {tier_req}"
+
+        beat = ai_direct_next_beat(
+            self.rec,
+            zoom_goal,
+            self.active_story,
+            spine_context=self.spine_summary(),
+            connector_goal=conns,
+        )
 
         card_txt = (
-            (f"Current Act Arc: \"{act_focus}\"\n\n" if act_focus else "")
-            + f"{req_line}\n\n"
-            f"Idea Sparks (combine these, or write/speak your own Panel {next_pnum} beat):\n"
-            f"  1. {scaf['kernel_1']}\n"
-            f"  2. {scaf['kernel_2']}"
+            (f"{act_name}: \"{act_focus}\"\n\n" if act_focus else "")
+            + f"{beat['spoken_prompt']}\n\n"
+            f"Optional Sparks (combine or invent your own):\n"
+            f"  1. {beat['kernel_1']}\n"
+            f"  2. {beat['kernel_2']}"
         )
         ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": f"{self.project.get('title','Comic Book')} · Ch.{ch_num}, Panel {next_pnum}", "text": card_txt}})
-        ui.append({"type": "input", "mode": "type", "prompt": f"Panel {next_pnum}: {tier_info['prompt_hint']}", "prefill": ""})
+        ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
         self.ui_locked_this_turn.update({"show_card", "ask_input"})
-        return ui, (
-            f"{'Resumed' if resumed else 'Zoomed into'} {self.project.get('title')} — Ch.{ch_num}, Panel {next_pnum} (Mastery Tier {tier}). "
-            f"Invite Panel {next_pnum} concisely: {req_line}"
-        )
+        return ui, f"Deliver this specific, story-aware prompt for Panel {next_pnum} in 1–2 natural sentences: {beat['spoken_prompt']}"
 
     def _merge_fragments(self, prev: str, cur: str) -> str:
         if not prev:
@@ -576,6 +748,8 @@ class SessionController:
             self.record_misspellings(chk)
 
         ui_actions: list[dict[str, Any]] = []
+        resolved_inline_word: str = ""
+        resolved_repaired_text: str = ""
 
         # ---------------- 0. VOICE-TO-DRAFT DICTATION EXTERNALIZATION (MacArthur + Barkley) ----------------
         if how == "spoken" and len(wlist) >= 3 and not any(re.search(p, norm) for p in REFUSAL_PATTERNS) and norm not in AVOIDANCE_WORDS:
@@ -610,6 +784,90 @@ class SessionController:
                     "In ONE short sentence, tell them their spoken draft is in the box—check the capital, connectors, and end punctuation and hit Enter to lock it in."
                 ),
             }
+
+        # ---------------- 0B. INLINE WORD HELP RETRIEVAL ("Start All the Help" on Retry) ----------------
+        if self.phase == "INLINE_WORD_HELP" and self.word_target and how in ("typed", "handwritten"):
+            target_word = self.word_target["word"]
+            wrote_orig = self.word_target.get("wrote", "")
+            t_pat = re.compile(rf"\b{re.escape(target_word.lower())}\b")
+            w_pat = re.compile(rf"\b{re.escape(wrote_orig.lower())}\b") if wrote_orig else None
+            matched = (
+                norm == target_word.lower()
+                or (len(wlist) <= 3 and bool(t_pat.search(norm)))
+                or (len(wlist) >= 3 and bool(t_pat.search(norm)) and not (w_pat and w_pat.search(norm)))
+            )
+            if not matched and self.inline_word_help_tries == 0:
+                self.inline_word_help_tries = 1
+                self.last_kid_kind = "INLINE_WORD_HELP"
+                self.draw_unlocked = False
+                letter_guide = " - ".join(list(target_word))
+                note_plus = f"{self.word_target['note']} (Letters: {letter_guide})"
+                ui_actions.append(
+                    {
+                        "type": "item",
+                        "item": {
+                            "id": "word",
+                            "kind": "word",
+                            "word": target_word,
+                            "parts": [p.strip() for p in self.word_target["parts"].split("+")],
+                            "note": note_plus,
+                        },
+                    }
+                )
+                ui_actions.append(
+                    {
+                        "type": "input",
+                        "mode": "type",
+                        "prompt": f"Look closely at '{self.word_target['parts']}' ({letter_guide}), then type '{target_word}' once from memory.",
+                        "prefill": "",
+                    }
+                )
+                self.ui_locked_this_turn.update({"show_word", "ask_input"})
+                return {
+                    "kind": self.last_kid_kind,
+                    "ui": ui_actions,
+                    "directive": (
+                        f"Give full gentle support on '{target_word}' (they wrote '{raw}'). Do NOT say 'wrong'. "
+                        f"Walk through the parts '{self.word_target['parts']}' in 1 short sentence and invite typing '{target_word}' once from memory."
+                    ),
+                }
+
+            # Resolved! Record SRS, splice fixed word(s) into their sentence, remove word card, and advance immediately!
+            self.studied_words_today.add(target_word.lower())
+            if len(target_word) >= 3:
+                self.word_study_done = True
+            if not self.test_mode and len(target_word) >= 2:
+                spelling_srs.record_retrieval_result(self.rec, target_word, correct_first_try=(matched and self.inline_word_help_tries == 0))
+                save_learner(self.rec)
+            ui_actions.append({"type": "remove", "id": "word"})
+
+            if matched and len(wlist) >= 3 and not (chk or {}).get("misspellings"):
+                repaired = raw
+                if repaired and repaired[0].isalpha() and not repaired[0].isupper():
+                    repaired = repaired[0].upper() + repaired[1:]
+                if repaired and not re.search(r'[.!?]["\')\]]*$', repaired):
+                    repaired += "."
+            else:
+                repaired = self.pending_spell_sentence or raw
+                for m in self.pending_spell_targets:
+                    repaired = _splice_word_into_sentence(repaired, m["wrote"], m["meant"])
+
+            self.phase = self.phase_before_inline_help or (
+                "STORY_SPINE" if (self.project and self.project.get("stage", "").startswith("spine_")) else "BUILDING"
+            )
+            self.pending_spell_targets = []
+            self.pending_spell_sentence = ""
+            self.inline_word_help_tries = 0
+            resolved_inline_word = target_word
+            resolved_repaired_text = repaired
+            raw = repaired
+            norm = _norm(raw)
+            wlist = _words(raw)
+            self.last_kid_text = raw
+            chk = thinking._post_verify_check(
+                raw,
+                {"sentences": [{"text": raw, "complete": True, "issue": "none", "capital_ok": True, "end_ok": True}], "misspellings": []},
+            )
 
         # ---------------- 1. WORD STUDY RETRIEVAL PHASE (Leitner Spaced Deck) ----------------
         if self.phase == "WORD_STUDY" and self.word_target:
@@ -1031,27 +1289,159 @@ class SessionController:
             self.ui_locked_this_turn.update({"show_card", "show_choices", "ask_input"})
             return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": f"ENGAGED FRAGMENT (Hint 3/3): Word chips ({', '.join(verb_chips[:3])}) on screen—invite finishing the complete sentence."}
 
-        # 7C. CONVENTION CHECK (Start Capital, End Punctuation, AND B3.3 Dialogue Quotation Punctuation!)
+        # 7C. CONVENTION & 2-STAGE INLINE SPELLING CHECK
+        #   - Attempt 1 on a misspelling: Name the EXACT word (+ morphological/context clue at early tiers; NEVER vague "fix spelling")!
+        #   - Attempt 2 (still misspelled on retry): START ALL THE HELP immediately (Word Breakdown Card + Context Highlight + Cover-Copy-Compare)!
         dialogue_punct_bad = bool(feats.get("has_dialogue") and feats.get("dialogue_punct_ok") is False)
-        if missing_cap or missing_end or dialogue_punct_bad:
+        ms = (chk or {}).get("misspellings") or []
+
+        if not ms and self.pending_spell_targets:
+            if not self.test_mode:
+                for fixed_m in self.pending_spell_targets:
+                    if len(fixed_m.get("meant", "")) >= 3:
+                        spelling_srs.record_retrieval_result(self.rec, fixed_m["meant"], correct_first_try=True)
+                save_learner(self.rec)
+            self.pending_spell_targets = []
+            self.pending_spell_sentence = ""
+
+        if ms:
+            prev_w = {w.lower() for w in _words(self.pending_spell_sentence)}
+            cur_w = {w.lower() for w in wlist}
+            same_draft = bool(
+                self.pending_spell_targets
+                and prev_w
+                and cur_w
+                and len(prev_w & cur_w) / max(1, min(len(prev_w), len(cur_w))) >= 0.5
+            )
+            if same_draft:
+                # Attempt 2 still had a spelling error -> START ALL THE HELP right now!
+                # Pick the richest morphological/orthographic word (prefer >=4 chars like 'wanted' over 2-char slips)
+                ms_sorted = sorted(ms, key=lambda x: (len(x.get("meant", "").replace(" ", "")) >= 4, len(x.get("meant", ""))), reverse=True)
+                m0 = ms_sorted[0]
+                wrote, meant = m0["wrote"], m0["meant"]
+                tidy_raw = raw[:1].upper() + raw[1:] if (raw and raw[0].isalpha()) else raw
+                if tidy_raw and not re.search(r'[.!?]["\')\]]*$', tidy_raw):
+                    tidy_raw += "."
+                self.pending_spell_sentence = tidy_raw
+                self.pending_spell_targets = ms
+                if " " in meant.strip():
+                    ws_card = {
+                        "word": meant,
+                        "wrote": wrote,
+                        "parts": " + ".join(meant.strip().split()),
+                        "note": f"'{meant}' is written as two separate words ('{meant}'), whereas '{wrote}' means 12:00 midday!",
+                    }
+                elif len(meant) <= 2:
+                    ws_card = {
+                        "word": meant,
+                        "wrote": wrote,
+                        "parts": meant,
+                        "note": f"In '{_phrase_around_word(raw, wrote)}', use '{meant}' rather than '{wrote}'.",
+                    }
+                else:
+                    ws_card = thinking.analyze_word_study(wrote, meant)
+                self.phase_before_inline_help = self.phase
+                self.phase = "INLINE_WORD_HELP"
+                self.word_target = ws_card
+                self.inline_word_help_tries = 0
+                self.had_revision = True
+                self.last_kid_kind = "INLINE_WORD_HELP"
+                self.draw_unlocked = False
+                preview = _splice_word_into_sentence(tidy_raw, wrote, f"[{meant}]")
+                ui_actions.append(
+                    {
+                        "type": "item",
+                        "item": {
+                            "id": "word",
+                            "kind": "word",
+                            "word": ws_card["word"],
+                            "parts": [p.strip() for p in ws_card["parts"].split("+")],
+                            "note": ws_card["note"],
+                        },
+                    }
+                )
+                ui_actions.append(
+                    {
+                        "type": "item",
+                        "item": {
+                            "id": "forge",
+                            "kind": "card",
+                            "title": f"Full Word Help · '{wrote}' → '{meant}'",
+                            "text": (
+                                f"Your sentence:\n  \"{preview}\"\n\n"
+                                f"How '{meant}' works: {ws_card['parts']} — {ws_card['note']}\n"
+                                f"Study '{ws_card['parts']}' above (covers when you type), then type '{meant}' from memory to lock your sentence in!"
+                            ),
+                        },
+                    }
+                )
+                ui_actions.append(
+                    {
+                        "type": "input",
+                        "mode": "type",
+                        "prompt": f"Study '{ws_card['parts']}' above, then type '{meant}' from memory (or send your fixed sentence) to lock it in!",
+                        "prefill": "",
+                    }
+                )
+                self.ui_locked_this_turn.update({"show_word", "show_card", "ask_input"})
+                return {
+                    "kind": self.last_kid_kind,
+                    "ui": ui_actions,
+                    "directive": (
+                        f"They tried fixing '{wrote}' and still needed help, so ALL spelling scaffolding is now on screen ('{ws_card['parts']}' — {ws_card['note']}). "
+                        f"Do NOT say 'still wrong'. Explain '{ws_card['parts']}' in ONE warm, matter-of-fact sentence and ask them to type '{meant}' from memory to lock their sentence in."
+                    ),
+                }
+
+        if missing_cap or missing_end or dialogue_punct_bad or ms:
             self.last_kid_kind = "CONVENTION_ONLY"
             self.draw_unlocked = False
             self.hint_step = min(3, self.hint_step + 1)
             self.had_revision = True
+            tier = self.current_tier()
             needed = []
             if missing_cap:
-                needed.append("a capital letter at the start")
+                needed.append("add a capital letter at the start")
             if missing_end:
-                needed.append("end punctuation (. ! or ?)")
+                needed.append("add end punctuation (. ! or ?)")
             if dialogue_punct_bad:
-                needed.append('dialogue punctuation (opening & closing quotes, capital at the start of the quote, and a comma/!/? inside the closing quote)')
-            need_str = " and ".join(needed)
-            ui_actions.append({"type": "input", "mode": "type", "prompt": f"Complete thought! Fix {need_str} right in the box and hit Enter.", "prefill": raw})
-            self.ui_locked_this_turn.add("ask_input")
+                needed.append("fix dialogue punctuation (quotes, capital inside quote, and comma/!/? inside closing quote)")
+            if ms:
+                self.pending_spell_sentence = raw
+                self.pending_spell_targets = ms
+                spell_ptrs = [_specific_spelling_pointer(raw, m["wrote"], m["meant"], tier) for m in ms[:4]]
+                needed.append("check " + ", ".join(spell_ptrs[:-1]) + (f", and {spell_ptrs[-1]}" if len(spell_ptrs) > 1 else spell_ptrs[0]))
+            need_str = ", and ".join(needed) if len(needed) <= 2 else (", ".join(needed[:-1]) + f", and {needed[-1]}")
+            ui_actions.append(
+                {
+                    "type": "item",
+                    "item": {
+                        "id": "forge",
+                        "kind": "card",
+                        "title": "Quick Polish — Almost Unlocks Your Art!",
+                        "text": f"Your draft:\n  \"{raw}\"\n\nNext step: {need_str[:1].upper() + need_str[1:]}.",
+                    },
+                }
+            )
+            ui_actions.append(
+                {
+                    "type": "input",
+                    "mode": "type",
+                    "prompt": f"Almost unlocks the art! {need_str[:1].upper() + need_str[1:]} right in the box and hit Enter.",
+                    "prefill": raw,
+                }
+            )
+            self.ui_locked_this_turn.update({"show_card", "ask_input"})
+            named_words = ", ".join(f"'{m['wrote']}'" for m in ms[:4])
+            spell_rule_for_llm = (
+                f" You MUST name the exact word(s) {named_words} aloud—NEVER say vague 'fix the spelling error' without naming {named_words}!"
+                if ms
+                else ""
+            )
             return {
                 "kind": self.last_kid_kind,
                 "ui": ui_actions,
-                "directive": f"CONVENTION EDIT NEEDED on '{raw}': ask concisely to add/fix {need_str} in the pre-filled box and hit Enter.",
+                "directive": f"CONVENTION / SPELLING POLISH on '{raw}': ask concisely to {need_str} in the pre-filled box and hit Enter.{spell_rule_for_llm}",
             }
 
         # ---------------- 7D. ENFORCED GENRE & MASTERY-TIER GATES (Max 1 Power-Up Pass Per Item!) ----------------
@@ -1145,14 +1535,22 @@ class SessionController:
                 }
 
         # ---------------- 8. VERIFIED COMPLETE STEP! ----------------
-        if self.hint_step == 0 and not self.tier_nudged_this_item:
+        if self.hint_step == 0 and not self.tier_nudged_this_item and not resolved_inline_word:
             self.first_try_streak += 1
         self.hint_step = 0
         self.tier_nudged_this_item = False
         self.engaged_draft = ""
+        self.pending_spell_targets = []
+        self.pending_spell_sentence = ""
         self.active_story.append(raw)
 
-        # CASE A: Advancing Graphic Novel Story Spine!
+        def _finish(plan_dict: dict[str, Any]) -> dict[str, Any]:
+            if resolved_repaired_text:
+                plan_dict["repaired_text"] = resolved_repaired_text
+                plan_dict["directive"] = f"Locked '{resolved_inline_word}' into your sentence ('{resolved_repaired_text}')! " + plan_dict["directive"]
+            return plan_dict
+
+        # CASE A: Advancing Graphic Novel Story Spine — EVERY BEAT UNLOCKS LIVE ARTWORK!
         if self.project and self.project.get("stage", "").startswith("spine_"):
             self.last_kid_kind = "SPINE_BEAT_COMPLETE"
             self.draw_unlocked = False
@@ -1160,75 +1558,98 @@ class SessionController:
             sp = self.project.setdefault("spine", {})
             if st == "spine_beginning":
                 sp["beginning"] = raw
-                if self.project.get("title") in ("Untitled Graphic Novel", "Untitled Project", ""):
+                sp["beginning_status"] = "drawing"
+                if self.project.get("title") in ("Untitled Graphic Novel", "Untitled Project", "") and not self.project.get("custom_titled"):
                     self.project["title"] = _infer_book_title(raw)
                 self.project["stage"] = "spine_middle"
-                if not self.test_mode:
-                    projects.save_project(self.project)
+                projects.save_project(self.project, sandbox=self.test_mode)
+                ui_actions.append({"type": "reward", "label": f"★ Cover & Act I Art Unlocked · “{self.project['title']}”"})
                 ui_actions.append({"type": "item", "item": projects.project_ui_payload(self.project)})
                 ui_actions.append({"type": "goal", "text": self.goal_badge()})
                 ui_actions, directive = self._prompt_spine_step(ui_actions, resumed=False)
-                return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": directive}
+                return _finish({
+                    "kind": self.last_kid_kind,
+                    "spine_draw": {"beat": "beginning", "text": raw},
+                    "ui": ui_actions,
+                    "directive": directive,
+                })
 
             if st == "spine_middle":
                 sp["middle"] = raw
+                sp["middle_status"] = "drawing"
                 self.project["stage"] = "spine_end"
-                if not self.test_mode:
-                    projects.save_project(self.project)
+                projects.save_project(self.project, sandbox=self.test_mode)
+                ui_actions.append({"type": "reward", "label": "★ Act II Twist Art Unlocked!"})
                 ui_actions.append({"type": "item", "item": projects.project_ui_payload(self.project)})
                 ui_actions.append({"type": "goal", "text": self.goal_badge()})
                 ui_actions, directive = self._prompt_spine_step(ui_actions, resumed=False)
-                return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": directive}
+                return _finish({
+                    "kind": self.last_kid_kind,
+                    "spine_draw": {"beat": "middle", "text": raw},
+                    "ui": ui_actions,
+                    "directive": directive,
+                })
 
             sp["end"] = raw
+            sp["end_status"] = "drawing"
             sp["complete"] = True
             self.project["stage"] = "drafting_panels"
-            if not self.test_mode:
-                projects.save_project(self.project)
+            projects.save_project(self.project, sandbox=self.test_mode)
+            ui_actions.append({"type": "reward", "label": "★ Full 3-Act Storyboard Complete · Climax Art Unlocked!"})
             ui_actions.append({"type": "item", "item": projects.project_ui_payload(self.project)})
             ui_actions.append({"type": "goal", "text": self.goal_badge()})
             ui_actions, next_dir = self._prompt_next_book_panel(ui_actions, resumed=False)
-            return {
+            return _finish({
                 "kind": self.last_kid_kind,
+                "spine_draw": {"beat": "end", "text": raw},
                 "ui": ui_actions,
-                "directive": "FULL CAUSAL STORY SPINE LOCKED IN! Acknowledge the 3-Act arc in 1 short sentence and zoom into Chapter 1, Panel 1! " + next_dir,
-            }
+                "directive": next_dir,
+            })
 
-        # CASE B: Advancing 3-Source Reading-to-Write Codex (`epic_codex`)!
+        # CASE B: Advancing 3-Source Reading-to-Write Codex (`epic_codex`) — Unlocks Field Sketch on Step 0 + Live Draft Progress!
         if self.project and self.project.get("kind") == "epic_codex":
             if self.codex_step == 0:
-                # Completed Reading Inference Check (C2.3 / C3.2) -> Advance to Paragraph Sentence 1!
                 self.had_inference = True
                 self.last_kid_kind = "SPINE_BEAT_COMPLETE"
                 self.draw_unlocked = False
                 self.codex_step = 1
+                self.project["codex_sketch_status"] = "drawing"
+                self.project["codex_sketch_caption"] = raw
+                self.project["codex_draft_sentences"] = []
+                projects.save_project(self.project, sandbox=self.test_mode)
+                ui_actions.append({"type": "reward", "label": "★ Specimen Blueprint Sketch Unlocked!"})
+                ui_actions.append({"type": "item", "item": projects.project_ui_payload(self.project)})
                 ui_actions, directive = self._prompt_codex_step(ui_actions, new_entry=False)
-                return {
+                return _finish({
                     "kind": self.last_kid_kind,
+                    "codex_sketch": f"{(self.research_pack or {}).get('title','')}: {raw}",
                     "ui": ui_actions,
-                    "directive": f"Sharp inference ('{raw}')! Now transition to drafting the 3-sentence Codex Entry Paragraph (Sentence 1: Topic Sentence). " + directive,
-                }
+                    "directive": f"Sharp inference—that just unlocked the Specimen Blueprint Sketch on the right! Now ask for Sentence 1 (Topic Sentence). " + directive,
+                })
             if self.codex_step in (1, 2):
                 self.codex_buf.append(raw)
+                self.project["codex_draft_sentences"] = list(self.codex_buf)
+                projects.save_project(self.project, sandbox=self.test_mode)
                 self.last_kid_kind = "SPINE_BEAT_COMPLETE"
                 self.draw_unlocked = False
                 self.codex_step += 1
+                ui_actions.append({"type": "reward", "label": f"★ Codex Paragraph {len(self.codex_buf)}/3 Locked In"})
+                ui_actions.append({"type": "item", "item": projects.project_ui_payload(self.project)})
                 ui_actions, directive = self._prompt_codex_step(ui_actions, new_entry=False)
-                return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": f"Sentence {self.codex_step - 1} locked into the paragraph! " + directive}
+                return _finish({"kind": self.last_kid_kind, "ui": ui_actions, "directive": f"Sentence {self.codex_step - 1} added to the live Codex page! " + directive})
 
-            # codex_step == 3 -> Assemble full 3-sentence expository paragraph & render Codex illustration!
             self.codex_buf.append(raw)
             full_paragraph = " ".join(self.codex_buf)
             self.codex_buf = []
+            self.project["codex_draft_sentences"] = []
             self.codex_step = 0
             self.had_synthesis = True
             self.last_kid_kind = "COMPLETE_SENTENCE"
             self.draw_unlocked = True
             self.goal_done += 1
-            # Store full paragraph so auto_render_sentence saves the entire cohesive paragraph onto the Codex page!
             self.last_kid_text = full_paragraph
             if not self.word_study_done:
-                return self._launch_word_forge(ui_actions, full_paragraph, full_paragraph=full_paragraph)
+                return _finish(self._launch_word_forge(ui_actions, full_paragraph, full_paragraph=full_paragraph))
             ui_actions.append({"type": "goal", "text": self.goal_badge()})
             ui_actions.append(
                 {
@@ -1242,12 +1663,12 @@ class SessionController:
                 }
             )
             self.ui_locked_this_turn.add("show_choices")
-            return {
+            return _finish({
                 "kind": self.last_kid_kind,
                 "ui": ui_actions,
                 "full_paragraph": full_paragraph,
                 "directive": "Full 3-sentence informational paragraph synthesized from all 3 sources and rendering into the Codex PDF! Acknowledge the complete paragraph concisely and offer starting the next dossier or downloading the PDF.",
-            }
+            })
 
         # CASE C: Advancing SRSD POW+TREE 4-Page Persuasive Pitch (`medium_pitch`)!
         if self.project and self.project.get("kind") == "medium_pitch":
@@ -1257,20 +1678,20 @@ class SessionController:
             self.tree_step += 1
             if self.tree_step >= 4:
                 if not self.word_study_done:
-                    return self._launch_word_forge(ui_actions, raw)
+                    return _finish(self._launch_word_forge(ui_actions, raw))
                 self.phase = "WRAP"
                 ui_actions.append({"type": "goal", "text": self.goal_badge()})
                 ui_actions.append({"type": "item", "item": {"id": "done_choices", "kind": "choices", "prompt": "All 4 Persuasive Pitch Pages Complete!", "options": [f"Download Pitch PDF for {self.parent_title}"]}})
                 self.ui_locked_this_turn.add("show_choices")
-                return {
+                return _finish({
                     "kind": self.last_kid_kind,
                     "ui": ui_actions,
                     "directive": f"All 4 pages of the SRSD TREE Persuasive Pitch (Claim, Reason, Counter-Argument, Deal) are complete and ready to download as an illustrated PDF for {self.parent_title}!",
-                }
+                })
             ui_actions, next_dir = self._prompt_pitch_step(ui_actions)
-            return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": f"Page {self.tree_step} locked and rendering! " + next_dir}
+            return _finish({"kind": self.last_kid_kind, "ui": ui_actions, "directive": f"Page {self.tree_step} locked and rendering! " + next_dir})
 
-        # CASE D: Graphic Novel Panel or Quick Sprint Sentence!
+        # CASE D: Graphic Novel Panel, 3-Panel Strip, or Quick Sprint Sentence!
         self.last_kid_kind = "COMPLETE_SENTENCE"
         self.draw_unlocked = True
         self.goal_done += 1
@@ -1281,13 +1702,12 @@ class SessionController:
             self.rung = "B3.1_complex"
 
         target_for_today = self.session_panels_target if self.project else self.goal_target
-        # Guaranteed Spaced Word Forge in EVERY session once >=2 sentences/panels are completed (or on error)!
         trigger_word_study = not self.word_study_done and (
             (self.misspellings and self.goal_done >= 2) or self.goal_done >= target_for_today
         )
 
         if trigger_word_study:
-            return self._launch_word_forge(ui_actions, raw)
+            return _finish(self._launch_word_forge(ui_actions, raw))
 
         if self.project:
             ui_actions.append({"type": "goal", "text": self.goal_badge()})
@@ -1296,24 +1716,24 @@ class SessionController:
                 total_p = projects.total_panels(self.project) + 1
                 ui_actions.append({"type": "item", "item": {"id": "done_choices", "kind": "choices", "prompt": f"Today's slice complete ({total_p} total panels in your PDF book)!", "options": ["Keep going — add 3 more panels", f"Download PDF & save for {self.parent_title}"]}})
                 self.ui_locked_this_turn.add("show_choices")
-                return {
+                return _finish({
                     "kind": self.last_kid_kind,
                     "ui": ui_actions,
                     "directive": f"Panel {total_p} is rendering into '{self.project.get('title')}'! Mention the live Download PDF button on the right and let them choose whether to add 3 more panels or save here.",
-                }
+                })
             ui_actions, next_dir = self._prompt_next_book_panel(ui_actions, resumed=False)
-            return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": next_dir}
+            return _finish({"kind": self.last_kid_kind, "ui": ui_actions, "directive": next_dir})
 
         if self.goal_done >= self.goal_target:
             self.phase = "WRAP"
             ui_actions.append({"type": "goal", "text": self.goal_badge()})
             ui_actions.append({"type": "item", "item": {"id": "done_choices", "kind": "choices", "prompt": "Goal complete! Want to:", "options": ["Turn this into a Full Multi-Chapter PDF Comic Book", f"Save & print for {self.parent_title}"]}})
             self.ui_locked_this_turn.add("show_choices")
-            return {
+            return _finish({
                 "kind": self.last_kid_kind,
                 "ui": ui_actions,
                 "directive": f"COMPLETE SENTENCE ({self.goal_done}/{self.goal_target} — GOAL HIT!): '{raw}'! Call save_piece and offer turning this into a Full PDF Comic Book or wrapping up.",
-            }
+            })
 
         scaf = generate_combine_scaffold(self.rec, self.active_story, "", self.rung)
         conn_label = "when, because, or if" if self.rung == "B3.1_complex" else "but, so, or when"
@@ -1322,11 +1742,11 @@ class SessionController:
         ui_actions.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": f"Step {self.goal_done + 1} of {self.goal_target} · Level Up with '{conn_label}'", "text": card_txt}})
         ui_actions.append({"type": "input", "mode": "type", "prompt": f"Type Sentence {self.goal_done + 1} using {conn_label} (combine the card lines, or write your own complete sentence).", "prefill": ""})
         self.ui_locked_this_turn.update({"show_card", "ask_input"})
-        return {
+        return _finish({
             "kind": self.last_kid_kind,
             "ui": ui_actions,
             "directive": f"COMPLETE SENTENCE ({self.goal_done}/{self.goal_target}): '{raw}'! React briefly to the scene and invite Sentence {self.goal_done + 1} using {conn_label}.",
-        }
+        })
 
     # ---------------- HARD PYTHON TOOL GATE ----------------
 

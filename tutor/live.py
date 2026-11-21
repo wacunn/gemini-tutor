@@ -21,7 +21,7 @@ from google import genai
 from google.genai import types
 
 from . import builder, controller, curriculum_tracker, media, observers, projects, thinking
-from .config import DATA, LIVE_MODEL, api_key
+from .config import DATA, LIVE_FALLBACK_MODELS, LIVE_MODEL, api_key, genai_client
 from .prompt import TOOL_SPECS, build_system_prompt, opening_message
 from .record import (
     SessionLog,
@@ -228,7 +228,8 @@ class TutorSession:
         # Persistent Multi-Session Book / Graphic Novel / Codex Project!
         if self.ctrl.project:
             proj = self.ctrl.project
-            pnum, _ = projects.add_panel_to_project(proj, sentence, scene=sentence, persist=not self.test_mode)
+            pnum, _ = projects.add_panel_to_project(proj, sentence, scene=sentence, persist=True, sandbox=self.test_mode)
+            await self.ui({"type": "reward", "label": f"★ Panel {pnum} Inked into “{proj.get('title','Book')}”!"})
             await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
             await self.ui({"type": "goal", "text": self.ctrl.goal_badge()})
             self.spawn(self._draw_project_panel(proj, pnum, sentence))
@@ -273,20 +274,56 @@ class TutorSession:
                 refs,
                 continuity,
             )
-            if not self.test_mode:
-                projects.update_panel_media(proj, panel_number, mid, "done")
-            else:
-                for ch in proj.get("chapters") or []:
-                    for p in ch.get("panels") or []:
-                        if p.get("number") == panel_number:
-                            p.update(image=mid, src=f"/media/{mid}.jpg", status="done")
+            projects.update_panel_media(proj, panel_number, mid, "done", sandbox=self.test_mode)
             self.log.add("book_panel_drawn", project=proj["id"], panel=panel_number, id=mid)
             await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
             self.silent_context.append(f'[Book Panel {panel_number} rendered on screen for: "{sentence[:140]}"]')
         except Exception as e:
-            projects.update_panel_media(proj, panel_number, None, "failed")
+            projects.update_panel_media(proj, panel_number, None, "failed", sandbox=self.test_mode)
             await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
             self.log.add("error", where="draw_project_panel", error=str(e))
+
+    async def _draw_spine_beat(self, proj: dict[str, Any], beat: str, sentence: str) -> None:
+        """Immediately renders Cover / Story Spine artwork for Act I, Act II, and Act III so the child sees art right away!"""
+        refs = []
+        for mid in projects.recent_reference_media_ids(proj, limit=2):
+            try:
+                refs.append(media.media_path(mid).read_bytes())
+            except OSError:
+                pass
+        continuity = proj.get("characters") or (proj.get("spine") or {}).get("beginning", "")[:180]
+        try:
+            mid, _ = await asyncio.to_thread(
+                media.generate_image,
+                sentence,
+                proj.get("style") or "comic book ink with bold lines and vibrant flat colors",
+                "4:3",
+                refs,
+                continuity,
+            )
+            projects.update_spine_media(proj, beat, mid, "done", sandbox=self.test_mode)
+            self.log.add("spine_art_drawn", project=proj["id"], beat=beat, id=mid)
+            await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
+        except Exception as e:
+            projects.update_spine_media(proj, beat, None, "failed", sandbox=self.test_mode)
+            await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
+            self.log.add("error", where="draw_spine_beat", error=str(e))
+
+    async def _draw_codex_sketch(self, proj: dict[str, Any], prompt_txt: str) -> None:
+        """Renders an immediate blueprint field sketch as soon as the Codex Reading Inference Check locks in!"""
+        try:
+            mid, _ = await asyncio.to_thread(
+                media.generate_image,
+                prompt_txt,
+                "clean blueprint technical field sketch on dark parchment, crisp ink lines",
+                "4:3",
+            )
+            projects.update_codex_sketch(proj, mid, "done", sandbox=self.test_mode)
+            await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
+        except Exception as e:
+            projects.update_codex_sketch(proj, None, "failed", sandbox=self.test_mode)
+            await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
+            self.log.add("error", where="draw_codex_sketch", error=str(e))
 
     async def from_kid(self, payload: str, directive: str, image: bytes | None = None) -> None:
         prefix = ""
@@ -366,8 +403,11 @@ class TutorSession:
         if not key:
             await self.ui({"type": "error", "message": "No Gemini API key yet. Add it on the parent page."})
             return
-        client = genai.Client(api_key=key)
-        self.log.add("session_start", learner=self.name, model=LIVE_MODEL, voice=self.rec.get("voice"), test_mode=self.test_mode)
+        client = genai_client(live=True)
+        model_candidates = list(dict.fromkeys(LIVE_FALLBACK_MODELS))
+        model_idx = 0
+        active_live_model = model_candidates[0]
+        self.log.add("session_start", learner=self.name, model=active_live_model, voice=self.rec.get("voice"), test_mode=self.test_mode)
         reader = asyncio.create_task(self.read_browser())
         self.spawn(self.observe_loop())
         if not self.test_mode:
@@ -375,12 +415,13 @@ class TutorSession:
         attempts = 0
         try:
             while not self.closed and attempts < 6:
+                active_live_model = model_candidates[min(model_idx, len(model_candidates) - 1)]
                 try:
-                    async with client.aio.live.connect(model=LIVE_MODEL, config=self.live_config()) as live:
+                    async with client.aio.live.connect(model=active_live_model, config=self.live_config()) as live:
                         self.live = live
                         attempts = 0
                         self.ready.set()
-                        await self.ui({"type": "ready", "session_id": self.id})
+                        await self.ui({"type": "ready", "session_id": self.id, "model": active_live_model})
                         reconnect = await self.read_live()
                         self.ready.clear()
                         self.live = None
@@ -389,11 +430,19 @@ class TutorSession:
                 except Exception as e:
                     self.ready.clear()
                     self.live = None
+                    err_s = str(e)
+                    self.log.add("error", where="live", model=active_live_model, error=err_s)
+                    if ("404" in err_s or "not found" in err_s.lower() or "not supported" in err_s.lower()) and model_idx + 1 < len(model_candidates):
+                        model_idx += 1
+                        continue
                     attempts += 1
-                    self.log.add("error", where="live", error=str(e))
                     if self.closed:
                         break
-                    await self.ui({"type": "status", "message": "Reconnecting…"})
+                    short_err = err_s.splitlines()[0][:140]
+                    if attempts >= 2:
+                        await self.ui({"type": "error", "message": f"Gemini connection issue ({short_err}). Retrying…"})
+                    else:
+                        await self.ui({"type": "status", "message": "Reconnecting to Gemini…"})
                     await asyncio.sleep(min(2 * attempts, 6))
         finally:
             reader.cancel()
@@ -401,6 +450,7 @@ class TutorSession:
                 t.cancel()
             self._flush_kid()
             self._flush_tutor()
+            self.ctrl._save_current_if_needed()
             self.log.add("writing_stats", stats=self.stats.as_dict())
             self.log.add("session_end", minutes=round((time.time() - self.started) / 60, 1), page=self.page_text())
             if not self.test_mode:
@@ -486,8 +536,15 @@ class TutorSession:
             self.log.add("ctrl_plan", how="typed", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
             await self.apply_controller_ui(plan["ui"])
             render_note = ""
-            if plan["kind"] == "COMPLETE_SENTENCE":
-                final_txt = plan.get("full_paragraph") or text
+            if plan.get("spine_draw") and self.ctrl.project:
+                sd = plan["spine_draw"]
+                self.spawn(self._draw_spine_beat(self.ctrl.project, sd["beat"], sd["text"]))
+                render_note = " (Story Spine / Cover illustration is already rendering on the right—do NOT call draw.)"
+            elif plan.get("codex_sketch") and self.ctrl.project:
+                self.spawn(self._draw_codex_sketch(self.ctrl.project, plan["codex_sketch"]))
+                render_note = " (Specimen Blueprint Sketch is already rendering on the right—do NOT call draw.)"
+            elif plan["kind"] == "COMPLETE_SENTENCE":
+                final_txt = plan.get("full_paragraph") or plan.get("repaired_text") or text
                 await self.apply_target(target, final_txt, "typed")
                 render_note = await self.auto_render_sentence(final_txt)
             await self.from_kid(
@@ -516,8 +573,15 @@ class TutorSession:
             self.log.add("ctrl_plan", how="pen", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
             await self.apply_controller_ui(plan["ui"])
             render_note = ""
-            if text and plan["kind"] == "COMPLETE_SENTENCE":
-                final_txt = plan.get("full_paragraph") or text
+            if plan.get("spine_draw") and self.ctrl.project:
+                sd = plan["spine_draw"]
+                self.spawn(self._draw_spine_beat(self.ctrl.project, sd["beat"], sd["text"]))
+                render_note = " (Story Spine / Cover illustration is already rendering on the right—do NOT call draw.)"
+            elif plan.get("codex_sketch") and self.ctrl.project:
+                self.spawn(self._draw_codex_sketch(self.ctrl.project, plan["codex_sketch"]))
+                render_note = " (Specimen Blueprint Sketch is already rendering on the right—do NOT call draw.)"
+            elif text and plan["kind"] == "COMPLETE_SENTENCE":
+                final_txt = plan.get("full_paragraph") or plan.get("repaired_text") or text
                 await self.apply_target(target, final_txt, "handwritten")
                 render_note = await self.auto_render_sentence(final_txt)
             await self.from_kid(
@@ -534,7 +598,41 @@ class TutorSession:
             self.kid_events += 1
             ui_acts, directive = await asyncio.to_thread(self.ctrl.resume_loaded_project, proj)
             await self.apply_controller_ui(ui_acts)
-            await self.from_kid(f'[{self.name} opened saved book project "{proj.get("title")}" ({projects.total_panels(proj)} panels)]', directive)
+            await self.from_kid(f'[{self.name} switched to saved book "{proj.get("title")}" ({projects.total_panels(proj)} panels)]', directive)
+
+        elif kind == "new_project":
+            pkind = str(m.get("kind") or "epic_graphic_novel").strip()
+            ptitle = str(m.get("title") or "").strip()
+            self.kid_events += 1
+            self.log.add("kid_tapped", value=f"new_project:{pkind}", prompt=ptitle)
+            ui_acts, directive = await asyncio.to_thread(self.ctrl.create_or_switch_project, pkind, ptitle)
+            await self.apply_controller_ui(ui_acts)
+            await self.from_kid(f'[{self.name} saved previous work and started a brand-new {pkind} project{f" titled {ptitle!r}" if ptitle else ""}]', directive)
+
+        elif kind == "rename_project":
+            pid = str(m.get("id") or "").strip()
+            ptitle = str(m.get("title") or "").strip()
+            if self.ctrl.project and self.ctrl.project.get("id") == pid and ptitle:
+                self.ctrl.project["title"] = ptitle[:80]
+                self.ctrl.project["custom_titled"] = True
+                projects.save_project(self.ctrl.project, sandbox=self.test_mode)
+                await self.ui({"type": "item", "item": projects.project_ui_payload(self.ctrl.project)})
+            else:
+                projects.rename_project(pid, ptitle)
+
+        elif kind == "open_activity_saved":
+            aid = str(m.get("id") or "").strip()
+            act = load_activity(aid)
+            if not act:
+                return
+            self.ctrl._save_current_if_needed()
+            self.ctrl.project = None
+            self.activity = dict(act)
+            await self.ui({"type": "item", "item": {"id": "activity", "kind": "activity", "title": act.get("title", "Game"), "html": act["html"]}})
+            await self.from_kid(
+                f'[{self.name} reopened saved mini-game "{act.get("title")}"]',
+                "Invite typing the first complete sentence inside the reopened game in 1 short sentence.",
+            )
 
         elif kind == "tap":
             val = str(m.get("value") or "").strip()
@@ -554,8 +652,7 @@ class TutorSession:
             self.log.add("activity_event", data=data)
             if self.activity is not None and isinstance(data, dict) and data.get("kind") == "ready" and data.get("summary"):
                 self.activity["summary"] = str(data["summary"])[:300]
-                if not self.test_mode:
-                    save_activity({"id": self.activity["id"], "summary": self.activity["summary"]})
+                save_activity({"id": self.activity["id"], "summary": self.activity["summary"]}, sandbox=self.test_mode)
             if isinstance(data, dict) and data.get("typed"):
                 sub = str(data["typed"]).strip()
                 if sub:
@@ -743,8 +840,12 @@ class TutorSession:
                     if not sc:
                         continue
                     if sc.input_transcription and sc.input_transcription.text:
-                        self.kid_buf += sc.input_transcription.text
-                        await self.ui({"type": "kid_caption", "turn": self.turn, "text": self.kid_buf.strip()})
+                        cleaned_in = re.sub(r"<[^>]+>|\{[^}]+\}|\[[^\]]*\]", "", sc.input_transcription.text)
+                        if not re.fullmatch(r"\s*(?:no speech(?: detected)?|silence|inaudible|noise)\s*", cleaned_in, re.I):
+                            if cleaned_in.strip() or (self.kid_buf and cleaned_in):
+                                self.kid_buf += cleaned_in
+                                if self.kid_buf.strip():
+                                    await self.ui({"type": "kid_caption", "turn": self.turn, "text": self.kid_buf.strip()})
                     if sc.model_turn:
                         if not self.tutor_busy:
                             self.tutor_busy = True
@@ -915,7 +1016,7 @@ class TutorSession:
         if name == "save_piece":
             if not self.page and self.ctrl.active_story and not self.comic:
                 self.page = [{"text": s, "author": "kid"} for s in self.ctrl.active_story]
-            pid = new_id("piece")
+            pid = new_id("sbox_piece" if self.test_mode else "piece")
             piece = {
                 "id": pid,
                 "title": a.get("title") or "Untitled",
@@ -926,8 +1027,7 @@ class TutorSession:
                 "date": now_iso(),
                 "session": self.id,
             }
-            if not self.test_mode:
-                save_piece(piece)
+            save_piece(piece, sandbox=self.test_mode)
             self.log.add("piece_saved", id=pid, title=piece["title"], audience=piece["audience"])
             await self.ui({"type": "item", "item": {"id": pid, "kind": "saved", "title": piece["title"], "url": f"/piece/{pid}"}})
             return {"ok": True, "url": f"/piece/{pid}"}
@@ -1035,7 +1135,7 @@ class TutorSession:
                 else:
                     html = val
             assert html
-            aid = self.activity["id"] if (change and self.activity) else new_id("act")
+            aid = self.activity["id"] if (change and self.activity) else new_id("sbox_act" if self.test_mode else "act")
             meta = {
                 "id": aid,
                 "title": title,
@@ -1045,8 +1145,7 @@ class TutorSession:
                 "session": self.id,
             }
             self.activity = {**meta, "html": html}
-            if not self.test_mode:
-                save_activity({**meta, "html": html})
+            save_activity({**meta, "html": html}, sandbox=self.test_mode)
             secs = round(time.time() - t0)
             self.log.add("activity_built", id=aid, title=title, seconds=secs, change=change, why=why)
             await self.ui({"type": "build_done"})

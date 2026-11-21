@@ -115,11 +115,17 @@ def _render_cover(proj: dict[str, Any], panels: list[dict[str, Any]]) -> Image.I
         d.text((MARGIN + 16, y), ln, fill=(248, 246, 240), font=f_title)
         y += 76
 
-    # Cover hero art
+    # Cover hero art (uses Act I / Cover Concept Art immediately, even before Panel 1!)
     art_w = PAGE_W - 2 * (MARGIN + 16)
     art_h = 820
     art_top = max(y + 28, 360)
-    first_mid = next((p.get("image") for p in panels if p.get("image")), None)
+    sp = proj.get("spine") or {}
+    first_mid = (
+        proj.get("cover_image")
+        or sp.get("beginning_image")
+        or next((p.get("image") for p in panels if p.get("image")), None)
+        or proj.get("codex_sketch_image")
+    )
     hero = _load_panel_img(first_mid, art_w, art_h)
     if hero:
         page.paste(hero, (MARGIN + 16, art_top))
@@ -154,23 +160,31 @@ def _render_spine_page(proj: dict[str, Any]) -> Image.Image:
 
     spine = proj.get("spine") or {}
     sections = [
-        ("ACT I · THE BEGINNING (SETUP & WORLD)", spine.get("beginning") or "(In progress)"),
-        ("ACT II · THE MIDDLE (COMPLICATION & ESCALATION)", spine.get("middle") or "(In progress)"),
-        ("ACT III · THE END (CLIMAX & RESOLUTION)", spine.get("end") or "(In progress)"),
+        ("ACT I · THE BEGINNING (SETUP & WORLD)", spine.get("beginning") or "(In progress)", spine.get("beginning_image")),
+        ("ACT II · THE MIDDLE (COMPLICATION & ESCALATION)", spine.get("middle") or "(In progress)", spine.get("middle_image")),
+        ("ACT III · THE END (CLIMAX & RESOLUTION)", spine.get("end") or "(In progress)", spine.get("end_image")),
     ]
 
     y = 220
     box_w = PAGE_W - 2 * MARGIN
-    for label, content in sections:
-        lines = _wrap(d, content, f_body, box_w - 64) or ["(In progress)"]
-        box_h = max(220, 96 + len(lines) * 38)
+    thumb_w, thumb_h = 340, 255
+    for label, content, img_id in sections:
+        thumb = _load_panel_img(img_id, thumb_w, thumb_h)
+        text_max_w = (box_w - thumb_w - 84) if thumb else (box_w - 64)
+        lines = _wrap(d, content, f_body, text_max_w) or ["(In progress)"]
+        box_h = max(thumb_h + 44 if thumb else 220, 96 + len(lines) * 38)
         d.rounded_rectangle([MARGIN, y, MARGIN + box_w, y + box_h], radius=18, fill=(255, 255, 255), outline=(28, 30, 34), width=4)
+        if thumb:
+            ix = MARGIN + box_w - thumb_w - 22
+            iy = y + 22
+            page.paste(thumb, (ix, iy))
+            d.rectangle([ix, iy, ix + thumb_w, iy + thumb_h], outline=(28, 30, 34), width=3)
         d.text((MARGIN + 32, y + 26), label, fill=(42, 86, 196), font=f_lbl)
         ty = y + 72
         for ln in lines[:8]:
             d.text((MARGIN + 32, ty), ln, fill=(28, 30, 34), font=f_body)
             ty += 38
-        y += box_h + 36
+        y += box_h + 32
 
     return page
 

@@ -17,7 +17,7 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from .config import FALLBACK_MODEL, FAST_MODEL, HYDROGEN_MODEL, ROOT, api_key
+from .config import FALLBACK_MODEL, FAST_MODEL, HYDROGEN_MODEL, ROOT, genai_client
 
 OBSERVER_MODEL = HYDROGEN_MODEL  # gemini-4-hydrogen for child modeling, critic, and turn auditing
 TARGETS_FILE = ROOT / "curriculum" / "targets.md"
@@ -31,10 +31,7 @@ def targets_text() -> str:
 
 
 def _client() -> genai.Client:
-    key = api_key()
-    if not key:
-        raise RuntimeError("GEMINI_API_KEY not set")
-    return genai.Client(api_key=key)
+    return genai_client()
 
 
 def _json(text: str) -> Any:
@@ -73,7 +70,7 @@ CRITIC_SYSTEM = """You are the education critic sitting silently beside a live A
 You are an experienced literacy specialist (SRSD, Saddler & Graham sentence combining, structured literacy, Ontario Language Curriculum 2023).
 
 Flag as drifting or off_track if ANY of these happen:
-- Conversational wh- traps: asking questions naturally answered with 1 word or a fragment ("Where is your base?", "What surrounds it?", "What's inside?") instead of setting up concrete sentence construction/combining/repair.
+- Unguarded 1-word small-talk: asking generic chat questions ("What's your favorite color?") WITHOUT asking for a complete sentence. (NOTE: Curious, story-specific why/where/how questions tied to what the child just wrote—like "Where did Bob find that smelly cat? Answer in one complete sentence!"—are EXCELLENT tutoring and MUST be approved!)
 - Escape reinforcement: rewarding, drawing, praising, or playing along with minimal/avoidant answers ("cow", "cow", "idk", "stuff").
 - Babyish or arbitrary school-drill filler: "write a sentence about what a bear eats / what color a cow is / what a cat does".
 - Doing the cognitive work for him: dictating a complete sentence verbatim for him to copy, or offering complete sentences as tappable choices.
@@ -149,7 +146,7 @@ TURN_AUDIT_SYSTEM = """You are the per-turn pedagogical auditor evaluating the A
 
 A tutor turn PASSES (last_turn_ok = true) ONLY if ALL of these hold:
 1. Educational task demand: It sets up, scaffolds, or responds to genuine language production—complete sentence construction, sentence combining (when/because/but/so/although), causal Story Spine planning, 3-Source Reading Inference & Informational Paragraph synthesis (Strand C / D1.3), SRSD TREE Persuasive drafting, Voice-to-Draft editing, fragment/run-on/punctuation repair, or Cover-Copy-Compare word retrieval—OR is a crisp <=2-sentence launch/wrap with concrete on-screen options/tasks.
-2. Zero 1-word wh- traps: It does NOT ask a conversational question naturally answered by a single word or noun phrase ("Where is your base?", "What surrounds it?").
+2. Curious, story-specific prompts (NOT unguarded 1-word chat): Asking story-grounded why/where/how questions ("Where did Bob find that smelly cat, or why did he keep it? Write one complete sentence!") WITH a reminder of their story and a complete-sentence expectation is GREAT tutoring. Only fail if the tutor asks generic small-talk with no sentence task.
 3. Zero escape reinforcement: If the student gave a minimal/avoidant input ("cow", "idk", "stuff"), the tutor did NOT praise it, play along with it, or draw it.
 4. Zero babyish / arbitrary filler: No 1st-grade prompts ("what a bear eats", "what color a cow is", "what a cat does").
 5. Student does the cognitive work: Tutor did NOT dictate a finished sentence verbatim for him to copy and did NOT offer complete sentences as choices.
