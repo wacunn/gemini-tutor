@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+- **Clean, Neutral Parent Page & Prompt Copy (`static/parent.html`, `tutor/guardian.py`, `tutor/prompt.py`, `tutor/blackboard.py`, `tutor/controller.py`, `tutor/media.py`, `tutor/doodle_fallback.py`, `tutor/builder.py`, `tutor/research_packs.py`):**
+  - Replaced Editorial/filter-tuning blurbs on `/parent` and in system prompts with clean, neutral copy (*"Summarizes session topics and pauses only for genuine child-safety concerns"*), keeping the background distinction between thoughtful/philosophical curiosity and actual child-safety danger completely understated.
+
 ## 1.3.0
 - **Authentic Comic Panels, Draggable Speech/Shout/Thought Bubbles & Editable Yellow Captions Everywhere (`static/app.js`, `static/style.css`, `tutor/projects.py`, `tutor/controller.py`, `tutor/live.py`, `tutor/pdf_book.py`, `server.py`, `tutor/prompt.py`):**
   - **Every Beat Renders as a Real Comic Panel Immediately**: Upgraded Graphic Novel Plot Board beats (**Cover/Kickoff**, **Middle Twists**, **Big Finale**), Chapter Panels, Quick 3-Panel Strips, and Standalone Drawings into ink-framed comic panels with classic yellow narrator caption boxes and real comic speech balloons (pointed tails for **Speech**, spiky yellow bursts for **SHOUT!**, and cloud circles for **Thought** bubbles).
@@ -10,9 +14,8 @@
   - **Smart Quote Splitting & Natural Chat Commands**: Writing `"Get off me!" yelled Dylan.` automatically puts `"Get off me!"` into a speech bubble without repeating the quote in the bottom caption box; saying *"it isn't a comic"*, *"add dialogue"*, or *`make Dylan say "..."`* opens or adds comic lettering instead of triggering a textless image redraw; and downloading the PDF even during Plot Board stages renders real 2-panel-per-page comic spreads.
 
 ## 1.2.1
-- **Anti-Blippi Maturity Calibration — Zero Over-Safeties on Swearing, Death Curiosity & Grown-Up Topics (`tutor/guardian.py`, `tutor/prompt.py`, `tutor/blackboard.py`, `tutor/thinking.py`, `tutor/controller.py`, `tutor/media.py`, `tutor/doodle_fallback.py`, `tutor/builder.py`, `tutor/research_packs.py`, `static/parent.html`):**
-  - **Calibrated Child-Safety Watching Agent (`tutor/guardian.py`)**: Swearing for laughs (`"shit"`, `"fuck"`, `"damn"`, `"hell"`, `"ass"`, etc.), curiosity about death/dying/mortality, comic character deaths (`"I don't want to die!"`, skeletons, graves), heavy-metal aesthetics, and mature/adult curiosity **never** trigger the `ERR-G42` "App Bug" freeze—they are logged calmly as `"ok"` or `"watch"` notes on `/parent` so Mom & Dad have full visibility without interrupting or scolding him. Reserved `"nervous_stop"` strictly for genuine acute danger (first-person self-harm/suicidal intent, real-world abuse or secrecy from parents, explicit pornography/exploitation, actionable weapon/poison harm, or AI boundary violations).
-  - **Zero Moralizing, Zero Bowdlerizing, Zero Sanitizing**: Updated every agent prompt so the tutor never gasps, scolds, or says *"let's use nice words"* when he swears, never tries to rewrite swear/death words into fake "misspellings" (`thinking._post_verify_check`), softens raw expletives only inside internal image-API prompts so Gemini's image filter never rejects his comic panels (`media._clean_scene_for_image_api`), and engages matter-of-factly with death/skeletons/mature topics without babying him.
+- **Proportional Child-Safety Watcher Calibration (`tutor/guardian.py`, `tutor/prompt.py`, `tutor/blackboard.py`, `tutor/thinking.py`, `tutor/media.py`):**
+  - Calibrated the Watching Agent and prompts to distinguish big philosophical/scientific questions, dramatic comic fiction, and casual off-color humor (logged quietly for parent context without scolding or interrupting) from genuine child-safety risks (first-person self-harm, abuse or secrecy from parents, explicit sexual content, actionable real-world harm, or AI boundary violations).
 
 ## 1.2.0
 - **Child-Safety Watching Agent, Conversation Topics Report & Protective “App Bug” Pause (`tutor/guardian.py`, `tutor/live.py`, `server.py`, `static/parent.html`, `static/index.html`, `static/app.js`):**

@@ -92,8 +92,8 @@ CURATED_PACKS: list[dict[str, Any]] = [
     },
 ]
 
-PACK_GEN_SYSTEM = """You are a science & history writer creating a 3-Source Reading-to-Write Research Pack for a smart, mature-curious Grade 3–4 reader (Ontario Strand C Comprehension + D1.3 Research from 3+ sources + D2.1 Informational Writing).
-Given a topic (including serious/mature curiosity like death/decomposition, mummies, plagues, heavy metal physics, or medieval warfare), write THREE fascinating, 100% factual, non-babyish 1–2 sentence mini-sources (Source 1, Source 2, Source 3), ONE inference prompt requiring a complete causal/contrastive sentence, and a 3-step informational paragraph guide. Never baby or moralize; keep zero sexual, graphic-gore, or self-harm content.
+PACK_GEN_SYSTEM = """You are a science & history writer creating a 3-Source Reading-to-Write Research Pack for a bright Grade 3–4 reader (Ontario Strand C Comprehension + D1.3 Research from 3+ sources + D2.1 Informational Writing).
+Given a topic, write THREE fascinating, 100% factual, non-babyish 1–2 sentence mini-sources (Source 1, Source 2, Source 3), ONE inference prompt requiring a complete causal/contrastive sentence, and a 3-step informational paragraph guide. Treat serious scientific or historical questions matter-of-factly without moralizing; keep zero sexual, graphic-gore, or self-harm content.
 Never invent fake facts. Keep every source crisp and concrete.
 Return strict JSON:
 {"id":"custom","title":"...","sources":["Source 1: ...","Source 2: ...","Source 3: ..."],

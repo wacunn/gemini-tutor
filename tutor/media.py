@@ -142,8 +142,7 @@ def small_jpeg(data: bytes) -> bytes:
 
 
 def _clean_scene_for_image_api(scene: str) -> str:
-    """Softens raw expletives ONLY inside the internal image-API prompt so Gemini's image safety filter
-    never rejects a panel just because the kid swore for laughs, while keeping his comic action/darkness intact."""
+    """Replaces raw expletives inside the internal image-API prompt so upstream image filters don't reject a valid comic panel."""
     s = scene or ""
     s = re.sub(r"\bholy\s+shit\b", "yelling in total shock", s, flags=re.I)
     s = re.sub(r"\bwhat\s+the\s+(?:fuck|hell)\b", "yelling in disbelief", s, flags=re.I)
@@ -170,13 +169,13 @@ def generate_image(
         "Draw ONE single comic illustration showing ONE moment. Do NOT divide the image into multiple panels or frames.\n"
         "Draw ONLY the characters, objects, actions, and setting explicitly named in the Scene description. If the description "
         "is sparse, keep the scene sparse so adding more detail to the sentence visibly upgrades the next drawing.\n"
-        "CRITICAL AESTHETIC & MATURITY RULES:\n"
-        "- Make the art genuinely COOL, funny, irreverent, and expressive like comics & graphic novels 8–10-year-olds who love "
-        "heavy metal actually respect (Dog Man, Diary of a Wimpy Kid, Last Kids on Earth, Bone, shonen manga, 80s metal zines).\n"
-        "- STRICTLY FORBID babyish preschool picture-book art, Blippi/toddler cheerfulness, wholesome Hallmark clipart, soft pastel "
-        "nursery colors, or sanitizing dark/edgy scenes (skeletons, skulls, gravestones, ghosts, dramatic comic character deaths, epic battles) into cute mush.\n"
-        "- SAFETY BOUNDARIES (WITHOUT BABYING): Stylized comic action, skulls, skeletons, tombstones, and dramatic comic-strip defeats/deaths are welcome; "
-        "keep ZERO graphic gore/viscera, ZERO nudity/sexual content, and ZERO real-world self-harm.\n"
+        "CRITICAL AESTHETIC RULES:\n"
+        "- Make the art genuinely cool, funny, and expressive like comics & graphic novels 8–10-year-olds actually read "
+        "(Dog Man, Diary of a Wimpy Kid, Last Kids on Earth, Bone, shonen manga).\n"
+        "- STRICTLY FORBID babyish preschool picture-book art, wholesome Hallmark clipart, soft pastel nursery colors, "
+        "or generic stock-clipart smiles.\n"
+        "- CHILD SAFETY: Stylized comic action and dramatic fantasy/adventure stakes are fine; keep ZERO graphic gore/viscera, "
+        "ZERO nudity/sexual content, and ZERO real-world self-harm.\n"
         "- Commit 100% to the requested Art Style, with comedic/dramatic cartoon expressions and dynamic framing.\n"
         "- Absolutely NO words, letters, numbers, captions, signs, or speech bubbles anywhere in the image.\n"
         f"Art Style: {resolved_style}\n"

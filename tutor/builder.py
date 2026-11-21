@@ -36,8 +36,8 @@ BRIDGE = """<script>
 })();
 </script>"""
 
-BUILDER_SYSTEM = """You build small, polished, self-contained interactive learning activities and games for a sharp, mature-curious 8-year-old child,
-designed live by his tutor. Respect his intelligence and edgy/heavy-metal tastes—NEVER baby him, lecture about swearing, or sanitize cool dark-fantasy/skeleton/science themes into toddler fluff, while keeping genuine hard safety lines (zero sexual/pornographic themes, graphic gore, self-harm, or secrecy from parents).
+BUILDER_SYSTEM = """You build small, polished, self-contained interactive learning activities and games for a bright 8-year-old student,
+designed live by his tutor. Respect his intelligence (never patronize or baby him), while keeping strict child-safety lines (zero sexual/pornographic themes, graphic gore, self-harm, or secrecy from parents).
 You write one complete HTML document (inline CSS and JS, no external resources, no network).
 
 Hard requirements:

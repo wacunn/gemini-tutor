@@ -252,7 +252,7 @@
     <div id="guardianBanner" class="card" hidden style="margin-top:14px;border:2px solid #f28b82;background:#2a1919"></div>
     <div id="quotaNotice" class="card" hidden style="margin-top:14px;border:1px solid #fdd663;color:#fdd663"></div>
 
-    <h2>Conversation Topics &amp; Child-Safety Watcher (Age 8)</h2>
+    <h2>Conversation Topics &amp; Safety Watcher</h2>
     <div class="grid" id="guardianTopics">
       <div class="card muted">Watching agent active — topics appear as soon as he starts writing or talking.</div>
     </div>
@@ -417,7 +417,7 @@
           ? '<span class="bad">Paused for parent check-in</span>'
           : gAlerts.some(a => a.level === "watch")
           ? '<span class="warn">All clear · Watch notes logged</span>'
-          : '<span class="ok">All clear (Age-8 safety active)</span>';
+          : '<span class="ok">All clear</span>';
         const watchNotesHtml = gAlerts.length
           ? gAlerts.slice(0, 6).map(a => `<div style="margin:6px 0;padding-top:6px;border-top:1px solid #2c2f33">
               <span class="pill" style="color:${a.level === "nervous_stop" ? "#f28b82" : "#fdd663"}">${a.level === "nervous_stop" ? "Paused" : "Watch"} · ${esc(a.category || "")}</span>
@@ -450,7 +450,7 @@
           <div class="card">
             <h3>Child-Safety Watching Agent</h3>
             <div class="big" style="font-size:1.25rem">${statusBadge}</div>
-            <div class="muted" style="margin-top:6px">Turns inspected: <b>${G.turns_checked ?? 0}</b> · Logs swearing, death curiosity &amp; mature topics quietly here without scolding; only triggers “App Bug” pause on genuine safety red flags</div>
+            <div class="muted" style="margin-top:6px">Turns inspected: <b>${G.turns_checked ?? 0}</b> · Summarizes session topics and pauses only for genuine child-safety concerns</div>
             <h3 style="margin-top:14px">Flagged / Watch Notes</h3>
             ${watchNotesHtml}
           </div>

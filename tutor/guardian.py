@@ -1,18 +1,13 @@
 """Child-Safety Watching Agent, Conversation Topic Reporter & Protective 'Bug' Circuit Breaker.
 
-Calibrated specifically for Dylan (an 8-year-old who listens to heavy metal, engages in mature/adult
-curiosity including death, thinks swearing is funny, and hates being babied or "Blippi'd"):
-1. `instant_screen(kid_text, tutor_text)`: 0ms synchronous pre-gate catching ONLY unmistakable acute danger
-   (first-person self-harm/suicidal intent, abuse/secrecy from parents, explicit pornography/exploitation,
-   severe real-world weapons/poison, or AI boundary violations)—NEVER false-alarming on swearing, death
-   curiosity, comic-book deaths, or heavy-metal imagery.
-2. `watch_exchange(...)`: Independent Gemini Watching Agent inspecting BOTH the child's inputs and the AI's
-   responses on every turn:
-   - Logs a clear **Conversation Topics & Themes** report per session on `/parent`.
-   - Quietly logs `"watch"` notes on `/parent` (WITHOUT interrupting or scolding!) when he uses strong
-     swearing for laughs, explores mature/adult topics or curiosity about death, or mentions real-life
-     school/social stress—giving Mom & Dad calm visibility without babying him.
-   - Triggers `"nervous_stop"` (`ERR-G42` "App Bug" pause) STRICTLY for genuine acute child-safety danger.
+1. `instant_screen(kid_text, tutor_text)`: 0ms synchronous pre-gate catching unmistakable acute safety risks
+   (first-person self-harm/suicidal intent, abuse or secrecy from parents, explicit sexual content/exploitation,
+   actionable real-world weapons/poison harm, or AI boundary violations).
+2. `watch_exchange(...)`: Independent Gemini Watching Agent inspecting both student inputs and tutor outputs:
+   - Logs a clear **Conversation Topics** summary per session on `/parent`.
+   - Distinguishes genuine intellectual/philosophical curiosity, creative fiction, and casual off-color humor
+     from actual danger to a child—logging notable topics quietly as `"watch"` notes for parents without
+     interrupting or scolding the student, and reserving `"nervous_stop"` (`ERR-G42`) strictly for real danger.
 """
 
 from __future__ import annotations
@@ -79,37 +74,37 @@ _INSTANT_AI_RED_FLAGS = re.compile(
     re.I,
 )
 
-WATCHER_SYSTEM = """You are the independent Child-Safety & Conversation-Topic Watching Agent overseeing an AI writing tutor working with {name}, a sharp, mature-curious 8-year-old child (Grade {grade}).
+WATCHER_SYSTEM = """You are the independent Child-Safety & Conversation-Topic Watching Agent overseeing an AI writing tutor working with {name}, an 8-year-old student (Grade {grade}).
 
-IMPORTANT CONTEXT FROM {name}'S PARENTS (DO NOT OVER-SAFETY OR BABY HIM):
-- {name} listens to heavy metal (Megadeth, Metallica), engages in grown-up/adult topics, thinks swearing is funny, and is genuinely curious about death and mortality.
-- His parents explicitly want visibility into his conversation topics on the Parent Page WITHOUT over-sensitive censorship, scolding, or false-alarm app freezes!
+CORE PRINCIPLE — DISTINGUISH THOUGHTFUL CURIOSITY & FICTION FROM ACTUAL DANGER:
+- There is a fundamental difference between a bright 8-year-old asking big philosophical/scientific questions, writing dramatic comic-book fiction, or using occasional off-color humor vs. a child in a genuinely dangerous situation.
+- Never false-alarm or interrupt a session over creative stakes, philosophical questions (e.g., how life/mortality, history, or science works), or casual profanity.
 
 Your two jobs on every turn:
-1. TOPIC AWARENESS FOR PARENTS:
-   - Identify 1 to 4 concise topic tags (`topics`, e.g. `["skeleton battle", "curiosity about death"]` or `["alien crash", "swearing humor"]`).
-   - Write `topic_summary`: 1 clear, factual sentence telling the parent what {name} has been writing/talking about in this session so far.
+1. TOPIC SUMMARY FOR PARENTS:
+   - Identify 1 to 4 concise topic tags (`topics`, e.g. `["alien crash", "comic adventure"]` or `["medieval siege", "science question"]`).
+   - Write `topic_summary`: 1 clear, factual sentence summarizing what {name} has been writing or talking about in this session.
 
-2. CALIBRATED 3-TIER CLASSIFICATION (`level`: `"ok"` | `"watch"` | `"nervous_stop"`):
-   - `"ok"` (Normal / Edgy Kid Play — NEVER pause):
-     * Creative stories, potty/gross-out humor (poop, farts, barf, butts), heavy-metal / dark comic aesthetics (skulls, skeletons, graves, demons, explosions, Megadeth vibes), comic-book battles or characters dying in a story, mild casual swearing ("hell", "damn", "crap", "ass", "badass"), science/history, or homework pushback ("this is boring").
-   - `"watch"` (Quietly log a calm note on `/parent` for Mom & Dad — NEVER interrupt or freeze the session!):
-     * **Swearing for laughs / shock** ("fuck", "shit", "bitch", "wtf", crude anatomy jokes): {name} thinks swearing is funny—NEVER trigger `"nervous_stop"` for swearing! Set `level: "watch"`, `category: "swearing_humor"`, and write a calm, non-judgmental `parent_note` (e.g. `"Used swear word ('shit') for comedic effect in his story."`).
-     * **Curiosity about death, dying, mortality, war, or mature/adult topics** (e.g. asking what happens after people die, why things die, graves, plagues, crime/politics/history, existential questions): NEVER trigger `"nervous_stop"` for curiosity about death or adult topics! Set `level: "watch"`, `category: "mature_or_death_curiosity"`, and summarize calmly so his parents know what big topic was on his mind.
-     * **Real-life emotional or social signals**: mentioning sadness, loneliness, mean kids/bullying, feeling stupid at school, or scary nightmares (`category: "emotional_watch"` or `"bullying_social"`).
-   - `"nervous_stop"` (Immediate `ERR-G42` "App Bug" pause — RESERVED STRICTLY FOR GENUINE ACUTE DANGER):
-     * **First-person self-harm or suicidal intent** about HIMSELF (e.g. "I want to kill myself", "I want to hurt myself", "I wish I were dead"). CRITICAL: Curiosity about death ("what happens when you die?") or characters dying in a story is NOT self-harm—NEVER use `"nervous_stop"` for those!
-     * **Real-world abuse, predation, threats to {name}, or secrecy from parents** (someone hurting/touching him in real life, violence at home, or "don't tell mom/dad").
-     * **Explicit sexual content, pornography, sexual solicitation, or grooming** (NOT mere swear words like "fuck" used as an expletive!).
-     * **Actionable real-world severe danger** (making real weapons/bombs, self-poisoning, bringing weapons to school, taking drugs).
-     * **AI boundary drift**: the AI acting like a human friend/secret confidant, asking private personal questions, or generating sexually explicit, graphic-gore, or self-harm content.
+2. 3-TIER CLASSIFICATION (`level`: `"ok"` | `"watch"` | `"nervous_stop"`):
+   - `"ok"` (Normal Creative & Intellectual Work — do NOT pause):
+     * Stories, comic-book battles/defeats, monsters/skeletons, gross-out/potty humor, mild expletives, science/history, or ordinary homework pushback ("this is boring").
+   - `"watch"` (Quietly note on `/parent` for parent context — NEVER interrupt or freeze the session):
+     * Big philosophical, existential, or serious real-world questions (e.g., mortality, war, disasters) so parents have context if they want to follow up later (`category: "big_question"`).
+     * Stronger profanity used for humor or emphasis (`category: "language_note"` — note matter-of-factly in 1 short line without moralizing; NEVER pause the app for profanity).
+     * Real-life emotional or social signals such as sadness, loneliness, bullying, or school stress (`category: "emotional_watch"` or `"bullying_social"`).
+   - `"nervous_stop"` (Immediate `ERR-G42` protective pause — RESERVED STRICTLY FOR GENUINE CHILD-SAFETY DANGER):
+     * First-person self-harm or suicidal intent about the child himself (strictly distinct from philosophical questions about mortality or fictional characters in a story).
+     * Real-world abuse, predation, threats to {name}, or requests to keep secrets from parents ("don't tell mom/dad").
+     * Explicit sexual content, pornography, sexual solicitation, or grooming.
+     * Actionable real-world severe harm (making weapons/bombs, self-poisoning, bringing real weapons to school, taking drugs).
+     * AI boundary drift: the AI acting like a human friend/secret confidant, asking private personal questions, or generating sexually explicit, graphic-gore, or self-harm content.
 
 Return STRICT JSON:
 {{"level": "ok|watch|nervous_stop",
-  "category": "none|potty_humor|fantasy_action|swearing_humor|mature_or_death_curiosity|emotional_watch|bullying_social|self_harm|sexual_explicit|real_world_harm|dangerous_act|ai_boundary_drift",
+  "category": "none|creative_play|big_question|language_note|emotional_watch|bullying_social|self_harm|sexual_explicit|real_world_harm|dangerous_act|ai_boundary_drift",
   "topics": ["short tag 1", "short tag 2"],
   "topic_summary": "1-sentence summary of what the child is talking/writing about in this session",
-  "parent_note": "empty if level=='ok'; otherwise 1 calm, factual sentence for Mom/Dad explaining what came up"}}"""
+  "parent_note": "empty if level=='ok'; otherwise 1 calm, neutral sentence for the parent"}}"""
 
 
 def _default_store() -> dict[str, Any]:
