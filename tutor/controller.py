@@ -241,12 +241,7 @@ def _splice_word_into_sentence(sentence: str, wrote: str, replacement: str) -> s
     out, count = pat.subn(_repl, sentence, count=1)
     if count == 0:
         out = sentence.replace(wrote, replacement, 1)
-    out = out.strip()
-    if out and out[0].isalpha() and not out[0].isupper():
-        out = out[0].upper() + out[1:]
-    if out and not re.search(r'[.!?]["\')\]]*$', out):
-        out += "."
-    return out
+    return out.strip()
 
 
 class SessionController:
@@ -989,6 +984,135 @@ class SessionController:
         return ws_card
 
     @staticmethod
+    def _make_spell_choices(wrote: str, meant: str) -> list[str]:
+        """Builds 3 plausible multiple-choice spellings (always including `meant` + `wrote` + 1 orthographic distractor)."""
+        w_clean = wrote.strip()
+        m_clean = meant.strip()
+        # Preserve capitalization if wrote was capitalized at start of sentence
+        if w_clean[:1].isupper() and m_clean[:1].islower():
+            m_disp = m_clean[:1].upper() + m_clean[1:]
+        else:
+            m_disp = m_clean
+        special_distractors = {
+            "whose": ["who's", "whoose"],
+            "face": ["fasse", "faice"],
+            "because": ["becuase", "becuse"],
+            "flying": ["flieing", "flyin"],
+            "friend": ["freind", "frend"],
+            "people": ["peple", "poeple"],
+            "finally": ["finaly", "finelly"],
+            "smelly": ["smely", "smelee"],
+            "their": ["there", "they're"],
+            "there": ["their", "they're"],
+        }
+        cands = [m_disp]
+        if w_clean.lower() != m_disp.lower():
+            cands.append(w_clean)
+        for d_opt in special_distractors.get(m_clean.lower(), []):
+            d_disp = d_opt[:1].upper() + d_opt[1:] if m_disp[:1].isupper() else d_opt
+            if d_disp.lower() not in {c.lower() for c in cands}:
+                cands.append(d_disp)
+        # Generic phonetic/orthographic distractors if still < 3
+        fallbacks = [
+            m_disp + "e" if not m_disp.endswith("e") else m_disp[:-1],
+            re.sub(r"([aeiou])", r"\1\1", m_disp, count=1),
+            m_disp.replace("c", "s", 1) if "c" in m_disp.lower() else m_disp + "s",
+        ]
+        for fb in fallbacks:
+            if len(cands) >= 3:
+                break
+            if fb and len(fb) >= 2 and fb.lower() not in {c.lower() for c in cands}:
+                cands.append(fb)
+        cands = cands[:3]
+        # Deterministic shuffle seeded by sentence/word so choices don't always have correct first
+        shift = sum(ord(ch) for ch in (w_clean + m_disp)) % len(cands)
+        return cands[shift:] + cands[:shift]
+
+    def _launch_quick_spell_mc_plan(
+        self,
+        sentence: str,
+        wrote: str,
+        meant: str,
+        extra_ms: list[dict[str, str]] | None = None,
+        rationale: str = "",
+    ) -> dict[str, Any]:
+        """Homework-grade Multiple-Choice + 'Why' explanation whenever we don't make the child retype a spelling error cold."""
+        if " " in meant.strip():
+            ws = {"word": meant, "parts": " + ".join(meant.split()), "note": f"'{meant}' is written as separate words."}
+        elif len(meant) <= 2:
+            ws = {"word": meant, "parts": meant, "note": f"In '{_phrase_around_word(sentence, wrote)}', use '{meant}'."}
+        else:
+            ws = dict(thinking.analyze_word_study(wrote, meant))
+        why_note = ws.get("note") or f"Notice how '{meant}' is built: {ws.get('parts', meant)}."
+        parts_str = ws.get("parts") or meant
+        opts = self._make_spell_choices(wrote, meant)
+        correct_disp = next((o for o in opts if o.lower() == meant.strip().lower()), meant.strip())
+
+        self.last_kid_kind = "QUICK_SPELL_CHOICE"
+        self.draw_unlocked = False
+        self.had_revision = True
+        self.spell_pick = {
+            "wrote": wrote,
+            "correct": correct_disp,
+            "options": opts,
+            "sentence": sentence,
+            "why": why_note,
+            "parts": parts_str,
+            "extra_ms": [m for m in (extra_ms or []) if m.get("wrote") and m.get("meant") and m["wrote"].lower() != wrote.lower()],
+        }
+        ui_mc: list[dict[str, Any]] = [
+            {"type": "remove", "id": "word"},
+            {"type": "remove", "id": "say_word_help"},
+            {
+                "type": "item",
+                "item": {
+                    "id": "spell_why",
+                    "kind": "card",
+                    "title": f"Quick Spelling Check · “{wrote}”",
+                    "text": f"Why it works: {why_note} ({parts_str})",
+                },
+            },
+            {
+                "type": "item",
+                "item": {
+                    "id": "spell_pick",
+                    "kind": "choices",
+                    "prompt": f"Pick the right spelling for “{wrote}”:",
+                    "options": [*opts, "🎤 Say the word out loud so I can help"],
+                },
+            },
+            {
+                "type": "input",
+                "mode": "type",
+                "prompt": f"Tap the right spelling above (or type it right over “{wrote}” in your sentence):",
+                "prefill": sentence,
+                "select_word": wrote,
+            },
+        ]
+        self.ui_locked_this_turn.update({"show_card", "show_choices", "ask_input"})
+        spoken = f"Quick check on '{wrote}'! {why_note} Tap the right spelling on screen (or fix it in the box)!"
+        mc_dec = {
+            "accept": False,
+            "focus": "spelling",
+            "focus_word": wrote,
+            "focus_correct": correct_disp,
+            "spell_rung": 4,
+            "scaffold": "multiple_choice_why",
+            "kid_words": spoken,
+            "rationale": rationale or f"Never skip spelling: showing 1-tap multiple choice + why rule ({parts_str}) for '{wrote}' -> '{correct_disp}'.",
+            "guardrail": "never_skip_spelling_mc",
+            "latency_s": 0.0,
+        }
+        self.last_coach = mc_dec
+        return {
+            "kind": self.last_kid_kind,
+            "ui": ui_mc,
+            "spoken_fallback": spoken,
+            "directive": f'Explain briefly in 1-2 short plain sentences (do NOT say wrong): "{spoken}"',
+            "coach": mc_dec,
+        }
+
+    @staticmethod
     def _is_clean(chk: dict[str, Any] | None) -> bool:
         if not chk:
             return False
@@ -1160,6 +1284,82 @@ class SessionController:
             daemon=True,
         ).start()
 
+        ms_rem = effective_chk.get("misspellings") or []
+        gf_rem = effective_chk.get("grammar_fixes") or []
+        sents_rem = effective_chk.get("sentences") or []
+        miss_cap = any(s.get("capital_ok") is False for s in sents_rem) or (bool(raw) and raw[0].isalpha() and not raw[0].isupper())
+        miss_end = any(s.get("end_ok") is False for s in sents_rem) or (bool(raw) and not re.search(r'[.!?]["\')\]]*$', raw))
+
+        # HOMEWORK RULE 1: NEVER let a spelling error slide unaddressed!
+        # Whenever the coach would have skipped spelling (accept=True or consecutive_fixes>=1 or low energy),
+        # give our 1-tap Multiple-Choice + plain-English "Why" explanation!
+        if ms_rem and (decision["accept"] or (decision["focus"] != "spelling" and decision["focus"] not in ("complete_sentence", "run_on"))):
+            m0 = sorted(ms_rem, key=lambda x: len(x.get("meant", "")), reverse=True)[0]
+            rest_ms = [m for m in ms_rem if m["wrote"].lower() != m0["wrote"].lower()]
+            cs["consecutive_fixes"] = cs.get("consecutive_fixes", 0) + 1
+            cs["pushed"] = cs.get("pushed", 0) + 1
+            return (
+                "fix",
+                self._launch_quick_spell_mc_plan(
+                    raw,
+                    m0["wrote"],
+                    m0["meant"],
+                    extra_ms=rest_ms,
+                    rationale=f"Coach tried to defer '{m0['wrote']}'; enforcing Multiple-Choice + Why so spelling is never skipped.",
+                ),
+                effective_chk,
+            )
+
+        # HOMEWORK RULE 2: NEVER let missing grammar inflection ('A alien' -> 'An alien', 'Bob barf' -> 'barfs') slide!
+        if decision["accept"] and gf_rem:
+            g0 = gf_rem[0]
+            opt0 = (g0.get("options") or [""])[0]
+            decision = {
+                **decision,
+                "accept": False,
+                "focus": "verb_ending",
+                "focus_word": g0["wrote"],
+                "focus_correct": opt0,
+                "focus_options": g0.get("options") or [],
+                "kid_words": f"Love that line! Quick fix on '{g0['wrote']}'—try '{opt0}' ({g0.get('rule', '')}).",
+                "input_prompt": f"Change '{g0['wrote']}' to '{opt0}' in your box and hit Enter",
+                "guardrail": "homework_grammar_required",
+            }
+
+        # HOMEWORK RULE 3: Every sentence MUST start with a Capital AND end with . ! or ? before moving on!
+        if decision["accept"] and (miss_cap or miss_end):
+            if miss_cap and miss_end:
+                kw = "Great scene! Add a capital letter at the start and a period or ! at the end so we can draw it."
+                ip = "Capitalize the first letter + add a . or ! at the end, then hit Enter"
+                cpos = 0
+            elif miss_cap:
+                kw = "Almost ready to draw! Capitalize the first letter at the start of your sentence and hit Enter."
+                ip = "Capitalize the first letter at the start and hit Enter"
+                cpos = 0
+            else:
+                kw = "Almost ready to draw! Pop a period, !, or ? on the end of your sentence and hit Enter."
+                ip = "Add a . ! or ? at the end and hit Enter"
+                cpos = len(raw)
+            decision = {
+                **decision,
+                "accept": False,
+                "focus": "capital" if miss_cap else "end_mark",
+                "cursor_pos": cpos,
+                "kid_words": kw,
+                "input_prompt": ip,
+                "rationale": "Homework standard: starting capital and end mark (. ! ?) required before moving on.",
+                "guardrail": "homework_cap_period_required",
+            }
+
+        # Bonus efficiency: if asking to fix a spelling word AND missing capital/period, mention both in the prompt so he can fix both in 1 shot!
+        if not decision["accept"] and decision["focus"] == "spelling" and (miss_cap or miss_end):
+            extra_bits = []
+            if miss_cap:
+                extra_bits.append("start with a capital")
+            if miss_end:
+                extra_bits.append("end with a . or !")
+            decision["input_prompt"] = f"{decision['input_prompt'].rstrip('.!')} (and {' + '.join(extra_bits)})"
+
         if decision["accept"]:
             cs["consecutive_fixes"] = 0
             cs["last_request"] = None
@@ -1204,8 +1404,8 @@ class SessionController:
                 self._launch_inline_word_help(ui, raw, d["focus_word"], d["focus_correct"])
                 inp = {}
             elif rung == 4:
-                self.spell_pick = {"wrote": d["focus_word"], "correct": d["focus_correct"], "options": d["spell_options"], "sentence": raw}
-                ui.append({"type": "item", "item": {"id": "spell_pick", "kind": "choices", "prompt": f"Which one is “{d['focus_word']}” supposed to be?", "options": d["spell_options"]}})
+                extra_ms = [m for m in (chk.get("misspellings") or []) if m["wrote"].lower() != d["focus_word"].lower()]
+                return self._launch_quick_spell_mc_plan(raw, d["focus_word"], d["focus_correct"], extra_ms=extra_ms, rationale=d.get("rationale", ""))
             elif rung == 3:
                 inp["select_word"] = d["focus_word"]
         elif focus in ("verb_ending", "word_choice") and d.get("focus_word"):
@@ -1215,6 +1415,8 @@ class SessionController:
             self.coach_session["offered_chips"] = d["chips"]
             ui.append({"type": "item", "item": {"id": "starters", "kind": "starters", "options": d["chips"]}})
         if inp:
+            if isinstance(d.get("cursor_pos"), int):
+                inp["cursor_pos"] = d["cursor_pos"]
             ui.append(inp)
         self.ui_locked_this_turn.update({"ask_input", "show_choices", "show_card", "show_word"})
         return {
@@ -1509,19 +1711,57 @@ class SessionController:
                 save_learner(self.rec)
             ui_actions.append({"type": "remove", "id": "word"})
             ui_actions.append({"type": "remove", "id": "say_word_help"})
+            ui_actions.append({"type": "remove", "id": "spell_why"})
+            ui_actions.append({"type": "remove", "id": "spell_pick"})
+            self.spell_pick = None
 
             if matched and len(wlist) >= 3:
                 repaired = raw
-                for m in self.pending_spell_targets:
-                    repaired = _splice_word_into_sentence(repaired, m["wrote"], m["meant"])
-                if repaired and repaired[0].isalpha() and not repaired[0].isupper():
-                    repaired = repaired[0].upper() + repaired[1:]
-                if repaired and not re.search(r'[.!?]["\')\]]*$', repaired):
-                    repaired += "."
             else:
-                repaired = self.pending_spell_sentence or raw
-                for m in self.pending_spell_targets:
-                    repaired = _splice_word_into_sentence(repaired, m["wrote"], m["meant"])
+                repaired = _splice_word_into_sentence(self.pending_spell_sentence or raw, wrote_orig or final_word, final_word)
+
+            remaining_targets = [
+                m for m in self.pending_spell_targets
+                if m.get("wrote") and m.get("meant") and re.search(rf"\b{re.escape(m['wrote'])}\b", repaired, re.I)
+            ]
+            if remaining_targets:
+                nxt = remaining_targets[0]
+                self.phase = self.phase_before_inline_help or (
+                    "STORY_SPINE" if (self.project and self.project.get("stage", "").startswith("spine_")) else "BUILDING"
+                )
+                self.pending_spell_targets = []
+                self.pending_spell_sentence = ""
+                self.inline_word_help_tries = 0
+                mc_plan = self._launch_quick_spell_mc_plan(repaired, nxt["wrote"], nxt["meant"], extra_ms=remaining_targets[1:])
+                mc_plan["ui"] = ui_actions + mc_plan["ui"]
+                mc_plan["epoch"] = epoch
+                return mc_plan
+
+            # Enforce Capital + End Punctuation on `repaired` before advancing!
+            miss_c = bool(repaired) and repaired[0].isalpha() and not repaired[0].isupper()
+            miss_e = bool(repaired) and not re.search(r'[.!?]["\')\]]*$', repaired)
+            if miss_c or miss_e:
+                self.phase = self.phase_before_inline_help or (
+                    "STORY_SPINE" if (self.project and self.project.get("stage", "").startswith("spine_")) else "BUILDING"
+                )
+                self.pending_spell_targets = []
+                self.pending_spell_sentence = ""
+                self.inline_word_help_tries = 0
+                self.last_kid_kind = "COACH_FIX"
+                prompt_ce = (
+                    "Nice spelling fix! Now capitalize the first letter and add a . or ! at the end to unlock the art:"
+                    if (miss_c and miss_e)
+                    else ("Nice spelling fix! Capitalize the first letter at the start and hit Enter:" if miss_c else "Nice spelling fix! Add a . ! or ? at the end and hit Enter:")
+                )
+                ui_actions.append({"type": "input", "mode": "type", "prompt": prompt_ce, "prefill": repaired, "cursor_pos": 0 if miss_c else len(repaired)})
+                self.ui_locked_this_turn.add("ask_input")
+                return {
+                    "epoch": epoch,
+                    "kind": self.last_kid_kind,
+                    "spoken_fallback": prompt_ce,
+                    "ui": ui_actions,
+                    "directive": f'Say warmly in 1 short sentence: "{prompt_ce}"',
+                }
 
             self.phase = self.phase_before_inline_help or (
                 "STORY_SPINE" if (self.project and self.project.get("stage", "").startswith("spine_")) else "BUILDING"
@@ -1650,19 +1890,67 @@ class SessionController:
                 self.spell_pick = None
                 self.last_kid_kind = "SPELL_PICK"
                 ui_actions.append({"type": "remove", "id": "spell_pick"})
+                ui_actions.append({"type": "remove", "id": "spell_why"})
                 if raw.strip().lower() == sp["correct"].lower():
-                    ui_actions.append({"type": "input", "mode": "type", "prompt": f"That's the one. Now type “{sp['correct']}” into your sentence.", "prefill": sp["sentence"], "select_word": sp["wrote"]})
-                    self.ui_locked_this_turn.add("ask_input")
-                    return {
-                        "kind": self.last_kid_kind,
-                        "ui": ui_actions,
-                        "directive": f"{self.name} picked the right spelling '{sp['correct']}'. In ONE short line, say that's it and have him type it into his sentence (the old word is highlighted).",
+                    if not self.test_mode and len(sp["correct"]) >= 3:
+                        spelling_srs.record_retrieval_result(self.rec, sp["correct"], correct_first_try=True)
+                        save_learner(self.rec)
+                    repaired_sp = _splice_word_into_sentence(sp["sentence"], sp["wrote"], sp["correct"])
+                    extra_list = [
+                        m for m in (sp.get("extra_ms") or [])
+                        if m.get("wrote") and re.search(rf"\b{re.escape(m['wrote'])}\b", repaired_sp, re.I)
+                    ]
+                    if extra_list:
+                        nxt = extra_list[0]
+                        mc_next = self._launch_quick_spell_mc_plan(repaired_sp, nxt["wrote"], nxt["meant"], extra_ms=extra_list[1:])
+                        mc_next["ui"] = ui_actions + mc_next["ui"]
+                        mc_next["epoch"] = epoch
+                        return mc_next
+                    miss_c = bool(repaired_sp) and repaired_sp[0].isalpha() and not repaired_sp[0].isupper()
+                    miss_e = bool(repaired_sp) and not re.search(r'[.!?]["\')\]]*$', repaired_sp)
+                    if miss_c or miss_e:
+                        prompt_ce = (
+                            f"Locked in “{sp['correct']}”! Now add a capital at the start and a . or ! at the end:"
+                            if (miss_c and miss_e)
+                            else (f"Locked in “{sp['correct']}”! Now capitalize the first letter and hit Enter:" if miss_c else f"Locked in “{sp['correct']}”! Pop a . ! or ? on the end and hit Enter:")
+                        )
+                        ui_actions.append({"type": "input", "mode": "type", "prompt": prompt_ce, "prefill": repaired_sp, "cursor_pos": 0 if miss_c else len(repaired_sp)})
+                        self.ui_locked_this_turn.add("ask_input")
+                        return {
+                            "epoch": epoch,
+                            "kind": "COACH_FIX",
+                            "spoken_fallback": prompt_ce,
+                            "ui": ui_actions,
+                            "directive": f'Say warmly in 1 short sentence: "{prompt_ce}"',
+                        }
+                    # Clean spelling + capital + end mark! Advance & draw immediately!
+                    clean_chk = thinking._post_verify_check(
+                        repaired_sp,
+                        {"sentences": [{"text": repaired_sp, "complete": True, "issue": "none", "capital_ok": True, "end_ok": True}], "misspellings": [], "grammar_fixes": []},
+                    )
+                    self._force_accept = {
+                        "accept": True,
+                        "focus": "none",
+                        "scaffold": "none",
+                        "next_scaffold": self.coach_session.get("next_scaffold", "starter_chips"),
+                        "kid_words": f"Nailed '{sp['correct']}'!",
+                        "rationale": f"Picked '{sp['correct']}' on multiple-choice check and sentence has capital + end punctuation.",
+                        "guardrail": "spell_mc_resolved",
+                        "latency_s": 0.0,
                     }
-                card = self._launch_inline_word_help(ui_actions, sp["sentence"], sp["wrote"], sp["correct"])
+                    adv = self.classify_and_advance(repaired_sp, "typed", chk=clean_chk, opening_ideas=opening_ideas)
+                    adv["ui"] = ui_actions + adv["ui"]
+                    adv["repaired_text"] = repaired_sp
+                    return adv
+                # Picked a distractor -> explain WHY the correct spelling works and show full Word Card!
+                card = self._launch_inline_word_help(ui_actions, sp["sentence"], sp["wrote"], sp["correct"], extra_targets=sp.get("extra_ms"))
+                sp_why = f"Close! It's '{sp['correct']}' ({card['parts']})—{card['note']} Type '{sp['correct']}' over '{sp['wrote']}' in the box!"
                 return {
+                    "epoch": epoch,
                     "kind": self.last_kid_kind,
+                    "spoken_fallback": sp_why,
                     "ui": ui_actions,
-                    "directive": f"He picked '{raw}', but it's '{sp['correct']}'. Without saying wrong, point to the parts '{card['parts']}' in one short sentence and have him type it into his sentence.",
+                    "directive": f'Without saying wrong, explain why in 1 short sentence: "{sp_why}"',
                 }
             if norm == _norm(coach.SWITCH_OPTIONS["twist"]):
                 self.last_kid_kind = "TWIST_CARD"
@@ -2049,6 +2337,12 @@ class SessionController:
             ui_actions.append({"type": "input", "mode": "type", "prompt": "Finish this 1 sentence to unlock the scene, or pick an option above.", "prefill": starter})
             self.ui_locked_this_turn.update({"show_choices", "ask_input"})
             return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": f"REPEATED AVOIDANCE ('{raw}'). Offer finishing the 1 started sentence, coding a custom game, or pausing cleanly."}
+
+        # Clean up any active spell_pick card if the student edited the sentence directly in the box
+        if self.spell_pick:
+            self.spell_pick = None
+            ui_actions.append({"type": "remove", "id": "spell_pick"})
+            ui_actions.append({"type": "remove", "id": "spell_why"})
 
         # ---------------- 7. GENUINE WRITING ATTEMPTS (Syntactic, Conventions & Mastery-Tier Verification) ----------------
         if self.phase == "OPENING":

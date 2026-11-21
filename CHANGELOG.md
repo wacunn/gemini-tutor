@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+- **Homework Standard — Capitals, End Punctuation & Zero Skipped Spelling (`tutor/controller.py`, `tutor/live.py`):**
+  - Every sentence now requires a starting capital letter and ending `.`, `!`, or `?` before unlocking artwork (fast ~1.5s turn with the sentence pre-filled in the box and cursor placed right at the fix).
+  - Never silently skips a spelling error: whenever the coach would otherwise skip a misspelling for momentum (or when multiple misspellings appear in one sentence), it now presents a **1-tap Multiple-Choice Spelling Check** WITH a plain-English **"Why it works"** rule card (e.g. `fac + e`, `fly + ing`, `who + se`), splices the chosen word into the sentence on tap, and verifies capital + period before drawing.
+
 ## 1.0.0
 - **Fast Small-Model Talker + Shared Working-Memory Blackboard (`tutor/blackboard.py`, `tutor/config.py`, `tutor/controller.py`, `tutor/live.py`):**
   - Replaced serial multi-LLM per-turn calls with a single `<1s` `gemini-3.1-flash-lite` reflex call (`3.2s` hard cap + `0ms` local fallback) reading a Shared Working-Memory Blackboard updated asynchronously by background specialists.

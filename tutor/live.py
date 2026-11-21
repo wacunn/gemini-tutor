@@ -830,6 +830,17 @@ class TutorSession:
             render_note = ""
             if plan.get("redraw_art"):
                 render_note = await self._run_redraw_art(plan["redraw_art"])
+            elif plan.get("spine_draw") and self.ctrl.project:
+                sd = plan["spine_draw"]
+                self.spawn(self._draw_spine_beat(self.ctrl.project, sd["beat"], sd["text"]))
+                render_note = " (Story Spine / Cover illustration is already rendering on the right—do NOT call draw.)"
+            elif plan.get("codex_sketch") and self.ctrl.project:
+                self.spawn(self._draw_codex_sketch(self.ctrl.project, plan["codex_sketch"]))
+                render_note = " (Specimen Blueprint Sketch is already rendering on the right—do NOT call draw.)"
+            elif plan["kind"] == "COMPLETE_SENTENCE":
+                final_txt = plan.get("full_paragraph") or plan.get("repaired_text") or val
+                await self.apply_target(self.input_target, final_txt, "typed")
+                render_note = await self.auto_render_sentence(final_txt)
             await self.from_kid(
                 f'[{self.name} tapped choice: "{val}"]',
                 plan["directive"] + render_note,
