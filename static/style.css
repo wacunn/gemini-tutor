@@ -1224,17 +1224,116 @@ body.fresh .dock {
   display: flex;
   gap: 6px;
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.pen-legend {
+  font-size: .8rem;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.lg-sky { color: #7cb6f8; font-weight: 500; }
+.lg-fence { color: #9ac4f8; }
+.lg-grass { color: #78cf92; font-weight: 500; }
+.lg-worm { color: #dfa67a; font-weight: 500; }
+
+.pill-btn.active-tool {
+  background: #a8c7fa;
+  color: #062e6f;
+  border-color: #a8c7fa;
+  font-weight: 500;
+}
+
+.pen-stage {
+  position: relative;
+  width: 100%;
+  height: min(46vh, 380px);
+  border-radius: 18px;
+  overflow: hidden;
+  background: #fbfaf7;
+}
+
+#penGuideCanvas,
+#penCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#penGuideCanvas {
+  pointer-events: none;
 }
 
 #penCanvas {
-  width: 100%;
-  height: min(46vh, 380px);
-  background: #fbfaf7;
-  border-radius: 18px;
   touch-action: none;
-  display: block;
   cursor: crosshair;
-  background-image: linear-gradient(transparent 0, transparent calc(70% - 1px), #d6dbe6 calc(70% - 1px), #d6dbe6 70%, transparent 70%);
+}
+
+/* ---------- book studio art style gallery ---------- */
+.style-drawer {
+  margin: 10px 0 14px;
+}
+
+.style-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 680px) {
+  .style-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.style-card {
+  background: #1a1b1e;
+  border: 2px solid #2d3035;
+  border-radius: 14px;
+  overflow: hidden;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  color: var(--text);
+  transition: border-color .15s, transform .12s;
+}
+
+.style-card:hover {
+  border-color: #5f6672;
+  transform: translateY(-1px);
+}
+
+.style-card.selected {
+  border-color: #a8c7fa;
+  box-shadow: 0 0 0 2px rgba(168, 199, 250, .22);
+}
+
+.style-card img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  display: block;
+  background: #111;
+}
+
+.style-card-meta {
+  padding: 7px 9px 8px;
+}
+
+.style-card-title {
+  font-size: .84rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.style-card-vibe {
+  font-size: .74rem;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.2;
 }
 
 @media (max-width: 900px) {

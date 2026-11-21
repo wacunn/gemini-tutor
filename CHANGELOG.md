@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.0
+- **Verb Endings & Subject-Verb Agreement Check (`tutor/thinking.py`, `tutor/controller.py`, `tutor/curriculum_tracker.py`):**
+  - Catches missing `-s` / `-es` / `-ed` verb endings, subject-verb agreement slips, irregular past forms, and missing required articles (Ontario `B3.2`, e.g. `"Because the cat is smelly, Bob barf."` → highlights `"barf"` in the pre-filled sentence and asks to change it to `"barfs"` or `"barfed"` instead of letting the tutor silently fix it).
+- **Pre-Filled Sentence + Highlighted Word on Spelling & Grammar Help (`tutor/controller.py`, `static/app.js`):**
+  - Keeps the child's full sentence in the prompt box with the exact target word (`smeleey`, `barf`) highlighted so they can edit just that word in place without retyping their sentence; removed duplicate in-chat instruction box and fixed `<no speech>` tags across split streaming chunks.
+- **Primary-Lined Handwriting Pad (`Sky / Fence / Grass / Worm`) + Single-Letter Touch-Up (`static/index.html`, `static/style.css`, `static/app.js`, `tutor/media.py`, `tutor/controller.py`):**
+  - Added authentic 4-line handwriting guides (**Sky line**, dashed **Fence line**, **Grass line**, **Worm line**) plus **Pen / Erase** buttons. When a handwritten letter looks ambiguous or sits on the wrong line, Gemini acts playfully confused about **just that one letter** and re-opens the pad with the child's writing intact and a soft circle over that single letter so they only erase and fix one letter.
+- **Richer Graphic Novel Plotting (`Beginning → Big Finale → As Many Middle Twists As You Want`) (`tutor/projects.py`, `tutor/controller.py`, `tutor/pdf_book.py`, `static/app.js`):**
+  - Graphic novels now lock the **Kickoff**, jump to the **Big Finale**, and then iteratively ask **"What else happens in the middle?"** across Twist #1, Twist #2, Twist #3+ (each unlocking its own art and mapping to chapters) until the child is ready to draw Chapter 1 panels.
+- **6 Kid-Cool Comic Art Styles with Visual Examples (`tutor/media.py`, `static/style_samples/`, `static/app.js`):**
+  - Replaced generic wholesome picture-book art with 6 distinct comic styles (**Zany Marker Comic** [*Dog Man* vibe], **Notebook Ink Doodle** [*Diary of a Wimpy Kid* vibe], **Action Manga Ink**, **Epic Metal Zine**, **Blocky Voxel World**, and **Indie Adventure Comic**), complete with visual example thumbnails in the Book Studio.
+- **Plain-English README & Repo Copy (`README.md`):**
+  - Removed tech jargon (`"local-first"`, `"multi-scale"`, etc.) in favor of clear, plain English.
+
 ## 0.7.1
 - **Restored Clean, Uncluttered Gemini App UX (`static/index.html`, `static/style.css`, `static/app.js`, `tutor/controller.py`):**
   - Replaced hero box grids, top-bar buttons, and in-stream instruction boxes with a **Gemini-style slide-out left sidebar (`☰`)** for creating/switching books, strips, games, and toggling Parent Sandbox, leaving the center start screen (`Hi …` + minimal borderless suggestion pills) and chat stream calm and clutter-free.

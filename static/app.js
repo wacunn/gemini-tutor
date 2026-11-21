@@ -20,6 +20,7 @@ const state = {
   askPrompt: "",
   typing: { first: 0, backspaces: 0 },
   canvas: { tabs: {}, active: null },
+  styleDrawerOpen: null,
 };
 
 // ---------------------------------------------------------------- setup
@@ -355,13 +356,33 @@ setInterval(() => {
 // ---------------------------------------------------------------- composer
 
 const input = $("input");
+let peekTimer = null;
 function coverWordCard() {
   const wc = document.querySelector("#item-word .word-card");
   if (wc && !wc.classList.contains("covered")) {
     wc.classList.add("covered");
+    const btn = wc.querySelector(".ccc-btn");
+    if (btn) btn.textContent = "Peek (3s)";
     const st = wc.querySelector(".ccc-status");
-    if (st) st.textContent = "Covered — write from memory";
+    if (st) st.textContent = "Covered — fix it in your sentence below";
   }
+}
+function toggleWordCardPeek() {
+  const wc = document.querySelector("#item-word .word-card");
+  if (!wc) return;
+  if (!wc.classList.contains("covered")) {
+    coverWordCard();
+    input.focus();
+    return;
+  }
+  wc.classList.remove("covered");
+  const btn = wc.querySelector(".ccc-btn");
+  if (btn) btn.textContent = "Cover & write";
+  const st = wc.querySelector(".ccc-status");
+  if (st) st.textContent = "Peeking (3s)…";
+  clearTimeout(peekTimer);
+  peekTimer = setTimeout(coverWordCard, 3200);
+  input.focus();
 }
 input.addEventListener("input", () => {
   coverWordCard();
@@ -419,25 +440,150 @@ function clearAsk() {
 
 // ---------------------------------------------------------------- pen
 
-const pen = { ctx: null, drawing: false, strokes: 0, prompt: "" };
+const pen = { ctx: null, gctx: null, drawing: false, strokes: 0, prompt: "", tool: "pen", spot: null, w: 0, h: 0, dpr: 1 };
 
-function openPen(prompt) {
+function setPenTool(tool) {
+  pen.tool = tool === "erase" ? "erase" : "pen";
+  $("penDrawBtn")?.classList.toggle("active-tool", pen.tool === "pen");
+  $("penEraseBtn")?.classList.toggle("active-tool", pen.tool === "erase");
+  const c = $("penCanvas");
+  if (c) c.style.cursor = pen.tool === "erase" ? "cell" : "crosshair";
+}
+
+function drawPrimaryLinesOn(ctx, w, h, spot) {
+  ctx.save();
+  ctx.fillStyle = "#fbfaf7";
+  ctx.fillRect(0, 0, w, h);
+
+  // Subtle pink left margin rule like real primary composition paper
+  const marginX = 56;
+  ctx.strokeStyle = "rgba(226, 145, 155, 0.45)";
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(marginX, 0);
+  ctx.lineTo(marginX, h);
+  ctx.stroke();
+
+  const rows = [
+    { top: h * 0.10, bot: h * 0.46 },
+    { top: h * 0.56, bot: h * 0.92 },
+  ];
+  ctx.font = "500 11px 'Google Sans Text', -apple-system, sans-serif";
+  ctx.textBaseline = "middle";
+
+  for (const r of rows) {
+    const band = r.bot - r.top;
+    const skyY = r.top;
+    const fenceY = r.top + band * 0.36;
+    const grassY = r.top + band * 0.74;
+    const wormY = r.bot;
+
+    // Sky line (top solid blue)
+    ctx.setLineDash([]);
+    ctx.strokeStyle = "#5a9be6";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(marginX, skyY); ctx.lineTo(w - 14, skyY); ctx.stroke();
+    ctx.fillStyle = "#3b78c2";
+    ctx.fillText("Sky", 8, skyY);
+
+    // Fence line (middle dashed blue)
+    ctx.setLineDash([7, 6]);
+    ctx.strokeStyle = "#7ab0ec";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(marginX, fenceY); ctx.lineTo(w - 14, fenceY); ctx.stroke();
+    ctx.fillStyle = "#568ac9";
+    ctx.fillText("Fence", 8, fenceY);
+
+    // Grass line (solid green baseline)
+    ctx.setLineDash([]);
+    ctx.strokeStyle = "#3d9b5c";
+    ctx.lineWidth = 2.1;
+    ctx.beginPath(); ctx.moveTo(marginX, grassY); ctx.lineTo(w - 14, grassY); ctx.stroke();
+    ctx.fillStyle = "#2b7a45";
+    ctx.fillText("Grass", 8, grassY);
+
+    // Worm line (descender brown line)
+    ctx.strokeStyle = "#cfa07a";
+    ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.moveTo(marginX, wormY); ctx.lineTo(w - 14, wormY); ctx.stroke();
+    ctx.fillStyle = "#a36c42";
+    ctx.fillText("Worm", 8, wormY);
+  }
+
+  // Optional single-letter confusion spotlight (shown to child, never exported to vision PNG)
+  if (spot && typeof spot.x === "number" && typeof spot.y === "number") {
+    const sx = Math.max(marginX + 20, Math.min(w - 28, spot.x * w));
+    const sy = Math.max(26, Math.min(h - 26, spot.y * h));
+    ctx.fillStyle = "rgba(253, 214, 99, 0.25)";
+    ctx.strokeStyle = "#d97706";
+    ctx.lineWidth = 2.2;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.arc(sx, sy, 28, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    if (spot.label) {
+      ctx.setLineDash([]);
+      ctx.font = "600 12px 'Google Sans Text', sans-serif";
+      const tw = ctx.measureText(spot.label).width + 12;
+      const bx = Math.max(marginX + 4, Math.min(w - tw - 6, sx - tw / 2));
+      const by = Math.max(6, sy - 48);
+      ctx.fillStyle = "#fef3c7";
+      ctx.strokeStyle = "#d97706";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, tw, 20, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#92400e";
+      ctx.fillText(spot.label, bx + 6, by + 10);
+    }
+  }
+  ctx.restore();
+}
+
+function openPen(prompt, opts = {}) {
   begin();
   coverWordCard();
+  const keep = !!(opts && opts.keepStrokes && pen.strokes > 0);
+  let savedBitmap = null;
+  const c = $("penCanvas");
+  const gc = $("penGuideCanvas");
+  if (keep && c.width > 0 && c.height > 0) {
+    savedBitmap = document.createElement("canvas");
+    savedBitmap.width = c.width;
+    savedBitmap.height = c.height;
+    savedBitmap.getContext("2d").drawImage(c, 0, 0);
+  }
   $("penSheet").hidden = false;
   $("penPrompt").textContent = prompt || "Write here";
   pen.prompt = prompt || "";
-  const c = $("penCanvas");
+  pen.spot = (opts && opts.spot) || null;
   const r = c.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
+  pen.w = r.width;
+  pen.h = r.height;
+  pen.dpr = dpr;
+
+  gc.width = r.width * dpr;
+  gc.height = r.height * dpr;
+  pen.gctx = gc.getContext("2d");
+  pen.gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawPrimaryLinesOn(pen.gctx, r.width, r.height, pen.spot);
+
   c.width = r.width * dpr;
   c.height = r.height * dpr;
   pen.ctx = c.getContext("2d");
-  pen.ctx.scale(dpr, dpr);
+  if (savedBitmap) {
+    pen.ctx.drawImage(savedBitmap, 0, 0, c.width, c.height);
+  } else {
+    pen.strokes = 0;
+  }
+  pen.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   pen.ctx.lineCap = "round";
   pen.ctx.lineJoin = "round";
-  pen.ctx.strokeStyle = "#1f1f1f";
-  pen.strokes = 0;
+  setPenTool(keep && pen.spot ? "erase" : "pen");
 }
 
 (function wirePen() {
@@ -446,29 +592,51 @@ function openPen(prompt) {
     const r = c.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top, p: e.pressure > 0 ? e.pressure : 0.5 };
   };
+  $("penDrawBtn").onclick = () => setPenTool("pen");
+  $("penEraseBtn").onclick = () => setPenTool("erase");
   c.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     c.setPointerCapture(e.pointerId);
     pen.drawing = true;
     pen.strokes++;
+    if (pen.spot) {
+      pen.spot = null;
+      drawPrimaryLinesOn(pen.gctx, pen.w, pen.h, null);
+    }
     const p = pos(e);
-    pen.ctx.lineWidth = 2.5 + p.p * 4;
+    if (pen.tool === "erase") {
+      pen.ctx.globalCompositeOperation = "destination-out";
+      pen.ctx.lineWidth = 22;
+    } else {
+      pen.ctx.globalCompositeOperation = "source-over";
+      pen.ctx.strokeStyle = "#1f1f1f";
+      pen.ctx.lineWidth = 2.6 + p.p * 3.6;
+    }
     pen.ctx.beginPath();
     pen.ctx.moveTo(p.x, p.y);
   });
   c.addEventListener("pointermove", (e) => {
     if (!pen.drawing) return;
     const p = pos(e);
-    pen.ctx.lineWidth = 2.5 + p.p * 4;
+    if (pen.tool !== "erase") pen.ctx.lineWidth = 2.6 + p.p * 3.6;
     pen.ctx.lineTo(p.x, p.y);
     pen.ctx.stroke();
   });
-  const end = () => (pen.drawing = false);
+  const end = () => {
+    pen.drawing = false;
+    if (pen.ctx) pen.ctx.globalCompositeOperation = "source-over";
+  };
   c.addEventListener("pointerup", end);
   c.addEventListener("pointercancel", end);
   $("penClear").onclick = () => {
+    pen.ctx.save();
+    pen.ctx.setTransform(1, 0, 0, 1, 0, 0);
     pen.ctx.clearRect(0, 0, c.width, c.height);
+    pen.ctx.restore();
     pen.strokes = 0;
+    pen.spot = null;
+    drawPrimaryLinesOn(pen.gctx, pen.w, pen.h, null);
+    setPenTool("pen");
   };
   $("penCancel").onclick = () => ($("penSheet").hidden = true);
   $("penDone").onclick = () => {
@@ -477,8 +645,10 @@ function openPen(prompt) {
     out.width = c.width;
     out.height = c.height;
     const o = out.getContext("2d");
-    o.fillStyle = "#ffffff";
-    o.fillRect(0, 0, out.width, out.height);
+    o.save();
+    o.scale(pen.dpr, pen.dpr);
+    drawPrimaryLinesOn(o, pen.w, pen.h, null);
+    o.restore();
     o.drawImage(c, 0, 0);
     const png = out.toDataURL("image/png");
     $("penSheet").hidden = true;
@@ -567,10 +737,9 @@ function renderItem(it) {
       break;
     }
     case "word": {
-      const el = upsertInline("word", `<div class="word-card"><div class="parts">${it.parts.map((p) => `<span class="part">${esc(p)}</span>`).join('<span class="plus">+</span>')}</div>${it.note ? `<div class="note">${esc(it.note)}</div>` : ""}<div class="ccc-row"><button class="ccc-btn" type="button">Cover &amp; write</button><span class="ccc-status muted" style="font-size:.85rem">Covers when you start typing</span></div></div>`);
+      const el = upsertInline("word", `<div class="word-card"><div class="parts">${it.parts.map((p) => `<span class="part">${esc(p)}</span>`).join('<span class="plus">+</span>')}</div>${it.note ? `<div class="note">${esc(it.note)}</div>` : ""}<div class="ccc-row"><button class="ccc-btn" type="button">Cover &amp; write</button><span class="ccc-status muted" style="font-size:.85rem">Covers automatically when you type</span></div></div>`);
       const btn = el.querySelector(".ccc-btn");
-      if (btn) btn.onclick = () => { coverWordCard(); input.focus(); };
-      setTimeout(coverWordCard, 6500);
+      if (btn) btn.onclick = toggleWordCardPeek;
       break;
     }
     case "saved":
@@ -578,15 +747,7 @@ function renderItem(it) {
       break;
     case "book_project": {
       const pane = canvasPane("book", "Book · PDF", renderBookProject(it));
-      const sw = pane.querySelector("[data-switch-book]");
-      if (sw) sw.onclick = () => toggleSidebar(true);
-      const rn = pane.querySelector("[data-rename-cur]");
-      if (rn) {
-        rn.onclick = () => {
-          const next = prompt("Book title:", it.title || "");
-          if (next && next.trim()) send({ type: "rename_project", id: it.id, title: next.trim() });
-        };
-      }
+      wireBookPane(pane, it);
       break;
     }
     case "comic":
@@ -625,14 +786,49 @@ function renderSpineRow(label, text, src, status, placeholder) {
   </div>`;
 }
 
+function wireBookPane(pane, it) {
+  const sw = pane.querySelector("[data-switch-book]");
+  if (sw) sw.onclick = () => toggleSidebar(true);
+  const rn = pane.querySelector("[data-rename-cur]");
+  if (rn) {
+    rn.onclick = () => {
+      const next = prompt("Book title:", it.title || "");
+      if (next && next.trim()) send({ type: "rename_project", id: it.id, title: next.trim() });
+    };
+  }
+  const stBtn = pane.querySelector("[data-toggle-styles]");
+  if (stBtn) {
+    stBtn.onclick = () => {
+      const dr = pane.querySelector(".style-drawer");
+      const nowOpen = dr ? dr.hidden : true;
+      state.styleDrawerOpen = nowOpen;
+      if (dr) dr.hidden = !nowOpen;
+    };
+  }
+  pane.querySelectorAll("[data-pick-style]").forEach((card) => {
+    card.onclick = () => {
+      const key = card.dataset.pickStyle;
+      state.styleDrawerOpen = false;
+      send({ type: "set_style", style_key: key });
+    };
+  });
+}
+
 function renderBookProject(b) {
   const sp = b.spine || {};
-  const hasSpine = b.proj_kind === "epic_graphic_novel" || sp.beginning || sp.middle || sp.end;
+  const mbeats = Array.isArray(sp.middle_beats) ? sp.middle_beats : [];
+  const hasSpine = b.proj_kind === "epic_graphic_novel" || sp.beginning || sp.end || mbeats.length;
+  const midRowsHtml = mbeats.length
+    ? mbeats
+        .map((mb, i) => renderSpineRow(`Middle Twist #${i + 1}`, mb.text, mb.src, mb.status, "What else happens in the middle?"))
+        .join("")
+    : renderSpineRow("Middle Twists (Add as many as you want!)", "", null, null, "After your Finale, pack the middle with wild twists & obstacles!");
+
   const spineHtml = hasSpine
     ? `<div class="spine-box">
-        ${renderSpineRow("Act I · Beginning (Cover Art)", sp.beginning, sp.beginning_src || b.cover_src, sp.beginning_status, "Write Act I to unlock your Cover Art!")}
-        ${renderSpineRow("Act II · Twist & Problem", sp.middle, sp.middle_src, sp.middle_status, "Write Act II to unlock Twist Art!")}
-        ${renderSpineRow("Act III · Climax & Ending", sp.end, sp.end_src, sp.end_status, "Write Act III to unlock Climax Art!")}
+        ${renderSpineRow("The Beginning · Kickoff (Cover Art)", sp.beginning, sp.beginning_src || b.cover_src, sp.beginning_status, "Write the kickoff to unlock your Cover Art!")}
+        ${midRowsHtml}
+        ${renderSpineRow("The Big Finale · Payoff", sp.end, sp.end_src, sp.end_status, "Jump to the end—how does the whole story pay off?")}
       </div>`
     : "";
 
@@ -657,10 +853,31 @@ function renderBookProject(b) {
       : "";
 
   const stepsDone =
-    (sp.beginning ? 1 : 0) + (sp.middle ? 1 : 0) + (sp.end ? 1 : 0) + (b.panel_count || 0);
+    (sp.beginning ? 1 : 0) + mbeats.length + (sp.end ? 1 : 0) + (b.panel_count || 0);
   const stepsGoal = b.proj_kind === "epic_graphic_novel" ? Math.max(5, stepsDone + 1) : (b.target_panels || 4);
   const pct = Math.min(100, Math.round((stepsDone / Math.max(1, stepsGoal)) * 100));
   const progHtml = `<div class="book-prog"><div class="book-prog-fill" style="width:${pct}%"></div></div>`;
+
+  const styles = Array.isArray(b.art_styles) ? b.art_styles : [];
+  const showStyles = state.styleDrawerOpen === null ? stepsDone === 0 : !!state.styleDrawerOpen;
+  const stylesHtml = styles.length
+    ? `<div class="style-drawer" ${showStyles ? "" : "hidden"}>
+        <div class="muted" style="font-size:.82rem;margin-bottom:8px">Pick your comic art style (click any example):</div>
+        <div class="style-grid">
+          ${styles
+            .map(
+              (s) => `<button type="button" class="style-card ${s.key === b.style_key ? "selected" : ""}" data-pick-style="${esc(s.key)}">
+                <img src="${esc(s.sample)}" alt="${esc(s.label)}" loading="lazy">
+                <div class="style-card-meta">
+                  <div class="style-card-title">${esc(s.label)}</div>
+                  <div class="style-card-vibe">${esc(s.vibe)}</div>
+                </div>
+              </button>`
+            )
+            .join("")}
+        </div>
+      </div>`
+    : "";
 
   const chHtml = (b.chapters || [])
     .map((ch) => {
@@ -686,15 +903,17 @@ function renderBookProject(b) {
           <span>${esc(b.title || "Untitled Book")}</span>
           <button type="button" class="text-btn" style="font-size:.82rem;padding:4px 8px" data-rename-cur="1" title="Rename this book">✎ Rename</button>
         </div>
-        <div class="muted" style="font-size:.86rem">${esc(b.progress_label || `${b.panel_count || 0} panel(s)`)} · Auto-saved${b.sandbox ? " (Sandbox)" : ""}</div>
+        <div class="muted" style="font-size:.86rem">${esc(b.progress_label || `${b.panel_count || 0} panel(s)`)} · Style: ${esc(b.style_label || "Zany Marker Comic")}${b.sandbox ? " (Sandbox)" : ""}</div>
       </div>
       <div class="book-actions">
-        <button type="button" class="pill-btn" data-switch-book="1">Save &amp; Switch / New</button>
+        <button type="button" class="pill-btn" data-toggle-styles="1">Art Style</button>
+        <button type="button" class="pill-btn" data-switch-book="1">Switch / New</button>
         <a class="text-btn" href="${esc(b.web_url)}" target="_blank">Web view</a>
         <a class="btn-primary" href="${esc(b.pdf_url)}" target="_blank">Download PDF</a>
       </div>
     </div>
     ${progHtml}
+    ${stylesHtml}
     ${spineHtml}
     ${codexLiveHtml}
     ${chHtml || '<div class="muted" style="padding:8px 2px">Each completed beat unlocks live artwork right here and updates your downloadable PDF immediately!</div>'}`;
@@ -805,10 +1024,24 @@ function handle(m) {
         input.style.height = Math.min(input.scrollHeight, 200) + "px";
         $("sendBtn").hidden = !input.value.trim();
         $("micBtn").hidden = !!input.value.trim();
-        input.setSelectionRange(input.value.length, input.value.length);
       }
       if (m.mode === "type") input.focus();
-      if (m.mode === "pen") openPen(m.prompt);
+      if (typeof m.prefill === "string") {
+        let selStart = input.value.length;
+        let selEnd = input.value.length;
+        if (m.select_word) {
+          const escRe = String(m.select_word).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const match = new RegExp(`\\b${escRe}\\b`, "i").exec(input.value) || new RegExp(escRe, "i").exec(input.value);
+          if (match) {
+            selStart = match.index;
+            selEnd = match.index + match[0].length;
+          }
+        } else if (typeof m.cursor_pos === "number") {
+          selStart = selEnd = Math.max(0, Math.min(input.value.length, m.cursor_pos));
+        }
+        input.setSelectionRange(selStart, selEnd);
+      }
+      if (m.mode === "pen") openPen(m.prompt, { keepStrokes: !!m.keep_strokes, spot: m.spot || null });
       break;
     case "kid_pen": {
       const ph = stream.querySelector('[data-pending="pen"]');

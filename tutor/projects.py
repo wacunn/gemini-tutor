@@ -1,12 +1,11 @@
-"""Persistent Multi-Session / Multi-Week Creative Projects & Multi-Scale Catalog.
+"""Saved books, comics, pitches, and multi-chapter graphic novels.
 
-Supports multiple independent books/projects per genre AND an isolated Parent Sandbox store:
-- Epic Graphic Novels (up to 100+ panels across chapters, starting with a causal
-  Beginning -> Middle ('But/When') -> End ('So/Therefore') Story Spine, character continuity,
-  speech bubbles + captions, intermediate Issue PDFs, and full Graphic Novel PDF export).
-- Epic 3-Source Fact & Invention Codex (multi-entry informational paragraphs -> PDF book).
-- Medium 4-Page Persuasive Pitch Book (POW+TREE illustrated argument -> PDF).
-- Quick Sprints (3-panel comic strips and live HTML5 mini-games).
+Supports multiple independent books per format plus an isolated Parent Sandbox store:
+- Full Graphic Novels (Beginning -> Finale -> as many Middle Plot Twists as the child wants,
+  followed by multi-chapter panels with speech bubbles, captions, and printable PDF issues).
+- 3-Source Fact & Invention Codices (reading comprehension + 3-sentence synthesis -> PDF book).
+- 4-Page Persuasive Pitch Books (Claim -> Reason -> Counter-Argument -> Deal -> PDF).
+- Quick 3-Panel Comic Strips & Mini-Games.
 """
 
 from __future__ import annotations
@@ -16,15 +15,14 @@ import re
 from typing import Any
 
 from .config import PROJECTS, ensure_dirs
+from .media import ART_STYLES, DEFAULT_STYLE_KEY, STYLE_BY_KEY, resolve_style_prompt
 from .record import new_id, now_iso
 
-# Ephemeral in-memory store for Parent Sandbox / automated test sessions (?test=1 / ?sandbox=1)
-# so parents can test creating, switching, and downloading PDFs without touching child files in data/projects/.
 SANDBOX_PROJECTS: dict[str, dict[str, Any]] = {}
 
 KIND_BADGES: dict[str, str] = {
     "epic_graphic_novel": "Graphic Novel",
-    "epic_codex": "3-Source Codex",
+    "epic_codex": "Fact Codex",
     "medium_pitch": "Persuasive Pitch",
     "quick_strip": "3-Panel Strip",
 }
@@ -32,44 +30,44 @@ KIND_BADGES: dict[str, str] = {
 PROJECT_MENU: list[dict[str, str]] = [
     {
         "key": "epic_graphic_novel",
-        "label": "Full Comic Book (Multi-Week · PDF Book)",
+        "label": "Full Comic Book (Multi-Chapter · PDF)",
         "scale": "epic",
-        "time_est": "Multi-session (save anytime · up to 100 panels)",
-        "summary": "Map your Beginning → Middle → End story arc first, then zoom in chapter by chapter with consistent characters, dialogue bubbles, and printable PDF issues.",
+        "time_est": "Save anytime · up to 100 panels",
+        "summary": "Sketch your Beginning, Big Finale, and all the wild twists in the middle—then draw chapter by chapter.",
     },
     {
         "key": "epic_codex",
-        "label": "3-Source Fact & Invention Codex (PDF Book)",
+        "label": "Fact & Invention Codex (PDF Book)",
         "scale": "epic",
-        "time_est": "Multi-session (1–2 illustrated entries/day)",
-        "summary": "Read 3 real science/engineering sources and build a hardcover-style illustrated encyclopedia.",
+        "time_est": "1–2 illustrated entries per session",
+        "summary": "Read 3 short real-world sources and build an illustrated science & invention encyclopedia.",
     },
     {
         "key": "medium_pitch",
-        "label": "4-Page Persuasive Pitch ('Why We Should…' · PDF)",
+        "label": "4-Page Persuasive Pitch ('Why We Should…')",
         "scale": "medium",
         "time_est": "1–2 sessions (~15 min)",
-        "summary": "Build an airtight, illustrated 4-page persuasive case (Claim → Evidence → Counter-Argument → Deal).",
+        "summary": "Build an illustrated 4-page case (Claim → Proof → Counter-Argument → Deal).",
     },
     {
         "key": "quick_strip",
-        "label": "Quick 3-Panel Comic Strip (10 min)",
+        "label": "Quick 3-Panel Comic Strip",
         "scale": "quick",
         "time_est": "Today (~10 min)",
-        "summary": "Fast 3-panel setup, twist, and payoff—each panel renders as soon as your sentence compiles.",
+        "summary": "Fast 3-panel setup, twist, and punchline.",
     },
     {
         "key": "quick_game",
-        "label": "Build a Live Mini-Game (10 min)",
+        "label": "Build a Live Mini-Game",
         "scale": "quick",
         "time_est": "Today (~10 min)",
-        "summary": "Code a custom playable game on the spot where complete sentences trigger the physics and rules.",
+        "summary": "Create a custom playable game controlled by complete sentences.",
     },
 ]
 
 
 def extract_dialogue(text: str) -> tuple[str, list[dict[str, str]]]:
-    """Extracts quoted direct speech or 'Speaker: line' into structured comic speech bubbles while preserving caption."""
+    """Extracts quoted speech or 'Speaker: line' into comic speech bubbles while preserving caption."""
     bubbles: list[dict[str, str]] = []
     raw = (text or "").strip()
 
@@ -97,12 +95,30 @@ def extract_dialogue(text: str) -> tuple[str, list[dict[str, str]]]:
     return raw, bubbles
 
 
+def middle_beats_list(sp: dict[str, Any]) -> list[dict[str, Any]]:
+    """Returns normalized list of middle plot beats (migrating legacy single `sp['middle']` string if present)."""
+    beats = sp.get("middle_beats")
+    if isinstance(beats, list) and beats:
+        return beats
+    legacy = (sp.get("middle") or "").strip()
+    if legacy:
+        return [
+            {
+                "text": legacy,
+                "image": sp.get("middle_image"),
+                "src": sp.get("middle_src"),
+                "status": sp.get("middle_status") or ("done" if sp.get("middle_image") else "done"),
+            }
+        ]
+    return []
+
+
 def is_project_nonempty(proj: dict[str, Any]) -> bool:
     """True once a project has a custom title, at least 1 Story Spine beat, or at least 1 panel/entry."""
     if total_panels(proj) > 0:
         return True
     sp = proj.get("spine") or {}
-    if sp.get("beginning") or sp.get("middle") or sp.get("end"):
+    if sp.get("beginning") or sp.get("end") or sp.get("middle") or middle_beats_list(sp):
         return True
     if proj.get("custom_titled"):
         return True
@@ -114,8 +130,14 @@ def project_progress_label(proj: dict[str, Any]) -> str:
     badge = KIND_BADGES.get(kind, "Book")
     pcount = total_panels(proj)
     stage = proj.get("stage", "")
+    sp = proj.get("spine") or {}
     if kind == "epic_graphic_novel" and stage.startswith("spine_") and pcount == 0:
-        step = {"spine_beginning": "Spine 1/3", "spine_middle": "Spine 2/3", "spine_end": "Spine 3/3"}.get(stage, "Spine")
+        n_mid = len(middle_beats_list(sp))
+        step = {
+            "spine_beginning": "Plot: Kickoff",
+            "spine_end": "Plot: Finale",
+            "spine_middle": f"Plot: {n_mid} middle twist{'s' if n_mid != 1 else ''}",
+        }.get(stage, "Plotting")
         return f"{badge} · {step}"
     if kind == "epic_codex":
         return f"{badge} · {pcount} entr{'y' if pcount == 1 else 'ies'}"
@@ -130,7 +152,7 @@ def create_project(
     author: str,
     audience: str = "Dad",
     title: str = "",
-    style: str = "comic book ink with bold lines and vibrant flat colors",
+    style_key: str = DEFAULT_STYLE_KEY,
     persist: bool = False,
     sandbox: bool = False,
 ) -> dict[str, Any]:
@@ -139,10 +161,11 @@ def create_project(
     default_titles = {
         "epic_graphic_novel": "Untitled Graphic Novel",
         "epic_codex": f"{author}'s Fact & Invention Codex" if author else "Fact & Invention Codex",
-        "medium_pitch": f"Official Pitch for {audience}" if audience else "The Official Case File",
+        "medium_pitch": f"Pitch for {audience}" if audience else "The Official Pitch",
         "quick_strip": "3-Panel Comic Strip",
     }
     clean_title = (title or "").strip()
+    skey = style_key if style_key in STYLE_BY_KEY else DEFAULT_STYLE_KEY
     needs_spine = kind == "epic_graphic_novel"
     proj: dict[str, Any] = {
         "id": pid,
@@ -152,20 +175,22 @@ def create_project(
         "custom_titled": bool(clean_title),
         "author": author or "Author",
         "audience": audience or "Family",
-        "style": style,
+        "style_key": skey,
+        "style": resolve_style_prompt(skey),
         "characters": "",
         "stage": "spine_beginning" if needs_spine else "drafting_panels",
         "spine": {
             "beginning": "",
-            "middle": "",
             "end": "",
+            "middle_beats": [],
+            "middle": "",
             "subplots": [],
             "complete": not needs_spine,
         },
         "chapters": [
             {
                 "number": 1,
-                "title": "Chapter 1: The Setup" if needs_spine else ("Entries" if kind == "epic_codex" else "Part 1"),
+                "title": "Chapter 1: The Kickoff" if needs_spine else ("Entries" if kind == "epic_codex" else "Part 1"),
                 "act": "Beginning",
                 "panels": [],
             }
@@ -180,6 +205,16 @@ def create_project(
     elif persist:
         save_project(proj, sandbox=False)
     return proj
+
+
+def set_project_style(proj: dict[str, Any], style_key: str, sandbox: bool | None = None) -> bool:
+    if style_key not in STYLE_BY_KEY:
+        return False
+    proj["style_key"] = style_key
+    proj["style"] = resolve_style_prompt(style_key)
+    if is_project_nonempty(proj):
+        save_project(proj, sandbox=sandbox)
+    return True
 
 
 def save_project(proj: dict[str, Any], sandbox: bool | None = None) -> None:
@@ -206,7 +241,11 @@ def load_project(pid: str) -> dict[str, Any] | None:
     p = PROJECTS / f"{clean}.json"
     if not p.exists():
         return None
-    return json.loads(p.read_text(encoding="utf-8"))
+    d = json.loads(p.read_text(encoding="utf-8"))
+    if not d.get("style_key"):
+        d["style_key"] = DEFAULT_STYLE_KEY
+        d["style"] = resolve_style_prompt(DEFAULT_STYLE_KEY)
+    return d
 
 
 def delete_project(pid: str, sandbox: bool = False) -> bool:
@@ -277,12 +316,18 @@ def all_panels(proj: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def current_chapter(proj: dict[str, Any]) -> dict[str, Any]:
-    chapters = proj.setdefault("chapters", [{"number": 1, "title": "Chapter 1", "act": "Beginning", "panels": []}])
+    chapters = proj.setdefault("chapters", [{"number": 1, "title": "Chapter 1: The Kickoff", "act": "Beginning", "panels": []}])
     ch = chapters[-1]
-    if proj.get("kind") == "epic_graphic_novel" and len(ch.get("panels") or []) >= 6:
+    if proj.get("kind") == "epic_graphic_novel" and len(ch.get("panels") or []) >= 5:
         n = len(chapters) + 1
-        act = "Beginning" if n <= 2 else ("Middle" if n <= 12 else "Climax & End")
-        ch = {"number": n, "title": f"Chapter {n} ({act})", "act": act, "panels": []}
+        mbeats = middle_beats_list(proj.get("spine") or {})
+        if n - 1 <= len(mbeats):
+            act = f"Middle Twist {n - 1}"
+            title = f"Chapter {n}: Twist {n - 1}"
+        else:
+            act = "The Big Finale"
+            title = f"Chapter {n}: The Big Finale"
+        ch = {"number": n, "title": title, "act": act, "panels": []}
         chapters.append(ch)
     return ch
 
@@ -330,11 +375,25 @@ def update_panel_media(proj: dict[str, Any], panel_number: int, media_id: str | 
 
 def update_spine_media(proj: dict[str, Any], beat: str, media_id: str | None, status: str, sandbox: bool | None = None) -> None:
     sp = proj.setdefault("spine", {})
+    if beat.startswith("middle_"):
+        try:
+            idx = int(beat.split("_", 1)[1])
+        except ValueError:
+            idx = -1
+        mbeats = sp.setdefault("middle_beats", [])
+        if 0 <= idx < len(mbeats):
+            mbeats[idx]["status"] = status
+            if media_id:
+                mbeats[idx]["image"] = media_id
+                mbeats[idx]["src"] = f"/media/{media_id}.jpg"
+        save_project(proj, sandbox=sandbox)
+        return
+
     sp[f"{beat}_status"] = status
     if media_id:
         sp[f"{beat}_image"] = media_id
         sp[f"{beat}_src"] = f"/media/{media_id}.jpg"
-        if beat == "beginning" and not proj.get("cover_image"):
+        if beat == "beginning":
             proj["cover_image"] = media_id
     save_project(proj, sandbox=sandbox)
 
@@ -353,14 +412,18 @@ def update_codex_sketch(proj: dict[str, Any], media_id: str | None, status: str,
 
 def recent_reference_media_ids(proj: dict[str, Any], limit: int = 2) -> list[str]:
     sp = proj.get("spine") or {}
-    spine_mids = [sp.get(k) for k in ("beginning_image", "middle_image", "end_image") if sp.get(k)]
+    mbeat_imgs = [b.get("image") for b in middle_beats_list(sp) if b.get("image")]
+    spine_mids = ([sp["beginning_image"]] if sp.get("beginning_image") else []) + mbeat_imgs + ([sp["end_image"]] if sp.get("end_image") else [])
     panel_mids = [p["image"] for p in all_panels(proj) if p.get("image")]
     combined = spine_mids + panel_mids
     return combined[-limit:]
 
 
 def project_ui_payload(proj: dict[str, Any]) -> dict[str, Any]:
-    """Formats the full project state (Story Spine + Chapters + Panels + PDF download URL) for the browser Canvas."""
+    """Formats the full project state (Plot Board + Art Styles + Chapters + Panels + PDF URL) for the browser Canvas."""
+    sp = dict(proj.get("spine") or {})
+    sp["middle_beats"] = middle_beats_list(sp)
+    skey = proj.get("style_key") or DEFAULT_STYLE_KEY
     return {
         "id": proj["id"],
         "kind": "book_project",
@@ -371,8 +434,11 @@ def project_ui_payload(proj: dict[str, Any]) -> dict[str, Any]:
         "title": proj.get("title", "Untitled"),
         "author": proj.get("author", ""),
         "audience": proj.get("audience", ""),
+        "style_key": skey,
+        "style_label": STYLE_BY_KEY.get(skey, {}).get("label", "Zany Marker Comic"),
+        "art_styles": ART_STYLES,
         "stage": proj.get("stage", "drafting_panels"),
-        "spine": proj.get("spine", {}),
+        "spine": sp,
         "cover_src": f"/media/{proj['cover_image']}.jpg" if proj.get("cover_image") else None,
         "codex_sketch_src": proj.get("codex_sketch_src"),
         "codex_sketch_status": proj.get("codex_sketch_status"),

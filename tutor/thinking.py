@@ -40,29 +40,38 @@ def _json(text: str) -> Any:
         return json.loads(m.group(0)) if m else {}
 
 
-CHECK_SYSTEM = """You are a precise syntactic and orthographic analyzer for Grade 3–4 student writing (Ontario B3.1, B3.3, B2.1–B2.3).
+CHECK_SYSTEM = """You are a precise syntactic, grammatical, and orthographic analyzer for Grade 3–4 student writing (Ontario B3.1, B3.2, B3.3, B2.1–B2.3).
 Analyze the student's exact text literally.
 
 For each sentence-like unit:
-- complete: true ONLY if it has BOTH an explicit subject (who/what, unless a clear imperative command in a command-terminal game, though declarative clauses with explicit subject + finite verb are standard—mark bare verb phrases like "runs away" or "eating the village" as missing_subject, and bare noun/participial phrases like "a giant diamond cow" or "a cow eating grass" or "in the nether" as missing_verb / incomplete_thought).
+- complete: true ONLY if it has BOTH an explicit subject (who/what, unless a clear imperative command in a command-terminal game) AND a finite verb forming a complete thought. Mark bare verb phrases ("runs away", "eating the village") as missing_subject, and bare noun/participial phrases ("a giant diamond cow", "a cow eating grass", "in the nether") as missing_verb / incomplete_thought.
 - issue: one of:
-  - "none": has subject + finite verb + complete thought (even if missing a capital or end punctuation—track those separately in capital_ok / end_ok!).
+  - "none": has subject + finite verb + complete thought (track capitalization, punctuation, spelling, and verb-ending/grammar fixes separately in capital_ok, end_ok, misspellings, and grammar_fixes!).
   - "missing_subject": has a finite verb/predicate ("eats the village", "fell into lava") but no subject.
   - "missing_verb": names a who/what ("a giant cow made of diamond blocks", "the iron golem with lasers") with no finite verb.
-  - "incomplete_thought": prepositional phrase ("in the nether fortress", "under the bedrock") or dependent clause standing alone ("when the lever clicks", "because the creeper exploded") with no main clause.
+  - "incomplete_thought": prepositional phrase ("in the nether fortress") or dependent clause standing alone ("when the lever clicks", "because the creeper exploded") with no main clause.
   - "run_on": two or more independent clauses fused without proper punctuation/conjunction, comma splice, or 3+ clauses strung together with repeated "and" / "and then".
-  - "not_a_sentence_attempt": ONLY for single-word bare nouns/interjections ("cow", "hi", "idk", "stuff", "no"). Any 2+ word phrase attempting to name a place, character, or event MUST be classified by its syntactic gap ("missing_verb", "missing_subject", or "incomplete_thought"), NOT "not_a_sentence_attempt".
+  - "not_a_sentence_attempt": ONLY for single-word bare nouns/interjections ("cow", "hi", "idk", "stuff", "no"). Any 2+ word phrase MUST be classified by its syntactic gap ("missing_verb", "missing_subject", or "incomplete_thought").
 - capital_ok: starts with an uppercase letter.
 - end_ok: ends with . ! or ? (optionally followed by closing quotation mark).
 
-For misspellings:
-- List ONLY genuine orthographic/phonological/morphological spelling errors (e.g. {"wrote":"traped","meant":"trapped"}, {"wrote":"becuse","meant":"because"}).
-- Do NOT list capitalization differences (e.g. "minecraft" vs "Minecraft") as misspellings.
-- Do NOT flag standard proper nouns, game terms, or domain vocabulary spelled normally (e.g. creeper, wither, redstone, nether, enderman, Megadeth, Metallica).
+For misspellings (B2.1–B2.3):
+- List ONLY genuine orthographic/phonological/morphological spelling errors (e.g. {"wrote":"traped","meant":"trapped"}, {"wrote":"smelee","meant":"smelly"}, {"wrote":"wantd","meant":"wanted"}, {"wrote":"noon","meant":"no one"} when context clearly means 'no one').
+- Do NOT list capitalization differences ("minecraft" vs "Minecraft") or standard game/music proper nouns (creeper, wither, redstone, nether, enderman, Megadeth, Metallica).
+
+For grammar_fixes (Ontario B3.2 — verb tense & subject-verb agreement, irregular verbs, missing required articles):
+- Flag clear word-level grammatical inflections or agreement errors where a verb ending or determiner is missing or mismatched:
+  * Missing 3rd-person singular -s/-es or past -ed verb ending: e.g. "Because the cat is smelly, Bob barf." -> {"wrote":"barf","options":["barfs","barfed"],"rule":"With 'Bob', add -s ('barfs') or -ed ('barfed') to the verb."}
+  * Subject-verb agreement mismatch: e.g. "The cats is loud." -> {"wrote":"is","options":["are","were"],"rule":"Use 'are' or 'were' with plural 'cats'."}; "They was mad." -> {"wrote":"was","options":["were"],"rule":"Use 'were' with 'they'."}
+  * Over-regularized irregular past tense: e.g. "runned" -> ["ran"], "catched" -> ["caught"], "eated" -> ["ate"], "goed" -> ["went"].
+  * Missing required article/determiner before a singular countable noun when clearly ungrammatical: e.g. "When people saw cat was cool" -> {"wrote":"cat","options":["the cat","his cat"],"rule":"Add 'the' or 'his' before 'cat'."}
+- Do NOT flag valid kid voice, contractions, or sentences that are already grammatical in either present or past tense ("Bob barfs." and "Bob barfed." are both completely fine—empty grammar_fixes!).
+- Do NOT duplicate the same word in both misspellings and grammar_fixes (put spelling errors in misspellings, inflection/agreement errors in grammar_fixes).
 
 Return strict JSON:
 {"sentences":[{"text":"...","complete":true,"issue":"none","capital_ok":true,"end_ok":true,"clause_type":"simple|compound|complex|fragment|run_on"}],
- "misspellings":[{"wrote":"...","meant":"..."}]}"""
+ "misspellings":[{"wrote":"...","meant":"..."}],
+ "grammar_fixes":[{"wrote":"...","options":["..."],"rule":"..."}]}"""
 
 
 def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
@@ -123,7 +132,7 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
     # Deterministic syntactic & craft features across the full submission (for Mastery Tier & Genre enforcement)
     has_connector = bool(
         re.search(
-            r"\b(because|when|whenever|if|unless|although|though|even though|while|before|after|until|since|whereas|therefore|however|but|so)\b",
+            r"\b(because|when|whenever|if|unless|although|though|even though|while|before|after|until|since|whereas|therefore|however|but|so|finally|eventually|in the end|then|next|afterward)\b",
             text,
             re.I,
         )
@@ -154,6 +163,7 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
     # Filter capitalization-only or identical "misspellings"
     clean_ms = []
     seen = set()
+    ms_words = set()
     for m in out.get("misspellings") or []:
         if not isinstance(m, dict):
             continue
@@ -167,11 +177,30 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
         if key in seen:
             continue
         seen.add(key)
+        ms_words.add(wrote.lower())
         clean_ms.append({"wrote": wrote, "meant": meant})
+
+    clean_gf = []
+    seen_gf = set()
+    for g in out.get("grammar_fixes") or []:
+        if not isinstance(g, dict):
+            continue
+        wrote = str(g.get("wrote") or "").strip(".,!?;:\"'()[] ")
+        raw_opts = g.get("options") if isinstance(g.get("options"), list) else ([g.get("meant")] if g.get("meant") else [])
+        opts = [str(o).strip(".,!?;:\"'()[] ") for o in raw_opts if str(o or "").strip(".,!?;:\"'()[] ")]
+        opts = [o for o in opts if o.lower() != wrote.lower()]
+        if not wrote or not opts:
+            continue
+        if wrote.lower() in ms_words or wrote.lower() in seen_gf:
+            continue
+        seen_gf.add(wrote.lower())
+        rule = str(g.get("rule") or f"Change '{wrote}' to {' or '.join(repr(o) for o in opts[:2])}.").strip()
+        clean_gf.append({"wrote": wrote, "options": opts[:3], "rule": rule})
 
     return {
         "sentences": verified_sents,
         "misspellings": clean_ms,
+        "grammar_fixes": clean_gf,
         "features": {
             "sentence_count": len(verified_sents),
             "has_connector": has_connector,
@@ -186,7 +215,7 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
 def check_writing(text: str) -> dict[str, Any]:
     t = (text or "").strip()
     if not t:
-        return {"sentences": [], "misspellings": []}
+        return {"sentences": [], "misspellings": [], "grammar_fixes": []}
     client = _client()
     for model in (CHECK_MODEL, FALLBACK_MODEL):
         try:
@@ -194,7 +223,10 @@ def check_writing(text: str) -> dict[str, Any]:
                 model=model,
                 contents=f"Student writing:\n{t}",
                 config=types.GenerateContentConfig(
-                    system_instruction=CHECK_SYSTEM, temperature=0.0, response_mime_type="application/json"
+                    system_instruction=CHECK_SYSTEM,
+                    temperature=0.0,
+                    response_mime_type="application/json",
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             )
             out = _json(resp.text)
@@ -228,6 +260,9 @@ def summarize_check(chk: dict[str, Any]) -> str:
     ms = chk.get("misspellings") or []
     if ms:
         bits.append("misspelled: " + ", ".join(f'{m.get("wrote")}->{m.get("meant")}' for m in ms))
+    gf = chk.get("grammar_fixes") or []
+    if gf:
+        bits.append("grammar: " + ", ".join(f'{g.get("wrote")}->{"/".join(g.get("options") or [])}' for g in gf))
     return "; ".join(bits)
 
 
@@ -245,7 +280,10 @@ def analyze_word_study(wrote: str, meant: str) -> dict[str, str]:
                 model=model,
                 contents=f"Child wrote: {wrote!r}\nIntended word: {meant!r}",
                 config=types.GenerateContentConfig(
-                    system_instruction=WORD_STUDY_SYSTEM, temperature=0.1, response_mime_type="application/json"
+                    system_instruction=WORD_STUDY_SYSTEM,
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             )
             out = _json(resp.text)

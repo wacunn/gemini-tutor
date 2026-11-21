@@ -18,7 +18,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from .media import media_path
-from .projects import all_panels
+from .projects import all_panels, middle_beats_list
 
 PAGE_W, PAGE_H = 1275, 1650  # US Letter @ 150 DPI
 MARGIN = 72
@@ -147,46 +147,60 @@ def _render_cover(proj: dict[str, Any], panels: list[dict[str, Any]]) -> Image.I
     return page
 
 
-def _render_spine_page(proj: dict[str, Any]) -> Image.Image:
-    page = Image.new("RGB", (PAGE_W, PAGE_H), (249, 247, 242))
-    d = ImageDraw.Draw(page)
+def _render_spine_pages(proj: dict[str, Any]) -> list[Image.Image]:
     f_head = _font(42, bold=True)
     f_sub = _font(24, bold=False)
-    f_lbl = _font(26, bold=True)
-    f_body = _font(26, bold=False)
-
-    d.text((MARGIN, 84), "STORY ARCHITECTURE", fill=(24, 26, 30), font=f_head)
-    d.text((MARGIN, 140), "The Beginning → Middle → End causal blueprint behind this book", fill=(100, 104, 112), font=f_sub)
+    f_lbl = _font(25, bold=True)
+    f_body = _font(25, bold=False)
 
     spine = proj.get("spine") or {}
-    sections = [
-        ("ACT I · THE BEGINNING (SETUP & WORLD)", spine.get("beginning") or "(In progress)", spine.get("beginning_image")),
-        ("ACT II · THE MIDDLE (COMPLICATION & ESCALATION)", spine.get("middle") or "(In progress)", spine.get("middle_image")),
-        ("ACT III · THE END (CLIMAX & RESOLUTION)", spine.get("end") or "(In progress)", spine.get("end_image")),
+    mbeats = middle_beats_list(spine)
+    sections: list[tuple[str, str, str | None]] = [
+        ("THE BEGINNING (KICKOFF)", spine.get("beginning") or "(In progress)", spine.get("beginning_image")),
     ]
+    if mbeats:
+        for idx, mb in enumerate(mbeats, 1):
+            sections.append((f"MIDDLE TWIST #{idx}", mb.get("text") or "", mb.get("image")))
+    else:
+        sections.append(("THE MIDDLE (TWISTS & ESCALATION)", "(In progress)", None))
+    sections.append(("THE BIG FINALE", spine.get("end") or "(In progress)", spine.get("end_image")))
 
-    y = 220
+    pages: list[Image.Image] = []
     box_w = PAGE_W - 2 * MARGIN
-    thumb_w, thumb_h = 340, 255
+    thumb_w, thumb_h = 320, 240
+
+    def _new_page(first_page: bool) -> tuple[Image.Image, ImageDraw.ImageDraw, int]:
+        pg = Image.new("RGB", (PAGE_W, PAGE_H), (249, 247, 242))
+        dr = ImageDraw.Draw(pg)
+        title = "STORY PLOT BOARD" if first_page else "STORY PLOT BOARD (CONT.)"
+        dr.text((MARGIN, 80), title, fill=(24, 26, 30), font=f_head)
+        dr.text((MARGIN, 136), "Kickoff, middle twists, and finale behind this book", fill=(100, 104, 112), font=f_sub)
+        return pg, dr, 206
+
+    page, d, y = _new_page(True)
     for label, content, img_id in sections:
         thumb = _load_panel_img(img_id, thumb_w, thumb_h)
         text_max_w = (box_w - thumb_w - 84) if thumb else (box_w - 64)
         lines = _wrap(d, content, f_body, text_max_w) or ["(In progress)"]
-        box_h = max(thumb_h + 44 if thumb else 220, 96 + len(lines) * 38)
+        box_h = max(thumb_h + 40 if thumb else 190, 92 + len(lines) * 36)
+        if y + box_h > PAGE_H - 90:
+            pages.append(page)
+            page, d, y = _new_page(False)
         d.rounded_rectangle([MARGIN, y, MARGIN + box_w, y + box_h], radius=18, fill=(255, 255, 255), outline=(28, 30, 34), width=4)
         if thumb:
-            ix = MARGIN + box_w - thumb_w - 22
-            iy = y + 22
+            ix = MARGIN + box_w - thumb_w - 20
+            iy = y + 20
             page.paste(thumb, (ix, iy))
             d.rectangle([ix, iy, ix + thumb_w, iy + thumb_h], outline=(28, 30, 34), width=3)
-        d.text((MARGIN + 32, y + 26), label, fill=(42, 86, 196), font=f_lbl)
-        ty = y + 72
+        d.text((MARGIN + 32, y + 24), label, fill=(42, 86, 196), font=f_lbl)
+        ty = y + 68
         for ln in lines[:8]:
             d.text((MARGIN + 32, ty), ln, fill=(28, 30, 34), font=f_body)
-            ty += 38
-        y += box_h + 32
+            ty += 36
+        y += box_h + 26
 
-    return page
+    pages.append(page)
+    return pages
 
 
 def _draw_speech_bubble(d: ImageDraw.ImageDraw, x: int, y: int, max_w: int, speaker: str, line: str) -> int:
@@ -357,8 +371,8 @@ def build_project_pdf(proj: dict[str, Any]) -> bytes:
     panels = all_panels(proj)
     all_pages: list[Image.Image] = [_render_cover(proj, panels)]
     spine = proj.get("spine") or {}
-    if spine.get("beginning") or spine.get("middle") or spine.get("end"):
-        all_pages.append(_render_spine_page(proj))
+    if spine.get("beginning") or spine.get("middle") or spine.get("end") or middle_beats_list(spine):
+        all_pages.extend(_render_spine_pages(proj))
     all_pages.extend(_render_panel_pages(proj, panels))
 
     buf = io.BytesIO()

@@ -31,7 +31,7 @@ BUILDER_MODEL = os.environ.get("TUTOR_BUILDER_MODEL", "gemini-3.8-flash")
 REVIEW_MODEL = os.environ.get("TUTOR_REVIEW_MODEL", "gemini-4-carbon")
 # Sub-second synchronous clause/spelling check & 2-kernel generator on the hot turn path
 FAST_MODEL = os.environ.get("TUTOR_FAST_MODEL", "gemini-3.5-flash")
-FALLBACK_MODEL = os.environ.get("TUTOR_FALLBACK_MODEL", "gemini-2.5-flash")
+FALLBACK_MODEL = os.environ.get("TUTOR_FALLBACK_MODEL", "gemini-3.8-flash")
 
 VOICES = [
     ("Umbriel", "easy-going"),

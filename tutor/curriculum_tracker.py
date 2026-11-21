@@ -273,14 +273,21 @@ def update_from_session_deterministic(
             sk["B3.3_mechanics"]["level"] = m_est
             sk["B3.3_mechanics"]["updated"] = ts
 
-    # Inspect verified sentences for compound, complex, and dialogue punctuation
+    # Inspect verified sentences for compound, complex, grammar inflections, and dialogue punctuation
     complex_examples = []
     compound_examples = []
     dialogue_examples = []
+    gram_clean = 0
+    gram_total = 0
     for wc in writing_checks:
         txt = wc.get("text") or ""
         chk = wc.get("check") or {}
-        for s in chk.get("sentences") or []:
+        sents_wc = chk.get("sentences") or []
+        if any(s.get("complete") for s in sents_wc):
+            gram_total += 1
+            if not chk.get("grammar_fixes"):
+                gram_clean += 1
+        for s in sents_wc:
             if s.get("complete") and s.get("issue") == "none" and s.get("capital_ok") and s.get("end_ok"):
                 ct = s.get("clause_type")
                 st = s.get("text") or txt
@@ -290,6 +297,13 @@ def update_from_session_deterministic(
                     compound_examples.append(st)
                 if '"' in st and re.search(r'"[^"]+[,.!?]"', st):
                     dialogue_examples.append(st)
+
+    if gram_total >= 2:
+        g_rate = gram_clean / max(1, gram_total)
+        g_est = 3 if (g_rate >= 0.85 and gram_total >= 3) else (2 if g_rate >= 0.5 else 1)
+        if sk["B3.2_grammar"]["level"] == 0 or g_est > sk["B3.2_grammar"]["level"]:
+            sk["B3.2_grammar"]["level"] = g_est
+            sk["B3.2_grammar"]["updated"] = ts
 
     if compound_examples and sk["B3.1_compound"]["level"] < 2:
         sk["B3.1_compound"]["level"] = 3 if len(compound_examples) >= 3 else 2

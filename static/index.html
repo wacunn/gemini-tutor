@@ -136,14 +136,27 @@
     <div class="pen-sheet" id="penSheet" hidden>
       <div class="pen-card">
         <div class="pen-head">
-          <span id="penPrompt">Write here</span>
+          <div>
+            <div id="penPrompt">Write here</div>
+            <div class="pen-legend">
+              <span class="lg-sky">Sky (tall &amp; capitals)</span> ·
+              <span class="lg-fence">Fence - - - (small letters)</span> ·
+              <span class="lg-grass">Grass (sit here)</span> ·
+              <span class="lg-worm">Worm (g j p q y tails)</span>
+            </div>
+          </div>
           <div class="pen-btns">
-            <button class="text-btn" id="penClear">Clear</button>
-            <button class="text-btn" id="penCancel">Cancel</button>
-            <button class="btn-primary" id="penDone">Done</button>
+            <button type="button" class="pill-btn active-tool" id="penDrawBtn">✎ Pen</button>
+            <button type="button" class="pill-btn" id="penEraseBtn">⌫ Erase</button>
+            <button type="button" class="text-btn" id="penClear">Clear all</button>
+            <button type="button" class="text-btn" id="penCancel">Cancel</button>
+            <button type="button" class="btn-primary" id="penDone">Done</button>
           </div>
         </div>
-        <canvas id="penCanvas"></canvas>
+        <div class="pen-stage">
+          <canvas id="penGuideCanvas"></canvas>
+          <canvas id="penCanvas"></canvas>
+        </div>
       </div>
     </div>
   </div>

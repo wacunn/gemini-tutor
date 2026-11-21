@@ -40,6 +40,15 @@ from .record import (
 LIVE: dict[str, dict[str, Any]] = {}
 
 
+def _clean_transcript(raw: str) -> str:
+    """Strips control tags (<no speech>, {pause}, [inaudible]) even when split across streaming chunks."""
+    s = re.sub(r"<[^>]*>|\{[^}]*\}|\[[^\]]*\]", "", raw or "")
+    s = re.sub(r"[<{[][^>}\]]*$", "", s)  # strip any trailing half-open tag while streaming
+    if re.fullmatch(r"\s*(?:no speech(?: detected)?|silence|inaudible|noise)\s*", s, re.I):
+        return ""
+    return s
+
+
 def _tool_declarations() -> list[types.Tool]:
     decls = []
     for spec in TOOL_SPECS:
@@ -65,7 +74,9 @@ class TutorSession:
         self.started = time.time()
 
         # conversation state
+        self.kid_raw_buf = ""
         self.kid_buf = ""
+        self.tutor_raw_buf = ""
         self.tutor_buf = ""
         self.turn = 0
         self.kid_turn_id = 0
@@ -358,22 +369,26 @@ class TutorSession:
         await self._send_content(text, image)
 
     def _flush_kid(self) -> None:
-        spoken = self.kid_buf.strip()
+        spoken = _clean_transcript(self.kid_raw_buf).strip()
         if spoken:
             self.log.add("kid_said", text=spoken)
             self.kid_events += 1
             self.kid_turn_id += 1
             self.spoke_since_kid = False
-            # Update controller state so hard tool gates block 1-word escape even on voice input!
             plan = self.ctrl.classify_and_advance(spoken, "spoken", chk=None, opening_ideas=self.opening_ideas)
             self.log.add("ctrl_plan", how="spoken", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
             self.spawn(self.apply_controller_ui(plan["ui"]))
+        self.kid_raw_buf = ""
         self.kid_buf = ""
 
-    def _flush_tutor(self) -> None:
-        if self.tutor_buf.strip():
-            self.log.add("tutor_said", text=self.tutor_buf.strip())
+    def _flush_tutor(self) -> bool:
+        cleaned = _clean_transcript(self.tutor_raw_buf).strip()
+        self.tutor_raw_buf = ""
         self.tutor_buf = ""
+        if cleaned:
+            self.log.add("tutor_said", text=cleaned)
+            return True
+        return False
 
     def page_text(self) -> str:
         return "\n".join(s["text"] for s in self.page)
@@ -559,16 +574,18 @@ class TutorSession:
             self.kid_events += 1
             mid = new_id("pen")
             media.media_path(mid).write_bytes(media._to_jpeg(png, 900))
+            skip_lchk = self.ctrl.handwriting_fix_tries > 0
             try:
-                res = await asyncio.to_thread(media.read_handwriting, png, m.get("prompt") or "")
+                res = await asyncio.to_thread(media.read_handwriting, png, m.get("prompt") or "", skip_lchk)
             except Exception as e:
-                res = {"text": "", "legible": False, "error": str(e)}
+                res = {"text": "", "legible": False, "letter_issue": None, "error": str(e)}
             text = (res.get("text") or "").strip()
-            self.log.add("kid_wrote", text=text, legible=res.get("legible"), image=mid, target=target)
+            letter_issue = res.get("letter_issue") if isinstance(res.get("letter_issue"), dict) else None
+            self.log.add("kid_wrote", text=text, legible=res.get("legible"), letter_issue=letter_issue, image=mid, target=target)
             await self.ui({"type": "kid_pen", "text": text, "image": f"/media/{mid}.jpg"})
-            chk, check_note = await self.check(text, "handwritten") if text else ({}, "")
+            chk, check_note = await self.check(text, "handwritten") if (text and not letter_issue) else ({}, "")
             plan = await asyncio.to_thread(
-                self.ctrl.classify_and_advance, text or "?", "handwritten", chk, self.opening_ideas
+                self.ctrl.classify_and_advance, text or "?", "handwritten", chk, self.opening_ideas, letter_issue
             )
             self.log.add("ctrl_plan", how="pen", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
             await self.apply_controller_ui(plan["ui"])
@@ -589,6 +606,19 @@ class TutorSession:
                 plan["directive"] + render_note,
                 png,
             )
+
+        elif kind == "set_style":
+            skey = str(m.get("style_key") or "").strip()
+            if self.ctrl.project and projects.set_project_style(self.ctrl.project, skey, sandbox=self.test_mode):
+                sp = self.ctrl.project.get("spine") or {}
+                if sp.get("beginning") and projects.total_panels(self.ctrl.project) == 0:
+                    sp["beginning_status"] = "drawing"
+                    await self.ui({"type": "item", "item": projects.project_ui_payload(self.ctrl.project)})
+                    self.spawn(self._draw_spine_beat(self.ctrl.project, "beginning", sp["beginning"]))
+                else:
+                    await self.ui({"type": "item", "item": projects.project_ui_payload(self.ctrl.project)})
+            if self.comic and skey in media.STYLE_BY_KEY:
+                self.comic["style"] = media.resolve_style_prompt(skey)
 
         elif kind == "open_project":
             pid = str(m.get("id") or "").strip()
@@ -707,11 +737,15 @@ class TutorSession:
         prev = self.last_flawed_words
         first_try = not (prev and words and len(words & prev) / max(1, len(prev)) >= 0.5)
         self.stats.add(text, chk, how, seconds, first_try=first_try)
-        has_issue = any(
-            s.get("issue") not in ("none", "not_a_sentence_attempt", None)
-            or s.get("capital_ok") is False
-            or s.get("end_ok") is False
-            for s in (chk.get("sentences") or [])
+        has_issue = (
+            any(
+                s.get("issue") not in ("none", "not_a_sentence_attempt", None)
+                or s.get("capital_ok") is False
+                or s.get("end_ok") is False
+                for s in (chk.get("sentences") or [])
+            )
+            or bool(chk.get("misspellings"))
+            or bool(chk.get("grammar_fixes"))
         )
         self.last_flawed_words = words if has_issue else set()
         self.log.add("writing_check", text=text, how=how, first_try=first_try, check=chk)
@@ -840,12 +874,10 @@ class TutorSession:
                     if not sc:
                         continue
                     if sc.input_transcription and sc.input_transcription.text:
-                        cleaned_in = re.sub(r"<[^>]+>|\{[^}]+\}|\[[^\]]*\]", "", sc.input_transcription.text)
-                        if not re.fullmatch(r"\s*(?:no speech(?: detected)?|silence|inaudible|noise)\s*", cleaned_in, re.I):
-                            if cleaned_in.strip() or (self.kid_buf and cleaned_in):
-                                self.kid_buf += cleaned_in
-                                if self.kid_buf.strip():
-                                    await self.ui({"type": "kid_caption", "turn": self.turn, "text": self.kid_buf.strip()})
+                        self.kid_raw_buf += sc.input_transcription.text
+                        self.kid_buf = _clean_transcript(self.kid_raw_buf)
+                        if self.kid_buf.strip():
+                            await self.ui({"type": "kid_caption", "turn": self.turn, "text": self.kid_buf.strip()})
                     if sc.model_turn:
                         if not self.tutor_busy:
                             self.tutor_busy = True
@@ -855,28 +887,29 @@ class TutorSession:
                             if p.inline_data and p.inline_data.data:
                                 await self.ui_audio(p.inline_data.data)
                     if sc.output_transcription and sc.output_transcription.text:
-                        cleaned_out = re.sub(r"<[^>]+>|\{[^}]+\}", "", sc.output_transcription.text)
-                        if cleaned_out.strip() or (self.tutor_buf and cleaned_out):
+                        self.tutor_raw_buf += sc.output_transcription.text
+                        cleaned_full = _clean_transcript(self.tutor_raw_buf)
+                        if cleaned_full.strip():
                             if not self.tutor_busy:
                                 self.tutor_busy = True
                                 self._flush_kid()
                                 self.turn += 1
-                            self.tutor_buf += cleaned_out
+                            self.tutor_buf = cleaned_full
                             if len(self.tutor_buf.strip()) > 8:
                                 self.spoke_since_kid = True
-                            if self.tutor_buf.strip():
-                                await self.ui({"type": "tutor_caption", "turn": self.turn, "text": self.tutor_buf.strip()})
+                            await self.ui({"type": "tutor_caption", "turn": self.turn, "text": self.tutor_buf.strip()})
                     if sc.interrupted:
                         self._flush_tutor()
                         self.tutor_busy = False
                         await self.ui({"type": "interrupted"})
                     if sc.turn_complete:
                         self._flush_kid()
-                        self._flush_tutor()
+                        had_tutor_speech = self._flush_tutor()
                         self.tutor_busy = False
                         await self.ui({"type": "turn_complete", "kid_turn": self.kid_turn_id})
                         await self.flush_pending()
-                        self.spawn(self.audit_tutor_turn())
+                        if had_tutor_speech:
+                            self.spawn(self.audit_tutor_turn())
             except Exception as e:
                 if self.closed:
                     return False
