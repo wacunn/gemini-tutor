@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.2
+- **The coach decides "can we just draw it" from context (`tutor/coach.py`, `tutor/controller.py`):**
+  - If he has a real sentence waiting on a fix, the coach can choose to draw it as-is right away (the issue is just logged), offer a quick deal ("add the period and it draws instantly", with his sentence back in the box and no further asks), or pick another move.
+  - It's told about escape learning: if pushing back always skips the fix, he learns that pushing back gets him out of writing. So it tracks how often it has already given in this session and leans toward the quick deal when it's becoming a pattern.
+  - With nothing pending, it doesn't hand out free art; it gives a twist or starters instead.
+
 ## 0.9.1
 - **The coach now handles "idk", "this is boring", one-word answers, and "can we just draw it" (`tutor/coach.py`, `tutor/controller.py`):**
   - Instead of fixed scripted replies, the coach looks at how he's doing and what it already tried this session, then picks a move: sentence starters, a half-finished sentence from his story, a surprise twist, "say it with the mic," switching to a mini-game or new comic, or stopping for today on a win. It changes tactics if a move doesn't work and never nags. The old rules remain only as a fallback.

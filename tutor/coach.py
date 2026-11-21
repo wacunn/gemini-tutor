@@ -642,7 +642,7 @@ def chip_used(raw: str, offered: list[str]) -> bool:
 
 # ---------------------------------------------------------------- disengagement ("idk", "this is boring", one-word answers)
 
-DISENGAGE_MOVES = ("starters", "partial_frame", "twist", "switch_offer", "voice_offer", "wrap_offer")
+DISENGAGE_MOVES = ("draw_now", "quick_deal", "starters", "partial_frame", "twist", "switch_offer", "voice_offer", "wrap_offer")
 SWITCH_OPTIONS = {
     "twist": "Surprise me with a twist",
     "game": "Make a mini-game instead",
@@ -654,6 +654,9 @@ SWITCH_OPTIONS = {
 DISENGAGE_SYSTEM = """You are the adaptive coach inside a comic-book and story app for {name}, a Grade {grade} boy with ADHD.
 He just sent something that signals he's stuck, tired, bored, or pushing back (e.g. "idk", "this is boring", a single word, the same short thing again).
 Decide the best next move FOR HIM, TODAY, from the evidence. Options:
+- "draw_now": accept his PENDING DRAFT as-is and draw it right now (only possible when a pending draft exists). Weigh it like a teacher would: if he's asking to see his idea drawn, the draft is a real idea, and pressing the fix would cost more engagement than it teaches today, honor it (the issue is simply logged). If he has been dodging the same skill repeatedly and is otherwise fine, or the draft is too thin to draw, choose something else.
+- "quick_deal": put his pending draft back in his box and offer a tiny deal ("add the period and it draws instantly"). His very next send draws, no further asks. Good middle ground when draw_now has already been used today.
+ESCAPE LEARNING: if "can we just draw it" ALWAYS skips the fix, he learns that pushing back is the way out of writing. Count how often draw_now was already used this session (see moves tried). Honoring it occasionally is fine; repeatedly, prefer quick_deal or another move unless he is truly at the end of his rope.
 - "starters": 2-3 tappable sentence STARTERS (3-6 words ending in "…", never whole sentences) from HIS story so he only has to finish an idea.
 - "partial_frame": put half a sentence from his story in his box for him to finish.
 - "twist": offer a wild, funny surprise event in his story to re-spark interest (he still writes what happens).
@@ -667,7 +670,7 @@ PRINCIPLES (evidence on ADHD, task avoidance and choice):
 - Language: a sharp, funny comic collaborator. NEVER school words (complete sentence, punctuation, grammar, connector, clause, tier). You are an AI tutor, not his friend.
 Return STRICT JSON:
 {{"today_state":{{"energy":"high|medium|low","willingness":"high|medium|low","note":"short"}},
- "move":"starters|partial_frame|twist|switch_offer|voice_offer|wrap_offer",
+ "move":"draw_now|quick_deal|starters|partial_frame|twist|switch_offer|voice_offer|wrap_offer",
  "kid_words":"1-2 short sentences to say",
  "input_prompt":"very short line for the input bar",
  "chips":["starter…"],
@@ -686,6 +689,8 @@ def decide_disengaged(
     context: str,
     story: str,
     has_project: bool,
+    pending: str = "",
+    last_focus: str = "",
 ) -> dict[str, Any] | None:
     model = ensure_model(rec)
     name = rec.get("name") or "the student"
@@ -699,6 +704,8 @@ HYPOTHESES:
 BEHAVIOUR FACTS:
 {behaviour}
 Disengagement moves already tried this session (most recent last): {recent_moves}
+PENDING DRAFT (his last real sentence, waiting on a fix you asked for): {pending or '(none; draw_now is NOT available)'}
+What you last asked him to fix: {last_focus or '(nothing)'}
 WHERE HE IS: {context} (has a saved book open: {has_project})
 STORY SO FAR:
 {story or '(just starting)'}
@@ -714,6 +721,8 @@ HE JUST SENT ({how}): "{raw}"
     d = dict(out)
     mv = str(d.get("move") or "starters").strip().lower()
     d["move"] = mv if mv in DISENGAGE_MOVES else "starters"
+    if d["move"] in ("draw_now", "quick_deal") and not pending.strip():
+        d["move"] = "starters"
     d["kid_words"] = _sanitize(str(d.get("kid_words") or "").strip())
     d["input_prompt"] = _sanitize(str(d.get("input_prompt") or "").strip()) or d["kid_words"][:90]
     d["chips"] = [x for x in (as_starter(c) for c in (d.get("chips") or [])) if x][:3]

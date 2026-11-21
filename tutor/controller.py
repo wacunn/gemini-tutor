@@ -832,6 +832,26 @@ class SessionController:
 
     def _coach_turn_locked(self, raw: str, how: str, chk: dict[str, Any] | None) -> tuple[str | None, Any]:
         cs = self.coach_session
+        deal = self.coach_session.get("deal_pending")
+        if deal:
+            self.coach_session["deal_pending"] = None
+            prev_w = set(re.findall(r"[a-z']+", deal.lower()))
+            now_w = set(re.findall(r"[a-z']+", raw.lower()))
+            if prev_w and len(prev_w & now_w) / max(1, len(prev_w)) >= 0.5:
+                self._force_accept = {
+                    "accept": True, "focus": "none", "scaffold": "none",
+                    "next_scaffold": cs.get("next_scaffold", "starter_chips"), "kid_words": "",
+                    "rationale": "Kept the deal: he sent his draft back after the quick-deal offer, so it draws with no further asks.",
+                    "guardrail": "quick_deal_kept", "latency_s": 0.0,
+                }
+        if getattr(self, "_force_accept", None):
+            forced = self._force_accept
+            self._force_accept = None
+            cs["consecutive_fixes"] = 0
+            cs["last_request"] = None
+            self.spell_pick = None
+            self.last_coach = forced
+            return "accept", forced
         model = coach.ensure_model(self.rec)
         sig = dict(self.turn_signals or {})
         self.turn_signals = {}
@@ -905,6 +925,7 @@ class SessionController:
             "spell_rung": decision.get("spell_rung", 0),
             "misspelled": decision.get("misspelled") or [],
             "sentence": raw,
+            "chk": chk or {},
         }
         return "fix", self._coach_fix_plan(raw, decision, chk or {})
 
@@ -1478,6 +1499,8 @@ class SessionController:
             sig = dict(self.turn_signals or {})
             self.turn_signals = {}
             sig["minutes"] = round((time.time() - self.coach_session["started"]) / 60, 1)
+            last_req = self.coach_session.get("last_request") or {}
+            pending = (last_req.get("sentence") or self.engaged_draft or "").strip()
             with self._coach_lock:
                 d = coach.decide_disengaged(
                     self.rec,
@@ -1488,9 +1511,46 @@ class SessionController:
                     self._coach_context(),
                     self.spine_summary() or "\n".join(self.active_story[-6:]),
                     bool(self.project),
+                    pending=pending,
+                    last_focus=str(last_req.get("focus") or ""),
                 )
                 if d and not self.test_mode:
                     save_learner(self.rec)
+            if d and d["move"] == "draw_now" and pending:
+                # The coach chose to honor "just draw it": accept his pending draft as-is and run the normal accept flow.
+                pending_chk = last_req.get("chk") or thinking.check_writing(pending)
+                if self.phase == "INLINE_WORD_HELP":
+                    self.phase = self.phase_before_inline_help or "BUILDING"
+                    self.word_target = None
+                self.engaged_draft = ""
+                self._force_accept = {
+                    "accept": True,
+                    "focus": "none",
+                    "scaffold": "none",
+                    "next_scaffold": self.coach_session.get("next_scaffold", "starter_chips"),
+                    "kid_words": d.get("kid_words", ""),
+                    "rationale": d.get("rationale", ""),
+                    "guardrail": "kid_asked_to_draw",
+                    "today_state": d.get("today_state"),
+                    "latency_s": d.get("latency_s"),
+                }
+                self.prev_norm_text = ""
+                plan = self.classify_and_advance(pending, "typed", pending_chk)
+                plan.setdefault("repaired_text", pending)
+                self.last_coach = {**d, "accept": True, "focus": "disengaged", "scaffold": "draw_now"}
+                return plan
+            if d and d["move"] == "quick_deal" and pending:
+                self.coach_session["deal_pending"] = pending
+                self.last_coach = {**d, "accept": False, "focus": "disengaged", "scaffold": "quick_deal"}
+                self.last_kid_kind = "DISENGAGED"
+                self.prev_norm_text = norm
+                ui_actions.append({"type": "input", "mode": "type", "prompt": d["input_prompt"], "prefill": pending})
+                self.ui_locked_this_turn.add("ask_input")
+                return {
+                    "kind": self.last_kid_kind,
+                    "ui": ui_actions,
+                    "directive": f'He asked to just draw it. Offer the deal in your own voice (1 short sentence, no nagging): "{d["kid_words"]}"',
+                }
             if d:
                 self.last_coach = {**d, "accept": False, "focus": "disengaged", "scaffold": d["move"]}
                 self.last_kid_kind = "DISENGAGED"
