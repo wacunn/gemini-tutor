@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1
+- **Restored Clean, Uncluttered Gemini App UX (`static/index.html`, `static/style.css`, `static/app.js`, `tutor/controller.py`):**
+  - Replaced hero box grids, top-bar buttons, and in-stream instruction boxes with a **Gemini-style slide-out left sidebar (`☰`)** for creating/switching books, strips, games, and toggling Parent Sandbox, leaving the center start screen (`Hi …` + minimal borderless suggestion pills) and chat stream calm and clutter-free.
+
 ## 0.7.0
 - **Fixed Fresh-Install / `.app` LLM Connection Error (`tutor/config.py`, `tutor/live.py`, `requirements.txt`):**
   - `google-genai` 3.x (installed on fresh `uv` setups via `install.sh` / `install.ps1`) changed `aio.live.connect()`'s default endpoint away from `v1alpha`, causing `HTTP 404` WebSocket rejections (`Reconnecting…`). Added `genai_client(live=True)` forcing `http_options={"api_version": "v1alpha"}` plus native OS Keychain / `truststore` + `certifi` SSL setup, Live model fallbacks, and a one-click **Test Gemini connection** check on `/parent`.

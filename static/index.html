@@ -49,20 +49,45 @@
 
   <!-- Main -->
   <div id="app" hidden>
+    <!-- Gemini-style Slide-Out Left Sidebar -->
+    <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+    <aside class="sidebar" id="sidebar" aria-hidden="true">
+      <div class="side-top">
+        <button class="icon-btn" id="sideClose" type="button" title="Close menu">
+          <svg viewBox="0 0 24 24"><path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/></svg>
+        </button>
+        <span class="brand">Gemini</span>
+      </div>
+      <div class="side-new" id="sideNewList">
+        <button type="button" class="side-action" data-new-kind="epic_graphic_novel">+ New comic book</button>
+        <button type="button" class="side-action" data-new-kind="epic_codex">+ New fact codex</button>
+        <button type="button" class="side-action" data-new-kind="medium_pitch">+ New persuasive pitch</button>
+        <button type="button" class="side-action" data-new-kind="quick_strip">+ Quick 3-panel strip</button>
+        <button type="button" class="side-action" data-new-kind="quick_game">+ New mini-game</button>
+      </div>
+      <div class="side-label">Saved</div>
+      <div class="side-list" id="sideList"></div>
+      <div class="side-foot">
+        <a class="side-foot-link" id="sandboxLink" href="/?sandbox=1">Parent Try-It (Sandbox)</a>
+        <a class="side-foot-link" id="exitSandboxLink" href="/" hidden>Exit Parent Sandbox</a>
+        <a class="side-foot-link" href="/parent">Parent page</a>
+      </div>
+    </aside>
+
     <header class="top">
       <div class="top-left">
+        <button class="icon-btn" id="menuBtn" type="button" title="Books &amp; projects">
+          <svg viewBox="0 0 24 24"><path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/></svg>
+        </button>
         <div class="brand">Gemini</div>
         <span class="sandbox-banner" id="sandboxBanner" hidden>
-          Parent Sandbox · Safe to test — child's profile &amp; books stay untouched
-          <a href="/">Exit sandbox</a>
+          Parent Sandbox <a href="/">Exit</a>
         </span>
       </div>
       <div class="top-right">
         <span class="building" id="building" hidden><span class="dot"></span><span id="buildingText">Making something</span></span>
         <span class="goal-pill" id="goalPill" hidden></span>
         <span class="timer" id="timer"></span>
-        <button class="pill-btn" id="libBtn" type="button" title="Save current work, switch books, or start a new one">Books / New</button>
-        <a class="pill-btn subtle" id="sandboxLink" href="/?sandbox=1" title="Test any book or game without affecting your child's data">Parent Try-It</a>
         <button class="icon-btn" id="phonesBtn" title="Headphones on: you can talk while Gemini is talking" aria-pressed="false">
           <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0-9 9v6a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H5v-1a7 7 0 0 1 14 0v1h-2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1a3 3 0 0 0 3-3v-6a9 9 0 0 0-9-9z"/></svg>
         </button>
@@ -105,31 +130,6 @@
         </div>
       </div>
       <div class="live-glow" id="glow"></div>
-    </div>
-
-    <!-- Library / Multi-Book Switcher & New Project Sheet -->
-    <div class="pen-sheet" id="libSheet" hidden>
-      <div class="lib-card">
-        <div class="pen-head">
-          <span style="font-size:1.15rem;font-weight:500">Bookshelf &amp; Start New (Auto-Saves Current Work)</span>
-          <button class="text-btn" id="libClose" type="button">Close</button>
-        </div>
-        <div class="lib-new-box">
-          <div class="starter-group-label">Start a Brand-New Project (Current book stays saved)</div>
-          <input id="newProjTitle" class="lib-title-input" placeholder="Optional title for your new book or game (or leave blank)…" autocomplete="off" />
-          <div class="starter-row" id="libNewRow">
-            <button type="button" class="starter-card" data-new-kind="epic_graphic_novel"><div class="st-title">+ New Graphic Novel (PDF Book)</div><div class="st-sub">Separate Beginning → Middle → End comic book</div></button>
-            <button type="button" class="starter-card" data-new-kind="epic_codex"><div class="st-title">+ New 3-Source Fact Codex</div><div class="st-sub">Separate illustrated science/world encyclopedia</div></button>
-            <button type="button" class="starter-card" data-new-kind="medium_pitch"><div class="st-title">+ New 4-Page Persuasive Pitch</div><div class="st-sub">Separate Claim → Evidence → Counter-Argument book</div></button>
-            <button type="button" class="starter-card" data-new-kind="quick_strip"><div class="st-title">+ New Quick 3-Panel Strip</div><div class="st-sub">Fast 3-panel comic with PDF export</div></button>
-            <button type="button" class="starter-card" data-new-kind="quick_game"><div class="st-title">+ New Live Mini-Game</div><div class="st-sub">Code a new playable sentence-driven game</div></button>
-          </div>
-        </div>
-        <div id="libSavedSection">
-          <div class="starter-group-label" style="margin-top:16px">Saved Books, Strips &amp; Games (Click to Switch)</div>
-          <div id="libList" class="starter-row"></div>
-        </div>
-      </div>
     </div>
 
     <!-- Pen sheet -->

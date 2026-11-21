@@ -54,60 +54,81 @@ async function boot() {
   if (IS_SANDBOX) {
     $("sandboxBanner").hidden = false;
     $("sandboxLink").hidden = true;
+    $("exitSandboxLink").hidden = false;
     $("helloText").textContent = "Parent Sandbox";
   } else {
     $("helloText").textContent = `Hi ${st.name}`;
   }
-  renderHeroStarters(st.projects || [], st.activities || []);
-  wireLibrarySheet();
+  renderHeroStarters(st.projects || []);
+  wireSidebar();
   $("input").focus();
   if (!IS_SANDBOX) fetch("/api/prewarm", { method: "POST" }).catch(() => {});
 }
 
-function projectCardHtml(p) {
-  const meta = p.progress_label || `${p.panel_count || 0} panel(s)`;
-  return `<div class="starter-card" data-open-proj="${esc(p.id)}">
-    <div class="st-title">${esc(p.title)}</div>
-    <div class="st-sub">${esc(meta)} · Click to continue</div>
-    <div class="card-meta-actions" onclick="event.stopPropagation()">
-      <a href="${esc(p.pdf_url)}" target="_blank">Download PDF</a>
-      <button type="button" data-ren-proj="${esc(p.id)}" data-cur-title="${esc(p.title)}">✎ Rename</button>
-      <button type="button" class="del" data-del-proj="${esc(p.id)}" data-cur-title="${esc(p.title)}">× Delete</button>
+function toggleSidebar(open) {
+  const sb = $("sidebar");
+  const bd = $("sidebarBackdrop");
+  const show = typeof open === "boolean" ? open : !sb.classList.contains("open");
+  sb.classList.toggle("open", show);
+  sb.setAttribute("aria-hidden", String(!show));
+  bd.hidden = !show;
+  if (show) refreshSidebar();
+}
+
+function sideItemHtml(p) {
+  const meta = p.progress_label || `${p.panel_count || 0}p`;
+  return `<div class="side-item" data-open-proj="${esc(p.id)}">
+    <div class="side-item-main">
+      <div class="side-item-title">${esc(p.title)}</div>
+      <div class="side-item-sub">${esc(meta)}</div>
+    </div>
+    <div class="side-item-acts" onclick="event.stopPropagation()">
+      <a href="${esc(p.pdf_url)}" target="_blank" title="Download PDF">PDF</a>
+      <button type="button" data-ren-proj="${esc(p.id)}" data-cur-title="${esc(p.title)}" title="Rename">✎</button>
+      <button type="button" class="del" data-del-proj="${esc(p.id)}" data-cur-title="${esc(p.title)}" title="Delete">×</button>
     </div>
   </div>`;
 }
 
-function activityCardHtml(a) {
-  return `<div class="starter-card" data-open-act="${esc(a.id)}">
-    <div class="st-title">${esc(a.title || "Mini-Game")}</div>
-    <div class="st-sub">Live Mini-Game · Click to reopen</div>
-    <div class="card-meta-actions" onclick="event.stopPropagation()">
-      <a href="/activity/${esc(a.id)}" target="_blank">Open tab</a>
-      <button type="button" class="del" data-del-act="${esc(a.id)}" data-cur-title="${esc(a.title || "Game")}">× Delete</button>
+function sideActHtml(a) {
+  return `<div class="side-item" data-open-act="${esc(a.id)}">
+    <div class="side-item-main">
+      <div class="side-item-title">${esc(a.title || "Mini-Game")}</div>
+      <div class="side-item-sub">Mini-game</div>
+    </div>
+    <div class="side-item-acts" onclick="event.stopPropagation()">
+      <button type="button" class="del" data-del-act="${esc(a.id)}" data-cur-title="${esc(a.title || "Game")}" title="Delete">×</button>
     </div>
   </div>`;
 }
 
-function bindShelfActions(container, onMutate) {
-  container.querySelectorAll("[data-open-proj]").forEach((el) => {
+async function refreshSidebar() {
+  const lib = await (await fetch(`/api/library?sandbox=${IS_SANDBOX ? 1 : 0}`)).json();
+  const listEl = $("sideList");
+  const rows = [
+    ...(lib.projects || []).map(sideItemHtml),
+    ...(lib.activities || []).map(sideActHtml),
+  ];
+  listEl.innerHTML = rows.length ? rows.join("") : '<div class="muted" style="padding:8px 14px;font-size:.86rem">No saved books yet.</div>';
+  listEl.querySelectorAll("[data-open-proj]").forEach((el) => {
     el.onclick = () => {
-      $("libSheet").hidden = true;
+      toggleSidebar(false);
       begin();
-      addKid(`Open “${esc(el.querySelector(".st-title")?.textContent || "Book")}”`);
+      addKid(`Open “${esc(el.querySelector(".side-item-title")?.textContent || "Book")}”`);
       send({ type: "open_project", id: el.dataset.openProj });
     };
   });
-  container.querySelectorAll("[data-open-act]").forEach((el) => {
+  listEl.querySelectorAll("[data-open-act]").forEach((el) => {
     el.onclick = () => {
-      $("libSheet").hidden = true;
+      toggleSidebar(false);
       begin();
-      addKid(`Reopen game “${esc(el.querySelector(".st-title")?.textContent || "Game")}”`);
+      addKid(`Open “${esc(el.querySelector(".side-item-title")?.textContent || "Game")}”`);
       send({ type: "open_activity_saved", id: el.dataset.openAct });
     };
   });
-  container.querySelectorAll("[data-ren-proj]").forEach((btn) => {
+  listEl.querySelectorAll("[data-ren-proj]").forEach((btn) => {
     btn.onclick = async () => {
-      const next = prompt("New title for this book:", btn.dataset.curTitle || "");
+      const next = prompt("New title:", btn.dataset.curTitle || "");
       if (!next || !next.trim()) return;
       await fetch(`/api/project/${encodeURIComponent(btn.dataset.renProj)}/rename`, {
         method: "POST",
@@ -115,84 +136,70 @@ function bindShelfActions(container, onMutate) {
         body: JSON.stringify({ title: next.trim() }),
       });
       if (state.wsOpen) send({ type: "rename_project", id: btn.dataset.renProj, title: next.trim() });
-      onMutate();
+      refreshSidebar();
+      refreshHeroShelf();
     };
   });
-  container.querySelectorAll("[data-del-proj]").forEach((btn) => {
+  listEl.querySelectorAll("[data-del-proj]").forEach((btn) => {
     btn.onclick = async () => {
       if (!confirm(`Delete “${btn.dataset.curTitle || "this book"}”?`)) return;
       await fetch(`/api/project/${encodeURIComponent(btn.dataset.delProj)}?sandbox=${IS_SANDBOX ? 1 : 0}`, { method: "DELETE" });
-      onMutate();
+      refreshSidebar();
+      refreshHeroShelf();
     };
   });
-  container.querySelectorAll("[data-del-act]").forEach((btn) => {
+  listEl.querySelectorAll("[data-del-act]").forEach((btn) => {
     btn.onclick = async () => {
-      if (!confirm(`Delete game “${btn.dataset.curTitle || "Game"}”?`)) return;
+      if (!confirm(`Delete “${btn.dataset.curTitle || "Game"}”?`)) return;
       await fetch(`/api/activity/${encodeURIComponent(btn.dataset.delAct)}?sandbox=${IS_SANDBOX ? 1 : 0}`, { method: "DELETE" });
-      onMutate();
+      refreshSidebar();
     };
   });
 }
 
 async function refreshHeroShelf() {
   const st = await (await fetch(`/api/state?sandbox=${IS_SANDBOX ? 1 : 0}`)).json();
-  renderHeroStarters(st.projects || [], st.activities || []);
+  renderHeroStarters(st.projects || []);
 }
 
-function renderHeroStarters(savedProjects, savedActivities = []) {
+function renderHeroStarters(savedProjects) {
   const box = $("heroStarters");
   if (!box) return;
-  let html = "";
-  if (savedProjects.length || savedActivities.length) {
-    html += `<div><div class="starter-group-label">${IS_SANDBOX ? "Sandbox Shelf (Isolated from child's books)" : "Saved Books, Strips &amp; Mini-Games (Continue Anytime)"}</div><div class="starter-row">` +
-      savedProjects.map(projectCardHtml).join("") +
-      savedActivities.slice(0, 4).map(activityCardHtml).join("") +
-      `</div></div>`;
+  const contPill = savedProjects.length
+    ? `<button type="button" class="hero-pill" data-open-hero="${esc(savedProjects[0].id)}">Continue “${esc(savedProjects[0].title)}”</button>`
+    : "";
+  box.innerHTML = `${contPill}
+    <button type="button" class="hero-pill" data-new-kind="epic_graphic_novel">Comic book</button>
+    <button type="button" class="hero-pill" data-new-kind="epic_codex">Fact codex</button>
+    <button type="button" class="hero-pill" data-new-kind="medium_pitch">Persuasive pitch</button>
+    <button type="button" class="hero-pill" data-new-kind="quick_game">Mini-game</button>`;
+  const heroOpen = box.querySelector("[data-open-hero]");
+  if (heroOpen) {
+    heroOpen.onclick = () => {
+      begin();
+      addKid(esc(heroOpen.textContent));
+      send({ type: "open_project", id: heroOpen.dataset.openHero });
+    };
   }
-  html += `<div><div class="starter-group-label">Start a Brand-New Book (Save Multiple &amp; Export PDF)</div><div class="starter-row">
-    <button type="button" class="starter-card" data-new-kind="epic_graphic_novel"><div class="st-title">+ New Graphic Novel (PDF Book)</div><div class="st-sub">Beginning → Middle → End story spine, then zoom in up to 100 panels with dialogue</div></button>
-    <button type="button" class="starter-card" data-new-kind="epic_codex"><div class="st-title">+ New 3-Source Fact Codex</div><div class="st-sub">Read real science/engineering dossiers &amp; write illustrated encyclopedia pages</div></button>
-    <button type="button" class="starter-card" data-new-kind="medium_pitch"><div class="st-title">+ New 4-Page Persuasive Pitch</div><div class="st-sub">Build an illustrated Claim → Evidence → Counter-Argument → Deal book</div></button>
-  </div></div>
-  <div><div class="starter-group-label">Quick / Low-Friction Today (~10 Min · Voice or Typing)</div><div class="starter-row">
-    <button type="button" class="starter-card" data-new-kind="quick_strip"><div class="st-title">+ Quick 3-Panel Strip (PDF)</div><div class="st-sub">Fast setup, twist, and payoff</div></button>
-    <button type="button" class="starter-card" data-new-kind="quick_game"><div class="st-title">+ Build a Live Mini-Game</div><div class="st-sub">Code a playable sentence-driven game on the spot</div></button>
-  </div></div>`;
-  box.innerHTML = html;
-  bindShelfActions(box, refreshHeroShelf);
   box.querySelectorAll("[data-new-kind]").forEach((el) => {
     el.onclick = () => {
       begin();
-      addKid(esc(el.querySelector(".st-title")?.textContent || "New Project"));
+      addKid(esc(el.textContent));
       send({ type: "new_project", kind: el.dataset.newKind, title: "" });
     };
   });
 }
 
-async function openLibrarySheet() {
-  $("libSheet").hidden = false;
-  const lib = await (await fetch(`/api/library?sandbox=${IS_SANDBOX ? 1 : 0}`)).json();
-  const listEl = $("libList");
-  const cards = [
-    ...(lib.projects || []).map(projectCardHtml),
-    ...(lib.activities || []).map(activityCardHtml),
-  ];
-  listEl.innerHTML = cards.length ? cards.join("") : '<div class="muted" style="padding:6px 2px">No saved books yet—start one above!</div>';
-  bindShelfActions(listEl, openLibrarySheet);
-}
-
-function wireLibrarySheet() {
-  $("libBtn").onclick = openLibrarySheet;
-  $("libClose").onclick = () => ($("libSheet").hidden = true);
-  $("libNewRow").querySelectorAll("[data-new-kind]").forEach((btn) => {
+function wireSidebar() {
+  $("menuBtn").onclick = () => toggleSidebar();
+  $("sideClose").onclick = () => toggleSidebar(false);
+  $("sidebarBackdrop").onclick = () => toggleSidebar(false);
+  $("sideNewList").querySelectorAll("[data-new-kind]").forEach((btn) => {
     btn.onclick = () => {
-      const title = ($("newProjTitle").value || "").trim();
-      $("newProjTitle").value = "";
-      $("libSheet").hidden = true;
+      toggleSidebar(false);
       begin();
-      const label = btn.querySelector(".st-title")?.textContent || "New Project";
-      addKid(esc(title ? `${label}: “${title}”` : label));
-      send({ type: "new_project", kind: btn.dataset.newKind, title });
+      addKid(esc(btn.textContent.replace(/^\+\s*/, "")));
+      send({ type: "new_project", kind: btn.dataset.newKind, title: "" });
     };
   });
 }
@@ -572,7 +579,7 @@ function renderItem(it) {
     case "book_project": {
       const pane = canvasPane("book", "Book · PDF", renderBookProject(it));
       const sw = pane.querySelector("[data-switch-book]");
-      if (sw) sw.onclick = openLibrarySheet;
+      if (sw) sw.onclick = () => toggleSidebar(true);
       const rn = pane.querySelector("[data-rename-cur]");
       if (rn) {
         rn.onclick = () => {

@@ -496,42 +496,31 @@ class SessionController:
         )
 
     def _prompt_pitch_step(self, ui: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
-        """Drives SRSD POW+TREE 4-Page Persuasive Book using live AI follow-up questions tied to the student's actual claim."""
+        """Drives SRSD POW+TREE 4-Page Persuasive Book using live AI follow-up questions—zero clutter boxes."""
         assert self.project is not None
         ui.append({"type": "goal", "text": self.goal_badge()})
         if self.tree_step == 0:
-            title = f"Page 1 of 4 · T = Topic & Bold Claim (for {self.parent_title})"
-            body = (
-                f"Pick something real or hilariously ambitious to pitch to {self.parent_title} (e.g. a backyard contraption, a new house rule, a wild pet, a late-night build).\n"
-                "Write Page 1's Claim in 1 complete sentence—it unlocks Page 1's illustration immediately!"
-            )
-            ask = f"Write Page 1: what are you pitching to {self.parent_title}? (1 complete sentence)"
-            ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": title, "text": body}})
+            ask = f"Page 1: What bold idea or rule are you pitching to {self.parent_title}? (1 complete sentence)"
             ui.append({"type": "input", "mode": "type", "prompt": ask, "prefill": ""})
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
-            return ui, f"Starting a 4-Page Illustrated Pitch Book for {self.parent_title}. Invite their bold Page 1 claim in 1 complete sentence."
+            return ui, f"Starting a 4-Page Illustrated Pitch Book for {self.parent_title}. Ask in 1–2 natural sentences what bold idea they want to pitch on Page 1."
 
         step_specs = {
             1: (
-                "Page 2 of 4 · R = Strongest Reason & Proof ('because / since')",
                 f"Remind them of their Page 1 pitch, ask a specific WHY/HOW question proving why it will work, and require 1–2 complete sentences using 'because' or 'since'.",
                 "because | since",
             ),
             2: (
-                f"Page 3 of 4 · E = Beat {self.parent_title}'s #1 Objection ('although / even though')",
                 f"Remind them of their pitch, guess the exact practical thing {self.parent_title} will worry about, and ask how they solve it starting with 'Although' or 'Even though'.",
                 "although | even though",
             ),
             3: (
-                "Page 4 of 4 · E = Final Deal & Test Run ('if / so')",
                 f"Remind them of their pitch and solution, and ask what concrete first test or deal they propose to {self.parent_title} using 'if' or 'so' to finish the Pitch PDF.",
                 "if | so",
             ),
         }
-        title, goal_desc, conns = step_specs[min(self.tree_step, 3)]
+        goal_desc, conns = step_specs[min(self.tree_step, 3)]
         beat = ai_direct_next_beat(self.rec, goal_desc, self.active_story, connector_goal=conns)
-        body = f"{beat['spoken_prompt']}\n\nOptional Sparks:\n  • {beat['kernel_1']}\n  • {beat['kernel_2']}"
-        ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": title, "text": body}})
         ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
         self.ui_locked_this_turn.update({"show_card", "ask_input"})
         return ui, f"Say this story-specific prompt naturally in 1–2 sentences: {beat['spoken_prompt']}"
@@ -539,23 +528,14 @@ class SessionController:
     def _prompt_spine_step(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
         assert self.project is not None
         stage = self.project.get("stage", "spine_beginning")
-        sp = self.project.get("spine", {})
         self.phase = "STORY_SPINE"
 
         if stage == "spine_beginning":
-            card_txt = (
-                "Every step unlocks live comic art right on your book canvas:\n"
-                "  • ACT I — BEGINNING (Unlocks Cover Art!): Who is the main character, where are they, and what kicks off the story?\n"
-                "  • ACT II — MIDDLE ('BUT / WHEN / BECAUSE' · Unlocks Twist Art!): What goes sideways because of Act I?\n"
-                "  • ACT III — END ('SO / FINALLY' · Unlocks Climax Art!): How does it resolve before we zoom into Chapter 1?\n\n"
-                "Write 1–2 complete sentences for ACT I (or tap the Mic to speak it first, then edit in the box)!"
-            )
-            ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": "Graphic Novel Studio · Act I: The Beginning (Unlocks Cover Art!)", "text": card_txt}})
-            ui.append({"type": "input", "mode": "type", "prompt": "Act I (Unlocks Cover Art!): Who is your hero, where are they, and what starts the story? (1–2 complete sentences)", "prefill": ""})
+            ui.append({"type": "input", "mode": "type", "prompt": "Act I (Unlocks Cover Art): Who is your main character, where are they, and what starts the story?", "prefill": ""})
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
             return ui, (
                 f"{'Resuming' if resumed else 'Starting'} {self.name}'s Graphic Novel! "
-                "Mention in 1–2 plain sentences that Act I unlocks the book's Cover Art right away, and ask who the main character is and what starts the story."
+                "In 1–2 natural sentences, tell them we'll sketch Beginning, Middle, and End first—and Act I immediately unlocks the Cover Art—then ask who the main character is and what kicks off the story."
             )
 
         if stage == "spine_middle":
@@ -566,12 +546,6 @@ class SessionController:
                 spine_context=self.spine_summary(),
                 connector_goal="because | when | but",
             )
-            card_txt = (
-                f"ACT I (Cover Art Drawing!): \"{sp.get('beginning','')}\"\n\n"
-                f"ACT II — THE MIDDLE (Unlocks Twist Art!):\n  {beat['spoken_prompt']}\n\n"
-                f"Optional Story Sparks:\n  • {beat['kernel_1']}\n  • {beat['kernel_2']}"
-            )
-            ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": "Act II · What Goes Wrong? ('Because / When / But')", "text": card_txt}})
             ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
             return ui, f"Cover Art is rendering! Deliver this specific story-grounded prompt in 1–2 plain sentences: {beat['spoken_prompt']}"
@@ -583,13 +557,6 @@ class SessionController:
             spine_context=self.spine_summary(),
             connector_goal="so | finally | when",
         )
-        card_txt = (
-            f"ACT I: \"{sp.get('beginning','')}\"\n"
-            f"ACT II: \"{sp.get('middle','')}\"\n\n"
-            f"ACT III — THE END (Unlocks Climax Art!):\n  {beat['spoken_prompt']}\n\n"
-            f"Optional Story Sparks:\n  • {beat['kernel_1']}\n  • {beat['kernel_2']}"
-        )
-        ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": "Act III · The Climax & Ending ('So / Finally / When')", "text": card_txt}})
         ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
         self.ui_locked_this_turn.update({"show_card", "ask_input"})
         return ui, f"Act II Art is rendering! Deliver this specific story-grounded Act III question in 1–2 plain sentences: {beat['spoken_prompt']}"
@@ -646,15 +613,6 @@ class SessionController:
             spine_context=self.spine_summary(),
             connector_goal=conns,
         )
-
-        card_txt = (
-            (f"{act_name}: \"{act_focus}\"\n\n" if act_focus else "")
-            + f"{beat['spoken_prompt']}\n\n"
-            f"Optional Sparks (combine or invent your own):\n"
-            f"  1. {beat['kernel_1']}\n"
-            f"  2. {beat['kernel_2']}"
-        )
-        ui.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": f"{self.project.get('title','Comic Book')} · Ch.{ch_num}, Panel {next_pnum}", "text": card_txt}})
         ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
         self.ui_locked_this_turn.update({"show_card", "ask_input"})
         return ui, f"Deliver this specific, story-aware prompt for Panel {next_pnum} in 1–2 natural sentences: {beat['spoken_prompt']}"
@@ -1039,24 +997,13 @@ class SessionController:
             self.phase = "BUILDING"
             self.prev_norm_text = norm
             opts = self._opening_options(opening_ideas)
-            scaf = generate_combine_scaffold(self.rec, [], "", self.rung)
-            card_txt = (
-                "Pick a project above:\n"
-                "  • FULL COMIC BOOK (Beginning → Middle → End Story Arc · Up to 100 Panels · PDF Book)\n"
-                "  • 3-SOURCE FACT & INVENTION CODEX (Reading + Science/World Facts → Illustrated PDF)\n"
-                "  • 4-PAGE PERSUASIVE PITCH (Build an Illustrated Case File)\n\n"
-                "Or jump straight in by combining these into 1 complete sentence with 'when' or 'so':\n"
-                f"  1. {scaf['kernel_1']}\n  2. {scaf['kernel_2']}"
-            )
             ui_actions.append({"type": "goal", "text": self.goal_badge()})
-            ui_actions.append({"type": "item", "item": {"id": "open_choices", "kind": "choices", "prompt": "Choose a multi-session PDF book or a quick build:", "options": opts}})
-            ui_actions.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": "Studio Menu · Narrative, Research Codex, Persuasive Pitch, or Game", "text": card_txt}})
-            ui_actions.append({"type": "input", "mode": "type", "prompt": "Tap a project above, or type/speak one complete sentence right now to start."})
+            ui_actions.append({"type": "item", "item": {"id": "open_choices", "kind": "choices", "prompt": "", "options": opts}})
+            ui_actions.append({"type": "input", "mode": "type", "prompt": "Pick one above, or type one complete sentence to jump in."})
             self.ui_locked_this_turn.update({"show_choices", "show_card", "ask_input"})
             directive = (
-                f"First turn! {self.name} said '{raw}'. Project choices (Full PDF Comic Book, 3-Source Fact Codex, 4-Page Pitch, Live Mini-Game) "
-                "and a quick-start card are ALREADY on screen. Do NOT call draw and do NOT ask wh- interview questions. "
-                "In at most TWO short, plain sentences: introduce yourself honestly as Gemini (an AI tutor made by Google) and invite picking a book/game or typing one complete sentence."
+                f"First turn! {self.name} said '{raw}'. Clean project pills are on screen. Do NOT call draw or show_card. "
+                "In at most TWO short, plain sentences: introduce yourself honestly as Gemini (an AI tutor made by Google) and invite picking a project or typing one complete sentence."
             )
             return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": directive}
 
@@ -1414,17 +1361,6 @@ class SessionController:
             need_str = ", and ".join(needed) if len(needed) <= 2 else (", ".join(needed[:-1]) + f", and {needed[-1]}")
             ui_actions.append(
                 {
-                    "type": "item",
-                    "item": {
-                        "id": "forge",
-                        "kind": "card",
-                        "title": "Quick Polish — Almost Unlocks Your Art!",
-                        "text": f"Your draft:\n  \"{raw}\"\n\nNext step: {need_str[:1].upper() + need_str[1:]}.",
-                    },
-                }
-            )
-            ui_actions.append(
-                {
                     "type": "input",
                     "mode": "type",
                     "prompt": f"Almost unlocks the art! {need_str[:1].upper() + need_str[1:]} right in the box and hit Enter.",
@@ -1441,7 +1377,7 @@ class SessionController:
             return {
                 "kind": self.last_kid_kind,
                 "ui": ui_actions,
-                "directive": f"CONVENTION / SPELLING POLISH on '{raw}': ask concisely to {need_str} in the pre-filled box and hit Enter.{spell_rule_for_llm}",
+                "directive": f"CONVENTION / SPELLING POLISH on '{raw}': briefly acknowledge their story beat, then ask concisely to {need_str} in the pre-filled box and hit Enter.{spell_rule_for_llm}",
             }
 
         # ---------------- 7D. ENFORCED GENRE & MASTERY-TIER GATES (Max 1 Power-Up Pass Per Item!) ----------------
