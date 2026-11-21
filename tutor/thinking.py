@@ -206,7 +206,7 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
     _u_sound = {"unicorn", "uniform", "unit", "universe", "university", "user", "usual", "useful", "one", "once"}
     for m_art in re.finditer(r"\b(a)\s+([aeiou][a-z]{2,})\b", text, re.I):
         art_w, next_w = m_art.group(1), m_art.group(2)
-        if next_w.lower() not in _u_sound and art_w.lower() not in seen_gf:
+        if next_w.lower() not in _u_sound and f"{art_w} {next_w}".lower() not in seen_gf:
             fixed_art = "An" if art_w[0].isupper() else "an"
             seen_gf.add(f"{art_w} {next_w}".lower())
             clean_gf.append(
@@ -216,6 +216,108 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
                     "rule": f"Before a vowel sound like '{next_w}', use '{fixed_art}' instead of '{art_w}'.",
                 }
             )
+
+    # Deterministic 3rd-person singular bare-verb safety net (e.g. "Dylan get" -> ["gets", "got"], "Bob barf" -> ["barfs", "barfed"])
+    # Excludes invariant past verbs (hit, put, cut, hurt, let, set, shut, read, quit, burst, split, cost)!
+    _bare_verb_forms: dict[str, list[str]] = {
+        "get": ["gets", "got"],
+        "have": ["has", "had"],
+        "go": ["goes", "went"],
+        "do": ["does", "did"],
+        "make": ["makes", "made"],
+        "take": ["takes", "took"],
+        "run": ["runs", "ran"],
+        "eat": ["eats", "ate"],
+        "see": ["sees", "saw"],
+        "come": ["comes", "came"],
+        "find": ["finds", "found"],
+        "give": ["gives", "gave"],
+        "say": ["says", "said"],
+        "tell": ["tells", "told"],
+        "throw": ["throws", "threw"],
+        "fly": ["flies", "flew"],
+        "try": ["tries", "tried"],
+        "cry": ["cries", "cried"],
+        "leave": ["leaves", "left"],
+        "sleep": ["sleeps", "slept"],
+        "fall": ["falls", "fell"],
+        "sit": ["sits", "sat"],
+        "stand": ["stands", "stood"],
+        "want": ["wants", "wanted"],
+        "need": ["needs", "needed"],
+        "like": ["likes", "liked"],
+        "love": ["loves", "loved"],
+        "hate": ["hates", "hated"],
+        "barf": ["barfs", "barfed"],
+        "fart": ["farts", "farted"],
+        "jump": ["jumps", "jumped"],
+        "walk": ["walks", "walked"],
+        "look": ["looks", "looked"],
+        "play": ["plays", "played"],
+        "grab": ["grabs", "grabbed"],
+        "drop": ["drops", "dropped"],
+        "stop": ["stops", "stopped"],
+    }
+    _subj_block = {"i", "you", "we", "they", "who", "what", "when", "where", "why", "how", "and", "but", "so", "because", "if", "while", "then", "to", "can", "could", "will", "would", "should", "did", "does", "do", "dont", "don't", "didnt", "didn't", "cant", "can't", "wont", "won't", "not", "never", "please", "lets", "let's"}
+    # Match either: (He|She|It|<CapitalizedSingularName>) <bare_verb> OR (The|A|An|My|His|Her) <singular_noun> <bare_verb>
+    for m_vb in re.finditer(
+        r"(?:(?:\b(He|She|It)\b|\b([A-Z][a-z]{2,14}))|\b(?:the|a|an|my|his|her)\s+([a-z]{2,12}))\s+([a-z]{2,8})\b",
+        text,
+    ):
+        pron, prop_name, com_noun, vb = m_vb.group(1), m_vb.group(2), m_vb.group(3), m_vb.group(4)
+        vbl = vb.lower()
+        if vbl not in _bare_verb_forms or vbl in ms_words or vbl in seen_gf:
+            continue
+        subj_word = (pron or prop_name or com_noun or "").strip()
+        if not subj_word or subj_word.lower() in _subj_block:
+            continue
+        # Skip plural nouns ending in 's' (except 'boss', 'princess', 'class', 'grass')
+        if subj_word.lower().endswith("s") and not subj_word.lower().endswith(("ss", "us")):
+            continue
+        # Ensure not preceded by "and" (compound plural subject like "Dylan and Bob get") or auxiliary "does Dylan get"
+        before_txt = text[: m_vb.start()].lower().rstrip()
+        if re.search(r"\b(?:and|does|did|can|could|will|would|should|may|might|must|let|lets|let's|make|made|help|helped|saw|watch)\s*$", before_txt):
+            continue
+        opts_vb = _bare_verb_forms[vbl]
+        seen_gf.add(vbl)
+        clean_gf.append(
+            {
+                "wrote": vb,
+                "options": opts_vb,
+                "rule": f"With '{subj_word}', use '{opts_vb[0]}' (happening now) or '{opts_vb[1]}' (already happened).",
+            }
+        )
+
+    # Deterministic missing-article check before common singular countable nouns (e.g. "Dylan gets stinky cat." -> "a stinky cat")
+    _dets = {
+        "a", "an", "the", "my", "your", "his", "her", "its", "our", "their", "this", "that",
+        "one", "two", "three", "no", "any", "some", "each", "every", "another",
+    }
+    _count_nouns = (
+        "cat|dog|spaceship|ship|monster|alien|dragon|sword|trap|house|room|car|rocket|robot|"
+        "button|door|key|box|hat|ball|potion|toilet|burger|taco|burrito|friend|kid|boy|girl|wizard|planet"
+    )
+    for m_det in re.finditer(
+        rf"\b(gets?|got|has|had|saw|sees?|found|finds?|made|makes?|took|takes?|wants?|wanted|needs?|needed|bought|threw|throws?|left|leaves?|built|builds?|grabbed|grabs?|chased|chases?|hit)\s+(?:([A-Za-z']{{2,14}})\s+)?({_count_nouns})\b",
+        text,
+        re.I,
+    ):
+        adj_w, noun_w = m_det.group(2), m_det.group(3)
+        if adj_w and (adj_w.lower() in _dets or adj_w.endswith("'s") or adj_w.isdigit()):
+            continue
+        # Also skip if immediately preceded by a determiner before adj_w (already matched if 2 adjectives, check before)
+        phrase = f"{adj_w} {noun_w}" if adj_w else noun_w
+        if phrase.lower() in seen_gf or noun_w.lower() in ms_words or (adj_w and adj_w.lower() in ms_words):
+            continue
+        art_word = "an" if re.match(r"^[aeiou]", phrase, re.I) and phrase.lower().split()[0] not in _u_sound else "a"
+        seen_gf.add(phrase.lower())
+        clean_gf.append(
+            {
+                "wrote": phrase,
+                "options": [f"{art_word} {phrase}", f"the {phrase}", f"his {phrase}"],
+                "rule": f"Put '{art_word}', 'the', or 'his' before '{phrase}'.",
+            }
+        )
 
     return {
         "sentences": verified_sents,

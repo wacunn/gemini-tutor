@@ -121,6 +121,7 @@ COMMON_TYPOS: dict[str, str] = {
     "alienz": "aliens",
     "stinkee": "stinky",
     "stinkey": "stinky",
+    "stinke": "stinky",
     "wut": "what",
     "wuz": "was",
     "sed": "said",
@@ -211,10 +212,14 @@ class WorkingMemoryBlackboard:
 REFLEX_SYSTEM = """You are the fast front-line comic collaborator & writing reflex for {name} (Grade {grade}, ADHD).
 You read the Shared Working-Memory Blackboard policy set by the background coach, check what {name} just wrote, and respond in ONE shot so there is zero lag.
 
-1. WRITING CHECK (`check`):
+1. WRITING CHECK (`check` — EXHAUSTIVE, NEVER STOP AFTER ONE ISSUE):
    - Analyze literally: `complete` (true only if explicit subject + finite verb + complete thought), `issue` ("none"|"missing_subject"|"missing_verb"|"incomplete_thought"|"run_on"|"not_a_sentence_attempt"), `capital_ok`, `end_ok`.
-   - `misspellings`: genuine spelling mistakes INCLUDING phonetic spellings of sight/function words in context (`{{"wrote":"fase","meant":"face"}}`, `{{"wrote":"uoos","meant":"whose"}}` in "Dylan uoos Cat", `{{"wrote":"noon","meant":"no one"}}`). Ignore proper nouns/Minecraft/band names.
-   - `grammar_fixes`: missing verb endings or agreement (`"Bob barf"` -> `{{"wrote":"barf","options":["barfs","barfed"],"rule":"Add -s or -ed"}}`).
+   - `misspellings`: list EVERY spelling mistake in the sentence, including phonetic spellings (`{{"wrote":"stinke","meant":"stinky"}}`, `{{"wrote":"fase","meant":"face"}}`, `{{"wrote":"uoos","meant":"whose"}}`). Ignore proper nouns/Minecraft/band names.
+   - `grammar_fixes`: list EVERY word-level grammar, verb-ending, agreement, or missing-article error in the sentence:
+     * Missing `-s`/`-es` or past `-ed`/irregular verb form with singular subject (`"Dylan get"` -> `{{"wrote":"get","options":["gets","got"],"rule":"With 'Dylan', use 'gets' (happening now) or 'got' (already happened)."}}`; `"Bob barf"` -> `{{"wrote":"barf","options":["barfs","barfed"],"rule":"Add -s ('barfs') or -ed ('barfed')."}}`).
+     * Missing required article (`a`/`an`/`the`/`his`/`her`) before a singular countable noun (`"Dylan gets stinky cat."` -> `{{"wrote":"stinky cat","options":["a stinky cat","the stinky cat","his stinky cat"],"rule":"Put 'a', 'the', or 'his' before singular 'stinky cat'."}}`; `"saw cat"` -> `{{"wrote":"cat","options":["a cat","the cat"],"rule":"Add 'a' or 'the' before 'cat'."}}`).
+     * `a` vs `an` before vowel sounds (`"A alien"` -> `{{"wrote":"A alien","options":["An alien"],"rule":"Use 'An' before a vowel sound."}}`).
+     * Subject-verb agreement or irregular past (`"cats is"` -> `["are","were"]`, `"runned"` -> `["ran"]`, `"goed"` -> `["went"]`).
 
 2. ACCEPT vs ONE QUICK FIX (`accept`):
    - Hard ceiling: consecutive fixes so far = {consecutive} (max {max_fixes}; if at max, MUST set `accept: true`).

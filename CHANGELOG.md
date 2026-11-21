@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+- **Fix Every Real Error Gently Unless Frustrated (`tutor/controller.py`, `tutor/coach.py`, `tutor/thinking.py`, `tutor/blackboard.py`):**
+  - Re-verifies the full sentence after every spelling/word pick instead of accepting early after one fix—so `"Dylan get stinke cat."` → `"stinky"` now immediately catches `"get"` (`gets` / `got` with a *"Why it works"* card and tappable choices) and missing articles (`"a stinky cat"`) until the sentence is clean Grade 3 English.
+  - Added deterministic 3rd-person singular bare-verb detection (`"Dylan get"`, `"Bob barf"`, `"He run"`) alongside expanded LLM grammar diagnostics, only easing off early if genuine frustration signals appear.
+
 ## 1.1.0
 - **Tutor-Controlled Center Green Microphone (`static/index.html`, `static/style.css`, `static/app.js`, `tutor/media.py`, `tutor/controller.py`, `tutor/live.py`, `tutor/prompt.py`):**
   - Hid the manual corner mic button so the tutor controls when the microphone turns on and off.

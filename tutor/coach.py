@@ -32,7 +32,7 @@ from .config import genai_client
 
 COACH_MODEL = config.COACH_MODEL  # the per-turn judgment call
 LEARN_MODEL = config.COACH_MODEL  # background learning: no kid is waiting, so use the stronger model (lite hallucinated evidence in sims)
-MAX_CONSECUTIVE_FIXES = 2
+MAX_CONSECUTIVE_FIXES = 6  # Gentle fixes continue until clean unless frustration is detected
 
 FOCUS_TYPES = (
     "none",

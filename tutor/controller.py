@@ -1371,6 +1371,113 @@ class SessionController:
             "coach": mc_dec,
         }
 
+    def _is_frustrated(self, sig: dict[str, Any], decision: dict[str, Any]) -> bool:
+        """Returns True ONLY when genuine frustration/overload is present—otherwise we gently fix every issue in the sentence!"""
+        cs = self.coach_session
+        if cs.get("consecutive_fixes", 0) >= coach.MAX_CONSECUTIVE_FIXES:
+            return True
+        if (sig.get("backspaces") or 0) >= 20:
+            return True
+        if cs.get("avoid_count", 0) >= 1 and cs.get("consecutive_fixes", 0) >= 2:
+            return True
+        return False
+
+    def _launch_quick_grammar_mc_plan(
+        self,
+        sentence: str,
+        wrote: str,
+        options: list[str],
+        rule: str,
+        story_rx: str = "",
+    ) -> dict[str, Any]:
+        """Gentle 1-tap + highlighted-box check for verb endings/agreement ('get' -> 'gets'/'got') and missing articles ('a stinky cat')."""
+        clean_opts = []
+        for o in options or []:
+            o_str = str(o).strip()
+            if o_str and o_str.lower() not in {x.lower() for x in clean_opts}:
+                clean_opts.append(o_str)
+        if not clean_opts:
+            clean_opts = [wrote]
+        why_txt = (rule or f"In this sentence, change '{wrote}' to {' or '.join(repr(x) for x in clean_opts[:2])}.").strip()
+
+        self.last_kid_kind = "QUICK_GRAMMAR_CHOICE"
+        self.draw_unlocked = False
+        self.had_revision = True
+        self.spell_pick = {
+            "pick_kind": "grammar",
+            "wrote": wrote,
+            "correct": clean_opts[0],
+            "valid_options": [o.lower() for o in clean_opts],
+            "options": clean_opts[:3],
+            "sentence": sentence,
+            "why": why_txt,
+            "parts": " / ".join(clean_opts[:3]),
+            "extra_ms": [],
+        }
+        self.coach_session["last_request"] = {
+            "focus": "verb_ending",
+            "focus_word": wrote,
+            "focus_correct": clean_opts[0],
+            "focus_options": clean_opts[:3],
+            "spell_rung": 4,
+            "misspelled": [],
+            "sentence": sentence,
+            "chk": None,
+        }
+        ui_gf: list[dict[str, Any]] = [
+            {"type": "remove", "id": "word"},
+            {"type": "remove", "id": "say_word_help"},
+            {
+                "type": "item",
+                "item": {
+                    "id": "spell_why",
+                    "kind": "card",
+                    "title": f"Quick Wording Check · “{wrote}”",
+                    "text": f"Why it works: {why_txt}",
+                },
+            },
+            {
+                "type": "item",
+                "item": {
+                    "id": "spell_pick",
+                    "kind": "choices",
+                    "prompt": f"Pick the wording that fits your story for “{wrote}”:",
+                    "options": clean_opts[:3],
+                },
+            },
+            {
+                "type": "input",
+                "mode": "type",
+                "prompt": f"Tap {' or '.join('“' + x + '”' for x in clean_opts[:2])} above (or edit “{wrote}” right in your box):",
+                "prefill": sentence,
+                "select_word": wrote,
+            },
+        ]
+        self.ui_locked_this_turn.update({"show_card", "show_choices", "ask_input"})
+        rx_p = f"{story_rx.strip()} " if story_rx and story_rx.strip() else ""
+        opts_spoken = " or ".join(f"'{x}'" for x in clean_opts[:2])
+        spoken = f"{rx_p}Quick check on '{wrote}'—{why_txt} Tap {opts_spoken} on screen (or fix it in the box)!"
+        gf_dec = {
+            "accept": False,
+            "focus": "verb_ending",
+            "focus_word": wrote,
+            "focus_correct": clean_opts[0],
+            "focus_options": clean_opts[:3],
+            "scaffold": "grammar_choice_why",
+            "kid_words": spoken,
+            "rationale": f"No frustration detected: gently fixing grammar/wording '{wrote}' -> {clean_opts[:2]} ({why_txt}).",
+            "guardrail": "fix_all_unless_frustrated",
+            "latency_s": 0.0,
+        }
+        self.last_coach = gf_dec
+        return {
+            "kind": self.last_kid_kind,
+            "ui": ui_gf,
+            "spoken_fallback": spoken,
+            "directive": f'Explain kindly in 1-2 short plain sentences (do NOT say wrong): "{spoken}"',
+            "coach": gf_dec,
+        }
+
     @staticmethod
     def _is_clean(chk: dict[str, Any] | None) -> bool:
         if not chk:
@@ -1549,10 +1656,10 @@ class SessionController:
         miss_cap = any(s.get("capital_ok") is False for s in sents_rem) or (bool(raw) and raw[0].isalpha() and not raw[0].isupper())
         miss_end = any(s.get("end_ok") is False for s in sents_rem) or (bool(raw) and not re.search(r'[.!?]["\')\]]*$', raw))
 
-        # HOMEWORK RULE 1: NEVER let a spelling error slide unaddressed!
-        # Whenever the coach would have skipped spelling (accept=True or consecutive_fixes>=1 or low energy),
-        # give our 1-tap Multiple-Choice + plain-English "Why" explanation!
-        if ms_rem and (decision["accept"] or (decision["focus"] != "spelling" and decision["focus"] not in ("complete_sentence", "run_on"))):
+        frustrated = self._is_frustrated(sig, decision)
+
+        # HOMEWORK RULE 1: Fix EVERY spelling error (unless genuinely frustrated)!
+        if ms_rem and not frustrated and (decision["accept"] or (decision["focus"] != "spelling" and decision["focus"] not in ("complete_sentence", "run_on"))):
             m0 = sorted(ms_rem, key=lambda x: len(x.get("meant", "")), reverse=True)[0]
             rest_ms = [m for m in ms_rem if m["wrote"].lower() != m0["wrote"].lower()]
             cs["consecutive_fixes"] = cs.get("consecutive_fixes", 0) + 1
@@ -1570,26 +1677,27 @@ class SessionController:
                     m0["wrote"],
                     m0["meant"],
                     extra_ms=rest_ms,
-                    rationale=f"Coach tried to defer '{m0['wrote']}'; enforcing Multiple-Choice + Why so spelling is never skipped.",
+                    rationale=f"No frustration: gently fixing spelling '{m0['wrote']}' -> '{m0['meant']}' with Multiple-Choice + Why.",
                 ),
                 effective_chk,
             )
 
-        # HOMEWORK RULE 2: NEVER let missing grammar inflection ('A alien' -> 'An alien', 'Bob barf' -> 'barfs') slide!
-        if decision["accept"] and gf_rem:
+        # HOMEWORK RULE 2: Fix EVERY verb-ending, agreement, or missing-article error ('Dylan get' -> 'gets'/'got', 'a stinky cat') unless frustrated!
+        if gf_rem and not ms_rem and not frustrated and (decision["accept"] or decision["focus"] == "verb_ending"):
             g0 = gf_rem[0]
-            opt0 = (g0.get("options") or [""])[0]
-            decision = {
-                **decision,
-                "accept": False,
-                "focus": "verb_ending",
-                "focus_word": g0["wrote"],
-                "focus_correct": opt0,
-                "focus_options": g0.get("options") or [],
-                "kid_words": f"Change '{g0['wrote']}' to '{opt0}' ({g0.get('rule', '')}).",
-                "input_prompt": f"Change '{g0['wrote']}' to '{opt0}' in your box and hit Enter",
-                "guardrail": "homework_grammar_required",
-            }
+            cs["consecutive_fixes"] = cs.get("consecutive_fixes", 0) + 1
+            cs["pushed"] = cs.get("pushed", 0) + 1
+            return (
+                "fix",
+                self._launch_quick_grammar_mc_plan(
+                    raw,
+                    g0["wrote"],
+                    g0.get("options") or [],
+                    g0.get("rule") or "",
+                    story_rx=decision.get("story_reaction", ""),
+                ),
+                effective_chk,
+            )
 
         # HOMEWORK RULE 3: Every sentence MUST start with a Capital AND end with . ! or ? before moving on!
         if decision["accept"] and (miss_cap or miss_end):
@@ -2075,16 +2183,14 @@ class SessionController:
             self.pending_spell_targets = []
             self.pending_spell_sentence = ""
             self.inline_word_help_tries = 0
+            self.coach_session["last_request"] = None
             resolved_inline_word = target_word
             resolved_repaired_text = repaired
             raw = repaired
             norm = _norm(raw)
             wlist = _words(raw)
             self.last_kid_text = raw
-            chk = thinking._post_verify_check(
-                raw,
-                {"sentences": [{"text": raw, "complete": True, "issue": "none", "capital_ok": True, "end_ok": True}], "misspellings": []},
-            )
+            chk = None  # Re-verify full sentence so any remaining verb/article/capital/period issue ('Dylan get stinky cat.') is caught!
 
         # ---------------- 1. WORD STUDY RETRIEVAL PHASE (Leitner Spaced Deck) ----------------
         if self.phase == "WORD_STUDY" and self.word_target:
@@ -2197,11 +2303,13 @@ class SessionController:
                 self.last_kid_kind = "SPELL_PICK"
                 ui_actions.append({"type": "remove", "id": "spell_pick"})
                 ui_actions.append({"type": "remove", "id": "spell_why"})
-                if raw.strip().lower() == sp["correct"].lower():
-                    if not self.test_mode and len(sp["correct"]) >= 3:
-                        spelling_srs.record_retrieval_result(self.rec, sp["correct"], correct_first_try=True)
+                valid_set = set(sp.get("valid_options") or [sp["correct"].lower()])
+                picked_clean = raw.strip()
+                if picked_clean.lower() in valid_set:
+                    if sp.get("pick_kind") != "grammar" and not self.test_mode and len(picked_clean) >= 3:
+                        spelling_srs.record_retrieval_result(self.rec, picked_clean, correct_first_try=True)
                         save_learner(self.rec)
-                    repaired_sp = _splice_word_into_sentence(sp["sentence"], sp["wrote"], sp["correct"])
+                    repaired_sp = _splice_word_into_sentence(sp["sentence"], sp["wrote"], picked_clean)
                     extra_list = [
                         m for m in (sp.get("extra_ms") or [])
                         if m.get("wrote") and re.search(rf"\b{re.escape(m['wrote'])}\b", repaired_sp, re.I)
@@ -2212,41 +2320,11 @@ class SessionController:
                         mc_next["ui"] = ui_actions + mc_next["ui"]
                         mc_next["epoch"] = epoch
                         return mc_next
-                    miss_c = bool(repaired_sp) and repaired_sp[0].isalpha() and not repaired_sp[0].isupper()
-                    miss_e = bool(repaired_sp) and not re.search(r'[.!?]["\')\]]*$', repaired_sp)
-                    if miss_c or miss_e:
-                        prompt_ce = (
-                            f"Locked in “{sp['correct']}”! Now add a capital at the start and a . or ! at the end:"
-                            if (miss_c and miss_e)
-                            else (f"Locked in “{sp['correct']}”! Now capitalize the first letter and hit Enter:" if miss_c else f"Locked in “{sp['correct']}”! Pop a . ! or ? on the end and hit Enter:")
-                        )
-                        ui_actions.append({"type": "input", "mode": "type", "prompt": prompt_ce, "prefill": repaired_sp, "cursor_pos": 0 if miss_c else len(repaired_sp)})
-                        self.ui_locked_this_turn.add("ask_input")
-                        return {
-                            "epoch": epoch,
-                            "kind": "COACH_FIX",
-                            "spoken_fallback": prompt_ce,
-                            "ui": ui_actions,
-                            "directive": f'Say warmly in 1 short sentence: "{prompt_ce}"',
-                        }
-                    # Clean spelling + capital + end mark! Advance & draw immediately!
-                    clean_chk = thinking._post_verify_check(
-                        repaired_sp,
-                        {"sentences": [{"text": repaired_sp, "complete": True, "issue": "none", "capital_ok": True, "end_ok": True}], "misspellings": [], "grammar_fixes": []},
-                    )
-                    self._force_accept = {
-                        "accept": True,
-                        "focus": "none",
-                        "scaffold": "none",
-                        "next_scaffold": self.coach_session.get("next_scaffold", "starter_chips"),
-                        "kid_words": f"Nailed '{sp['correct']}'!",
-                        "rationale": f"Picked '{sp['correct']}' on multiple-choice check and sentence has capital + end punctuation.",
-                        "guardrail": "spell_mc_resolved",
-                        "latency_s": 0.0,
-                    }
-                    adv = self.classify_and_advance(repaired_sp, "typed", chk=clean_chk, opening_ideas=opening_ideas)
+                    # Re-check `repaired_sp` genuinely (chk=None) so any remaining verb/article/capital/period issue ('Dylan get stinky cat.') is caught gently!
+                    self.coach_session["last_request"] = None
+                    adv = self.classify_and_advance(repaired_sp, "typed", chk=None, opening_ideas=opening_ideas)
                     adv["ui"] = ui_actions + adv["ui"]
-                    adv["repaired_text"] = repaired_sp
+                    adv.setdefault("repaired_text", repaired_sp)
                     return adv
                 # Picked a distractor -> explain WHY the correct spelling works and show full Word Card!
                 card = self._launch_inline_word_help(ui_actions, sp["sentence"], sp["wrote"], sp["correct"], extra_targets=sp.get("extra_ms"))
@@ -2432,27 +2510,35 @@ class SessionController:
                 ),
             }
 
-        # ---------------- 3B-FIX. SINGLE-WORD / PUNCTUATION FIX RECOVERY (e.g. typing "He" when asked to capitalize "he is sad, and in pain.") ----------------
+        # ---------------- 3B-FIX. SINGLE-WORD / PHRASE / PUNCTUATION FIX RECOVERY (e.g. typing "stinky", "got", "a stinky cat", or "He") ----------------
+        sp_active = self.spell_pick
         last_req_fix = self.coach_session.get("last_request") or {}
-        prev_sent_fix = str(last_req_fix.get("sentence") or "").strip()
+        prev_sent_fix = str((sp_active or {}).get("sentence") or last_req_fix.get("sentence") or "").strip()
         if prev_sent_fix and how in ("typed", "handwritten") and self.phase not in ("INLINE_WORD_HELP", "WORD_STUDY"):
-            lfoc = last_req_fix.get("focus")
+            lfoc = "verb_ending" if (sp_active and sp_active.get("pick_kind") == "grammar") else ("spelling" if sp_active else last_req_fix.get("focus"))
+            fword_fix = str((sp_active or {}).get("wrote") or last_req_fix.get("focus_word") or "").strip()
             prev_words_fix = _words(prev_sent_fix)
             if lfoc == "capital" and len(wlist) == 1 and raw[:1].isupper() and prev_words_fix and wlist[0].lower() == prev_words_fix[0].lower():
                 raw = re.sub(rf"^\s*{re.escape(prev_words_fix[0])}\b", wlist[0], prev_sent_fix, count=1, flags=re.I)
                 norm = _norm(raw)
                 wlist = _words(raw)
                 self.last_kid_text = raw
+                self.coach_session["last_request"] = None
             elif lfoc == "end_mark" and raw in {".", "!", "?"}:
                 raw = prev_sent_fix.rstrip(".!? ") + raw
                 norm = _norm(raw)
                 wlist = _words(raw)
                 self.last_kid_text = raw
-            elif lfoc in ("spelling", "verb_ending") and 1 <= len(wlist) <= 2 and last_req_fix.get("focus_word") and norm not in AVOIDANCE_WORDS:
-                raw = _splice_word_into_sentence(prev_sent_fix, str(last_req_fix["focus_word"]), raw)
+                self.coach_session["last_request"] = None
+            elif lfoc in ("spelling", "verb_ending") and 1 <= len(wlist) <= 3 and fword_fix and norm not in AVOIDANCE_WORDS and len(wlist) < len(prev_words_fix):
+                raw = _splice_word_into_sentence(prev_sent_fix, fword_fix, raw)
                 norm = _norm(raw)
                 wlist = _words(raw)
                 self.last_kid_text = raw
+                # Only clear last_request if the word actually changed to a valid/clean form; if he typed a wrong retry ('fasse'), keep last_request so retry escalation fires!
+                valid_l = set((sp_active or {}).get("valid_options") or ([str(last_req_fix.get("focus_correct") or "").lower()] if last_req_fix.get("focus_correct") else []))
+                if not valid_l or raw != prev_sent_fix and any(v and v in norm for v in valid_l):
+                    self.coach_session["last_request"] = None
 
         # ---------------- 3C. DISENGAGEMENT -> ADAPTIVE COACH (falls back to the legacy rules below) ----------------
         is_refusal = any(re.search(p, norm) for p in REFUSAL_PATTERNS)
@@ -2693,7 +2779,7 @@ class SessionController:
         # ---- ADAPTIVE AI COACH decides accept vs. one focused fix (falls back to the legacy rules if unavailable)
         coach_accepted = False
         coach_info: dict[str, Any] | None = None
-        if self.coach_enabled and how in ("typed", "handwritten") and not resolved_inline_word:
+        if self.coach_enabled and how in ("typed", "handwritten"):
             verdict, payload, chk = self._coach_turn(raw, how, chk)
             if verdict == "fix":
                 payload["epoch"] = epoch
