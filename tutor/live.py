@@ -264,7 +264,7 @@ class TutorSession:
         iid = new_id("draw")
         item = {"id": iid, "kind": "image", "caption": sentence, "status": "drawing"}
         await self.ui({"type": "item", "item": item})
-        self.spawn(self._draw(item, sentence, "comic ink and flat color"))
+        self.spawn(self._draw(item, sentence, media.DEFAULT_STYLE_KEY))
         self.log.add("auto_draw", id=iid, sentence=sentence)
         return " (The illustration for this sentence is already rendering on screen automatically—do NOT call draw again for this sentence.)"
 
@@ -280,7 +280,7 @@ class TutorSession:
             mid, _ = await asyncio.to_thread(
                 media.generate_image,
                 sentence,
-                proj.get("style") or "comic book ink with bold lines and vibrant flat colors",
+                proj.get("style_key") or proj.get("style") or media.DEFAULT_STYLE_KEY,
                 "4:3",
                 refs,
                 continuity,
@@ -307,7 +307,7 @@ class TutorSession:
             mid, _ = await asyncio.to_thread(
                 media.generate_image,
                 sentence,
-                proj.get("style") or "comic book ink with bold lines and vibrant flat colors",
+                proj.get("style_key") or proj.get("style") or media.DEFAULT_STYLE_KEY,
                 "4:3",
                 refs,
                 continuity,
@@ -975,7 +975,7 @@ class TutorSession:
             self.comic = {
                 "id": new_id("comic"),
                 "title": a.get("title", "Untitled Comic"),
-                "style": a.get("style") or "comic book ink with flat colors",
+                "style": a.get("style") or media.DEFAULT_STYLE_KEY,
                 "characters": a.get("characters", ""),
                 "panels": [{"caption": "", "scene": "", "image": None, "status": "empty"} for _ in range(n)],
             }
@@ -990,7 +990,7 @@ class TutorSession:
                 self.comic = {
                     "id": new_id("comic"),
                     "title": "Story Strip",
-                    "style": "comic book ink with flat colors",
+                    "style": media.DEFAULT_STYLE_KEY,
                     "characters": "",
                     "panels": [{"caption": "", "scene": "", "image": None, "status": "empty"} for _ in range(max(3, self.ctrl.goal_target))],
                 }

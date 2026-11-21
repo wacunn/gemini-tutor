@@ -903,7 +903,7 @@ function renderBookProject(b) {
           <span>${esc(b.title || "Untitled Book")}</span>
           <button type="button" class="text-btn" style="font-size:.82rem;padding:4px 8px" data-rename-cur="1" title="Rename this book">✎ Rename</button>
         </div>
-        <div class="muted" style="font-size:.86rem">${esc(b.progress_label || `${b.panel_count || 0} panel(s)`)} · Style: ${esc(b.style_label || "Zany Marker Comic")}${b.sandbox ? " (Sandbox)" : ""}</div>
+        <div class="muted" style="font-size:.86rem">${esc(b.progress_label || `${b.panel_count || 0} panel(s)`)} · Style: ${esc(b.style_label || "Notebook Ink Doodle")}${b.sandbox ? " (Sandbox)" : ""}</div>
       </div>
       <div class="book-actions">
         <button type="button" class="pill-btn" data-toggle-styles="1">Art Style</button>

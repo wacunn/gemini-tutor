@@ -435,7 +435,7 @@ def project_ui_payload(proj: dict[str, Any]) -> dict[str, Any]:
         "author": proj.get("author", ""),
         "audience": proj.get("audience", ""),
         "style_key": skey,
-        "style_label": STYLE_BY_KEY.get(skey, {}).get("label", "Zany Marker Comic"),
+        "style_label": STYLE_BY_KEY.get(skey, {}).get("label", "Notebook Ink Doodle"),
         "art_styles": ART_STYLES,
         "stage": proj.get("stage", "drafting_panels"),
         "spine": sp,

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1
+- **Defaulted Art Style to Notebook Ink Doodle (`tutor/media.py`, `tutor/projects.py`, `tutor/live.py`, `static/app.js`):**
+  - Made **Notebook Ink Doodle** (*Diary of a Wimpy Kid* black-pen doodle on blue-lined school notebook paper) the #1 default style across all books, comic strips, and sentence drawings.
+
 ## 0.8.0
 - **Verb Endings & Subject-Verb Agreement Check (`tutor/thinking.py`, `tutor/controller.py`, `tutor/curriculum_tracker.py`):**
   - Catches missing `-s` / `-es` / `-ed` verb endings, subject-verb agreement slips, irregular past forms, and missing required articles (Ontario `B3.2`, e.g. `"Because the cat is smelly, Bob barf."` → highlights `"barf"` in the pre-filled sentence and asks to change it to `"barfs"` or `"barfed"` instead of letting the tutor silently fix it).

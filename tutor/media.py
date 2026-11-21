@@ -28,9 +28,20 @@ IMAGE_MODEL = "gemini-3.1-flash-image"
 IMAGE_FALLBACK = "nano-banana-pro-preview"
 VISION_MODEL = FAST_MODEL  # gemini-3.5-flash
 
-DEFAULT_STYLE_KEY = "zany_hand_drawn"
+DEFAULT_STYLE_KEY = "notebook_doodle"
 
 ART_STYLES: list[dict[str, str]] = [
+    {
+        "key": "notebook_doodle",
+        "label": "Notebook Ink Doodle",
+        "vibe": "Diary of a Wimpy Kid vibe (Default)",
+        "sample": "/static/style_samples/notebook_doodle.jpg",
+        "prompt": (
+            "Crisp black rollerball-pen cartoon doodle drawn directly on white wide-ruled school notebook paper with faint "
+            "horizontal blue ruled lines, inspired by Jeff Kinney (Diary of a Wimpy Kid): clean black ink linework ONLY, "
+            "minimalist cartoon characters with hilarious deadpan or panicked expressions, zero color fills, zero painted shading."
+        ),
+    },
     {
         "key": "zany_hand_drawn",
         "label": "Zany Marker Comic",
@@ -41,17 +52,6 @@ ART_STYLES: list[dict[str, str]] = [
             "thick slightly wobbly black felt-tip marker outlines, wildly expressive cartoon faces (bugged-out eyes, "
             "chaotic grins, hilarious gross-out or panicked reactions, motion lines), energetic hand-colored marker fills "
             "with visible paper texture, bold slapstick cartoon energy. Zero smooth 3D rendering, zero cute Hallmark polish."
-        ),
-    },
-    {
-        "key": "notebook_doodle",
-        "label": "Notebook Ink Doodle",
-        "vibe": "Diary of a Wimpy Kid vibe",
-        "sample": "/static/style_samples/notebook_doodle.jpg",
-        "prompt": (
-            "Crisp black rollerball-pen cartoon doodle drawn directly on white wide-ruled school notebook paper with faint "
-            "horizontal blue ruled lines, inspired by Jeff Kinney (Diary of a Wimpy Kid): clean black ink linework ONLY, "
-            "minimalist cartoon characters with hilarious deadpan or panicked expressions, zero color fills, zero painted shading."
         ),
     },
     {
@@ -104,8 +104,13 @@ def resolve_style_prompt(style_or_key: str) -> str:
     s = (style_or_key or "").strip()
     if s in STYLE_BY_KEY:
         return STYLE_BY_KEY[s]["prompt"]
-    # Legacy default upgrade: never use generic "wholesome flat colors" anymore
-    if not s or s == "comic book ink with bold lines and vibrant flat colors":
+    generic_legacy = {
+        "",
+        "comic book ink with bold lines and vibrant flat colors",
+        "comic book ink with flat colors",
+        "comic ink and flat color",
+    }
+    if s.lower() in generic_legacy:
         return STYLE_BY_KEY[DEFAULT_STYLE_KEY]["prompt"]
     return s
 
