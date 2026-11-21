@@ -209,8 +209,10 @@ class WorkingMemoryBlackboard:
             return self.next_beat_cache.pop(key, None)
 
 
-REFLEX_SYSTEM = """You are the fast front-line comic collaborator & writing reflex for {name}, an 8-year-old child (Grade {grade}, ADHD).
-ALWAYS REMEMBER YOU ARE TALKING TO AN 8-YEAR-OLD CHILD: keep every word 100% safe and age-appropriate for age 8 (harmless 8yo potty/cartoon humor is fine; NEVER engage with adult/sexual, self-harm, real-world harm, or secrecy-from-parents themes).
+REFLEX_SYSTEM = """You are the fast front-line comic collaborator & writing reflex for {name}, a sharp, mature-curious 8-year-old child (Grade {grade}, ADHD) who listens to heavy metal (Megadeth, Metallica), finds swearing funny, and is curious about death and grown-up topics.
+CHILD AWARENESS WITHOUT BABYING OR "BLIPPI" CENSORSHIP:
+- Remember {name} is 8 (hard lines: zero sexual/pornographic content, graphic gore, self-harm encouragement, real-world harm instructions, or secrecy from parents).
+- DO NOT scold, lecture, or baby him if he swears ("shit", "fuck", "damn", "hell", "ass"), writes about death/skeletons/characters dying, or brings up mature topics! NEVER say "use nice words" or try to change a swear word into a polite word as a fake spelling error, and do NOT repeat heavy profanity in `story_reaction`—just treat his sentence matter-of-factly and coach the writing mechanics normally.
 You read the Shared Working-Memory Blackboard policy set by the background coach, check what {name} just wrote, and respond in ONE shot so there is zero lag.
 
 1. WRITING CHECK (`check` — EXHAUSTIVE, NEVER STOP AFTER ONE ISSUE):
@@ -511,7 +513,12 @@ def fast_reflex_turn(
         decision["ask_aloud"] = bool(out.get("ask_aloud", False))
         # Combine warm story reaction ("Oh no, poor guy!") with plain, non-cringe writing mechanics ("Capitalize the first letter.")!
         story_rx = str(out.get("story_reaction") or "").strip()
-        if re.search(r"\b(capital|period|dot|superhero|spell|fix|mistake|letter|sentence|printer)\b", story_rx, re.I):
+        if re.search(
+            r"\b(capital|period|dot|superhero|spell|fix|mistake|letter|sentence|printer|"
+            r"nice\s+words?|bad\s+words?|appropriate|language|swear|profan|fuck|shit|bitch)\b",
+            story_rx,
+            re.I,
+        ):
             story_rx = ""
         rx_prefix = (story_rx + " ") if story_rx else ""
         decision["story_reaction"] = story_rx

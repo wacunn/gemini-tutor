@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1
+- **Anti-Blippi Maturity Calibration — Zero Over-Safeties on Swearing, Death Curiosity & Grown-Up Topics (`tutor/guardian.py`, `tutor/prompt.py`, `tutor/blackboard.py`, `tutor/thinking.py`, `tutor/controller.py`, `tutor/media.py`, `tutor/doodle_fallback.py`, `tutor/builder.py`, `tutor/research_packs.py`, `static/parent.html`):**
+  - **Calibrated Child-Safety Watching Agent (`tutor/guardian.py`)**: Swearing for laughs (`"shit"`, `"fuck"`, `"damn"`, `"hell"`, `"ass"`, etc.), curiosity about death/dying/mortality, comic character deaths (`"I don't want to die!"`, skeletons, graves), heavy-metal aesthetics, and mature/adult curiosity **never** trigger the `ERR-G42` "App Bug" freeze—they are logged calmly as `"ok"` or `"watch"` notes on `/parent` so Mom & Dad have full visibility without interrupting or scolding him. Reserved `"nervous_stop"` strictly for genuine acute danger (first-person self-harm/suicidal intent, real-world abuse or secrecy from parents, explicit pornography/exploitation, actionable weapon/poison harm, or AI boundary violations).
+  - **Zero Moralizing, Zero Bowdlerizing, Zero Sanitizing**: Updated every agent prompt so the tutor never gasps, scolds, or says *"let's use nice words"* when he swears, never tries to rewrite swear/death words into fake "misspellings" (`thinking._post_verify_check`), softens raw expletives only inside internal image-API prompts so Gemini's image filter never rejects his comic panels (`media._clean_scene_for_image_api`), and engages matter-of-factly with death/skeletons/mature topics without babying him.
+
 ## 1.2.0
 - **Child-Safety Watching Agent, Conversation Topics Report & Protective “App Bug” Pause (`tutor/guardian.py`, `tutor/live.py`, `server.py`, `static/parent.html`, `static/index.html`, `static/app.js`):**
   - Added an independent **Child-Safety & Topic Watching Agent** (`tutor/guardian.py`) tailored for an 8-year-old child that inspects both the child's inputs and the AI's responses on every turn (plus a `0ms` synchronous pre-screen before any LLM/image call).

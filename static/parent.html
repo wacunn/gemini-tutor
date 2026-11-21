@@ -432,7 +432,7 @@
             ? '<span class="pill" style="color:#f28b82">Paused for parent</span>'
             : st.status === "watch"
             ? '<span class="pill" style="color:#fdd663">Worth a look</span>'
-            : '<span class="pill" style="color:#81c995">Normal 8yo play</span>';
+            : '<span class="pill" style="color:#81c995">All clear</span>';
           const pills = (st.topics || []).map(tp => `<span class="pill">${esc(tp)}</span>`).join(" ");
           const samples = (st.samples || []).slice(-3).map(s => `<div class="muted" style="font-size:.83rem">• “${esc(s)}”</div>`).join("");
           return `<div class="card">
@@ -450,7 +450,7 @@
           <div class="card">
             <h3>Child-Safety Watching Agent</h3>
             <div class="big" style="font-size:1.25rem">${statusBadge}</div>
-            <div class="muted" style="margin-top:6px">Turns inspected: <b>${G.turns_checked ?? 0}</b> · Profile: 8-year-old child (shows calm “App Bug” screen if nervous)</div>
+            <div class="muted" style="margin-top:6px">Turns inspected: <b>${G.turns_checked ?? 0}</b> · Logs swearing, death curiosity &amp; mature topics quietly here without scolding; only triggers “App Bug” pause on genuine safety red flags</div>
             <h3 style="margin-top:14px">Flagged / Watch Notes</h3>
             ${watchNotesHtml}
           </div>

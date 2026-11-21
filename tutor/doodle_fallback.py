@@ -22,12 +22,14 @@ from .config import LITE_MODEL, genai_client
 
 DOODLE_W, DOODLE_H = 800, 600
 
-DOODLE_SYSTEM = """You draw funny *Diary of a Wimpy Kid*-style black-pen cartoons on an 800x600 school notebook page for an 8-year-old child (strictly age-8-safe cartoon slapstick only).
+DOODLE_SYSTEM = """You draw funny, edgy *Diary of a Wimpy Kid*-style black-pen cartoons on an 800x600 school notebook page for an 8-year-old who loves heavy metal, monsters, and comic-book battles (skulls, skeletons, tombstones, and dramatic comic action are welcome; zero graphic gore or sexual content).
 Given the child's comic sentence, return STRICT JSON listing 2 to 6 scene elements using ONLY these element kinds:
 - {"kind":"kid","x":220,"y":360,"scale":1.0,"face":"panicked|shocked|grinning|grumpy|sick","arms":"up|nose_pinch|running|pointing"}
 - {"kind":"cat","x":540,"y":360,"scale":1.0,"mood":"smug|grumpy|crazy"}
 - {"kind":"dog","x":520,"y":380,"scale":1.0,"mood":"happy|wild"}
 - {"kind":"monster","x":560,"y":330,"scale":1.1}
+- {"kind":"skull","x":540,"y":320,"scale":1.1}
+- {"kind":"grave","x":550,"y":415,"scale":1.0}
 - {"kind":"machine","x":520,"y":430,"scale":1.0}
 - {"kind":"stink","x":540,"y":250,"scale":1.0}
 - {"kind":"splat","x":380,"y":430,"scale":1.0}
@@ -223,11 +225,28 @@ def _draw_machine(d: ImageDraw.ImageDraw, x: float, y: float, s: float, rng: ran
         _wobble_line(d, x + math.cos(ang) * 44 * s, y - 36 * s, x + math.cos(ang) * 72 * s, y - 62 * s, 3, rng)
 
 
+def _draw_skull(d: ImageDraw.ImageDraw, x: float, y: float, s: float, rng: random.Random) -> None:
+    _wobble_oval(d, x, y - 10 * s, 40 * s, 36 * s, width=4, rng=rng)
+    d.rectangle([x - 20 * s, y + 18 * s, x + 20 * s, y + 40 * s], fill=(252, 252, 250), outline=(22, 24, 28), width=4)
+    for tx in (-10, 0, 10):
+        _wobble_line(d, x + tx * s, y + 20 * s, x + tx * s, y + 39 * s, 3, rng)
+    _wobble_oval(d, x - 14 * s, y - 12 * s, 9 * s, 10 * s, width=3, fill=(24, 24, 28), rng=rng)
+    _wobble_oval(d, x + 14 * s, y - 12 * s, 9 * s, 10 * s, width=3, fill=(24, 24, 28), rng=rng)
+    d.polygon([(x, y + 2 * s), (x - 5 * s, y + 12 * s), (x + 5 * s, y + 12 * s)], fill=(24, 24, 28))
+
+
+def _draw_grave(d: ImageDraw.ImageDraw, x: float, y: float, s: float, rng: random.Random) -> None:
+    d.rounded_rectangle([x - 36 * s, y - 48 * s, x + 36 * s, y + 42 * s], radius=32, fill=(240, 242, 245), outline=(22, 24, 28), width=4)
+    _wobble_line(d, x, y - 26 * s, x, y + 8 * s, 4, rng)
+    _wobble_line(d, x - 14 * s, y - 14 * s, x + 14 * s, y - 14 * s, 4, rng)
+
+
 def _heuristic_elements(scene: str) -> list[dict[str, Any]]:
     low = (scene or "").lower()
     els: list[dict[str, Any]] = []
     stinky = any(w in low for w in ("smell", "stink", "skunk", "fart", "barf", "puke", "poop", "rotten"))
-    scared = any(w in low for w in ("scare", "scream", "yell", "panic", "run", "explod", "crash", "monst", "burglar"))
+    spooky_death = any(w in low for w in ("die", "died", "dead", "death", "grave", "tomb", "coffin", "skeleton", "skull", "ghost", "reaper"))
+    scared = any(w in low for w in ("scare", "scream", "yell", "panic", "run", "explod", "crash", "monst", "burglar")) or spooky_death
     face = "sick" if ("barf" in low or "puke" in low) else ("panicked" if (stinky or scared) else "grinning")
     arms = "nose_pinch" if stinky else ("up" if scared else "pointing")
     els.append({"kind": "kid", "x": 230, "y": 360, "scale": 1.05, "face": face, "arms": arms})
@@ -235,6 +254,10 @@ def _heuristic_elements(scene: str) -> list[dict[str, Any]]:
         els.append({"kind": "cat", "x": 545, "y": 375, "scale": 1.15, "mood": "smug"})
     elif "dog" in low:
         els.append({"kind": "cat", "x": 545, "y": 375, "scale": 1.2, "mood": "crazy"})
+    elif any(w in low for w in ("skeleton", "skull", "reaper", "ghost")):
+        els.append({"kind": "skull", "x": 555, "y": 335, "scale": 1.15})
+    elif any(w in low for w in ("grave", "tomb", "coffin", "die", "died", "dead", "death")):
+        els.append({"kind": "grave", "x": 555, "y": 420, "scale": 1.1})
     elif any(w in low for w in ("monster", "creeper", "zombie", "rat", "spider", "boss", "burglar", "alien")):
         els.append({"kind": "monster", "x": 555, "y": 345, "scale": 1.05})
     else:
@@ -292,6 +315,10 @@ def render_notebook_doodle(scene: str, allow_llm: bool = True) -> bytes:
             _draw_cat(d, x, y, sc, str(el.get("mood") or "smug"), rng)
         elif k == "monster":
             _draw_monster(d, x, y, sc, rng)
+        elif k == "skull":
+            _draw_skull(d, x, y, sc, rng)
+        elif k == "grave":
+            _draw_grave(d, x, y, sc, rng)
         elif k == "machine":
             _draw_machine(d, x, y, sc, rng)
         elif k == "stink":

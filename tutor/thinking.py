@@ -165,7 +165,12 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
         {m.group(0).lower() for m in re.finditer(r"\b(went|got|did|stuff|things|very big|very bad|nice)\b", text, re.I)}
     )
 
-    # Filter capitalization-only or identical "misspellings"
+    # Filter capitalization-only, identical, or bowdlerized swear/death "misspellings"
+    _never_bowdlerize = {
+        "shit", "shits", "shitty", "fuck", "fucks", "fucking", "fucked", "damn", "damned",
+        "hell", "ass", "badass", "dumbass", "crap", "crappy", "bitch", "piss", "pissed",
+        "wtf", "butt", "poop", "fart", "barf", "die", "dies", "died", "dead", "death",
+    }
     clean_ms = []
     seen = set()
     ms_words = set()
@@ -177,6 +182,8 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
         if not wrote or not meant:
             continue
         if wrote.lower() == meant.lower():
+            continue
+        if wrote.lower() in _never_bowdlerize:
             continue
         key = (wrote.lower(), meant.lower())
         if key in seen:
