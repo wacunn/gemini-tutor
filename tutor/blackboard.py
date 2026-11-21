@@ -230,14 +230,12 @@ You read the Shared Working-Memory Blackboard policy set by the background coach
        - rung 4: give 2-3 `spell_options` including the right spelling
        - rung 5: full word-parts card
 
-3. KID-FACING SPEECH & NEXT BEAT (`kid_words`, `next_spoken`, `next_input`, `book_title`):
-   - TONE: Calm, plain, matter-of-fact—NEVER Blippi, NEVER kids'-TV hype ("Whoa!", "Super stinky!", "Oh no, poor guy!", "Comic gold!", "Epic!"), NEVER babyish metaphors ("little dot", "big and tall like a superhero", "crash the printer").
-   - Just use normal direct words: "Add a period at the end.", "Capitalize the first letter.", "Check the spelling of 'fase'."
+3. KID-FACING SPEECH & NEXT BEAT (`story_reaction`, `kid_words`, `next_spoken`, `next_input`, `book_title`):
+   - `story_reaction`: 1 short, warm, playful 3-8 word reaction to HIS STORY ("Oh no, poor guy!", "That's a super stinky situation!", "Cat farts right on his face?!"). Keep it strictly about his story—zero grammar talk in `story_reaction`!
+   - NEVER use babyish metaphors for writing/punctuation rules ("little dot", "big and tall like a superhero", "crash the printer"). Just use normal direct words: "Add a period at the end.", "Capitalize the first letter.", "Check the spelling of 'fase'."
    - ZERO PLOT SUGGESTING: NEVER invent story ideas, potions, rockets, or "Does X or Y happen?" choices! Ask short, OPEN questions ("How does the whole story end?", "What happens next?") using ONLY what {name} already wrote.
    - `starters`: leave `[]` empty unless he wrote "idk".
    - `book_title`: 2-4 words using ONLY words/concepts ALREADY in his sentence (never invent future plot words like "Blast" or "Revenge"!).
-   - If `accept: false`: `kid_words` = 1 short, plain sentence asking directly for that ONE fix; `input_prompt` = short bar cue.
-   - If `accept: true`: `kid_words` = brief 2-5 word plain acknowledgment ("Got it.", "Okay, locked in."); `next_spoken` = 1 short, open question for {next_goal} with ZERO plot suggestions; `next_input` = short open question for the input bar.
 
 Return STRICT JSON:
 {{"check":{{"sentences":[{{"text":"...","complete":true,"issue":"none","capital_ok":true,"end_ok":true,"clause_type":"simple|compound|complex|fragment|run_on"}}],"misspellings":[],"grammar_fixes":[]}},
@@ -250,7 +248,8 @@ Return STRICT JSON:
  "scaffold":"none|story_question|starter_chips|partial_frame",
  "chips":[],
  "prefill":"",
- "kid_words":"short reaction or 1 gentle fix request",
+ "story_reaction":"short 3-8 word warm reaction to his story idea",
+ "kid_words":"plain direct fix request when accept=false",
  "input_prompt":"short bar cue when accept=false",
  "deferred":[],
  "book_title":"Punchy Comic Title",
@@ -501,30 +500,35 @@ def fast_reflex_turn(
             "note": "blackboard reflex",
         }
         decision = coach.validate(out, raw, chk, session)
-        # Deterministic plain, zero-Blippi phrasing for all routine writing fixes!
+        # Combine warm story reaction ("Oh no, poor guy!") with plain, non-cringe writing mechanics ("Capitalize the first letter.")!
+        story_rx = str(out.get("story_reaction") or "").strip()
+        if re.search(r"\b(capital|period|dot|superhero|spell|fix|mistake|letter|sentence|printer)\b", story_rx, re.I):
+            story_rx = ""
+        rx_prefix = (story_rx + " ") if story_rx else ""
+        decision["story_reaction"] = story_rx
         foc = decision.get("focus")
         if not decision.get("accept"):
             if foc == "capital":
-                decision["kid_words"] = "Capitalize the first letter at the start of your sentence."
+                decision["kid_words"] = f"{rx_prefix}Capitalize the first letter at the start of your sentence."
                 decision["input_prompt"] = "Capitalize the first letter at the start and hit Enter"
             elif foc == "end_mark":
-                decision["kid_words"] = "Add a period (or ! or ?) at the end of your sentence."
+                decision["kid_words"] = f"{rx_prefix}Add a period (or ! or ?) at the end of your sentence."
                 decision["input_prompt"] = "Add a period, !, or ? at the end and hit Enter"
             elif foc == "spelling" and decision.get("focus_word"):
-                decision["kid_words"] = f"Check the spelling of '{decision['focus_word']}' (highlighted in your box) and hit Enter."
+                decision["kid_words"] = f"{rx_prefix}Check the spelling of '{decision['focus_word']}' (highlighted in your box) and hit Enter."
                 decision["input_prompt"] = f"Fix '{decision['focus_word']}' in your sentence and hit Enter"
             elif foc == "verb_ending" and decision.get("focus_word"):
                 opt0 = decision.get("focus_correct") or ""
-                decision["kid_words"] = f"Change '{decision['focus_word']}' to '{opt0}' in your box and hit Enter."
+                decision["kid_words"] = f"{rx_prefix}Change '{decision['focus_word']}' to '{opt0}' in your box and hit Enter."
                 decision["input_prompt"] = f"Change '{decision['focus_word']}' to '{opt0}' and hit Enter"
             elif foc == "complete_sentence":
-                decision["kid_words"] = "That's part of a sentence—finish what happens so it's a complete thought."
+                decision["kid_words"] = f"{rx_prefix}Finish what happens so that's a complete sentence."
                 decision["input_prompt"] = "Finish the sentence in the box and hit Enter"
             elif foc == "run_on":
-                decision["kid_words"] = "Split 'and then' into two sentences with a period and a capital letter."
+                decision["kid_words"] = f"{rx_prefix}Split 'and then' into two sentences with a period and a capital letter."
                 decision["input_prompt"] = "Split 'and then' into two sentences with a period"
         else:
-            decision["kid_words"] = ""
+            decision["kid_words"] = story_rx
 
         decision["latency_s"] = round(time.time() - t0, 2)
 

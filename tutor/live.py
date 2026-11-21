@@ -422,7 +422,7 @@ class TutorSession:
         fb = spoken_fallback or ((self.ctrl.last_coach or {}).get("kid_words") or "")
         full = (
             f"{prefix}{payload}{notes}\n"
-            f"[TURN PLAN — SPEAK CALMLY AND MATTER-OF-FACTLY IN 1-2 PLAIN SENTENCES. DO NOT ADD 'Whoa!', 'Oh no!', 'Poor guy!', 'Super stinky!', JOKES, BABY METAPHORS ('little dot', 'big like a superhero'), OR PLOT SUGGESTIONS. DELIVER ONLY THIS: {directive}]"
+            f"[TURN PLAN — Warm reactions to his story ('Oh no, poor guy!', 'Super stinky!') are great, but NEVER use babyish metaphors for writing rules ('little dot', 'big like a superhero'—just say 'capital' and 'period' directly), and NEVER suggest plot ideas. Follow strictly in 1-2 short sentences: {directive}]"
         )
         await self._send_content(full, image, spoken_fallback=fb)
 

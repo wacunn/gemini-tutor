@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.3
+- **Warm Story Reactions + Direct Grammar Terms (`tutor/blackboard.py`, `tutor/controller.py`, `tutor/prompt.py`, `tutor/coach.py`, `tutor/live.py`):**
+  - Restored playful, warm reactions to his story ("Oh no, poor guy!", "That's a super stinky situation!") while keeping writing-rule instructions strictly plain and direct ("Capitalize the first letter", "Add a period at the end"—never "big and tall like a superhero" or "little dot").
+
 ## 1.0.2
 - **Plain, Matter-of-Fact Voice — Zero "Blippi" / Preschool Metaphors (`tutor/prompt.py`, `tutor/blackboard.py`, `tutor/coach.py`, `tutor/controller.py`, `tutor/live.py`):**
   - Eliminated kids'-TV cheerleading and cringe metaphors ("put a little dot", "big and tall like a superhero", "super stinky situation!"). Routine mechanics now speak plain, direct sentences ("Add a period at the end.", "Capitalize the first letter.").

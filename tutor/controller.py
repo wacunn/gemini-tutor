@@ -620,13 +620,15 @@ class SessionController:
             }
         )
         self.ui_locked_this_turn.update({"show_choices", "ask_input"})
-        spoken = f"Drawing {label} now. Check the picture on the right when it appears to make sure it matches your story."
+        rx = ((self.last_coach or {}).get("story_reaction") or (self.last_coach or {}).get("kid_words") or "").strip()
+        lead = f"{rx} " if rx else ""
+        spoken = f"{lead}Drawing {label} now—check the picture on the right when it appears to make sure it matches your story."
         return {
             "kind": self.last_kid_kind,
             "art_check_target": target,
             "spoken_fallback": spoken,
             "ui": ui_actions,
-            "directive": f'Say ONLY this exact sentence calmly and plainly (no "Whoa!", no "Oh no!", no plot questions yet): "{spoken}"',
+            "directive": f'React briefly to their story idea and tell them you are drawing {label} now so they can check if the picture matches their story before moving on: "{spoken}"',
         }
 
     def prompt_after_art_rendered(self, target: str) -> tuple[list[dict[str, Any]], str, str]:
@@ -1436,18 +1438,20 @@ class SessionController:
 
         # HOMEWORK RULE 3: Every sentence MUST start with a Capital AND end with . ! or ? before moving on!
         if decision["accept"] and (miss_cap or miss_end):
+            rx = (decision.get("story_reaction") or "").strip()
+            rx_p = f"{rx} " if rx else ""
             if miss_cap and miss_end:
-                kw = "Capitalize the first letter at the start and add a period at the end."
+                kw = f"{rx_p}Capitalize the first letter at the start and add a period at the end."
                 ip = "Capitalize the first letter + add a period at the end, then hit Enter"
                 cpos = 0
                 srange = [0, 1]
             elif miss_cap:
-                kw = "Capitalize the first letter at the start of your sentence."
+                kw = f"{rx_p}Capitalize the first letter at the start of your sentence."
                 ip = "Capitalize the first letter at the start and hit Enter"
                 cpos = 0
                 srange = [0, 1]
             else:
-                kw = "Add a period (or ! or ?) at the end of your sentence."
+                kw = f"{rx_p}Add a period (or ! or ?) at the end of your sentence."
                 ip = "Add a period, !, or ? at the end and hit Enter"
                 cpos = len(raw)
                 srange = None
@@ -1539,7 +1543,7 @@ class SessionController:
             "kind": self.last_kid_kind,
             "ui": ui,
             "spoken_fallback": d.get("kid_words") or d.get("input_prompt") or "",
-            "directive": f'Say ONLY this exact sentence calmly and matter-of-factly (no "Whoa!", no "Oh no!", no superhero/dot metaphors): "{d["kid_words"]}"',
+            "directive": f'Deliver this in 1-2 short natural sentences (warm story reaction is great; NEVER use cutesy grammar metaphors like "little dot" or "big like a superhero"—say "capital" and "period" directly): "{d["kid_words"]}"',
             "coach": {k: d.get(k) for k in ("accept", "focus", "focus_word", "spell_rung", "scaffold", "rationale", "guardrail", "today_state", "latency_s")},
         }
 
