@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0
+- **Child-Safety Watching Agent, Conversation Topics Report & Protective “App Bug” Pause (`tutor/guardian.py`, `tutor/live.py`, `server.py`, `static/parent.html`, `static/index.html`, `static/app.js`):**
+  - Added an independent **Child-Safety & Topic Watching Agent** (`tutor/guardian.py`) tailored for an 8-year-old child that inspects both the child's inputs and the AI's responses on every turn (plus a `0ms` synchronous pre-screen before any LLM/image call).
+  - **Conversation Topics on `/parent`**: Logs scannable topic tags, a 1-sentence summary of what he wrote/talked about, and sample lines for every session—distinguishing normal 8-year-old potty/cartoon humor (`ok`) from mild emotional/social concerns (`watch` notes logged quietly for parents).
+  - **Protective “App Bug” Stop (`ERR-G42`)**: Whenever a conversation makes the Watching Agent nervous for an 8-year-old (self-harm, abuse/secrecy from parents, sexual/adult content, severe real-world danger, or AI boundary drift), the app calmly freezes on a zero-shame *"Oops — Gemini hit a little saving bug (`ERR-G42`). Grab Dad or Mom to reset it on the Parent page"* screen (persisting across refreshes) and surfaces the exact quote & reason at the top of `/parent` with a 1-click **Clear Bug Screen & Resume Tutor** button.
+  - Added explicit **8-Year-Old Child Awareness** anchors across every agent prompt (`prompt.py`, `blackboard.py`, `controller.py`, `media.py`, `doodle_fallback.py`, `builder.py`).
+
 ## 1.1.1
 - **Fix Every Real Error Gently Unless Frustrated (`tutor/controller.py`, `tutor/coach.py`, `tutor/thinking.py`, `tutor/blackboard.py`):**
   - Re-verifies the full sentence after every spelling/word pick instead of accepting early after one fix—so `"Dylan get stinke cat."` → `"stinky"` now immediately catches `"get"` (`gets` / `got` with a *"Why it works"* card and tappable choices) and missing articles (`"a stinky cat"`) until the sentence is clean Grade 3 English.

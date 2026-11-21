@@ -25,6 +25,18 @@
     </defs>
   </svg>
 
+  <!-- Protective App-Bug Pause Screen (shown calmly if Child-Safety Watcher pauses session) -->
+  <section id="bugScreen" class="bug-screen" hidden>
+    <div class="bug-card">
+      <div class="bug-badge" id="bugCode">Error ERR-G42</div>
+      <h2>Oops — Gemini hit a little saving bug</h2>
+      <p class="muted" style="font-size:1.04rem;line-height:1.55;margin:8px 0 18px">
+        Don't worry—your story and pictures are safely saved! Grab Dad or Mom to click <b>Reset</b> on the Parent page so we can start this back up.
+      </p>
+      <a class="pill-btn" href="/parent" style="text-decoration:none;display:inline-block">Parent Page →</a>
+    </div>
+  </section>
+
   <!-- Parent setup (first run only) -->
   <section id="setup" hidden>
     <form id="setupForm" class="setup-card">

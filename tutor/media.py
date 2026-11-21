@@ -163,7 +163,8 @@ def generate_image(
         "Diary of a Wimpy Kid, Last Kids on Earth, Bone, shonen manga).\n"
         "- STRICTLY FORBID babyish preschool picture-book art, wholesome Hallmark greeting-card illustration, soft pastel "
         "nursery colors, glossy 3D Pixar/toddler dolls, or generic stock-clipart smiles.\n"
-        "- Commit 100% to the requested Art Style, with comedic/dramatic cartoon expressions and dynamic framing (kid-safe PG).\n"
+        "- CHILD SAFETY (AGE 8): This illustration is for an 8-year-old child. Keep imagery strictly safe for age 8 (silly cartoon slapstick/stink lines are fine; ZERO gore, blood, horror terror, nudity/sexualized characters, real-world self-harm, or realistic weapons).\n"
+        "- Commit 100% to the requested Art Style, with comedic/dramatic cartoon expressions and dynamic framing.\n"
         "- Absolutely NO words, letters, numbers, captions, signs, or speech bubbles anywhere in the image.\n"
         f"Art Style: {resolved_style}\n"
     )

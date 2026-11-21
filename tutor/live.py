@@ -20,7 +20,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from google import genai
 from google.genai import types
 
-from . import blackboard, builder, controller, curriculum_tracker, media, observers, projects, thinking
+from . import blackboard, builder, controller, curriculum_tracker, guardian, media, observers, projects, thinking
 from .config import DATA, LIVE_FALLBACK_MODELS, LIVE_MODEL, api_key, genai_client
 from .prompt import TOOL_SPECS, build_system_prompt, opening_message
 from .record import (
@@ -441,16 +441,57 @@ class TutorSession:
         image = next((img for _, img in reversed(items) if img), None)
         await self._send_content(text, image)
 
+    async def trigger_protective_bug(self, alert: dict[str, Any]) -> None:
+        """Calmly freezes the child's session behind a believable 'App Bug' screen so a parent checks `/parent`."""
+        self.log.add("protective_bug_stop", category=alert.get("category"), reason=alert.get("reason"))
+        await self.ui({"type": "tutor_mic", "action": "off"})
+        await self.ui({"type": "protective_bug", "code": alert.get("code") or "ERR-G42"})
+        self.closed = True
+        for t in list(self.bg):
+            if t is not asyncio.current_task():
+                t.cancel()
+        if self.live:
+            try:
+                await self.live.close()
+            except Exception:
+                pass
+
+    async def _watch_turn_bg(self, kid_text: str, tutor_text: str = "") -> None:
+        try:
+            ctx = self.recent_exchange(6)
+            res = await asyncio.to_thread(
+                guardian.watch_exchange,
+                self.id,
+                self.rec,
+                kid_text,
+                tutor_text,
+                ctx,
+                self.test_mode,
+            )
+            if not self.test_mode:
+                LIVE.setdefault(self.id, {})["guardian"] = res
+            if res.get("level") == "nervous_stop":
+                await self.trigger_protective_bug(res)
+        except Exception as e:
+            self.log.add("error", where="guardian_watch", error=str(e))
+
     def _flush_kid(self) -> None:
         spoken = _clean_transcript(self.kid_raw_buf).strip()
         if spoken:
             self.log.add("kid_said", text=spoken)
+            inst = guardian.instant_screen(self.id, spoken, sandbox=self.test_mode)
+            if inst:
+                self.spawn(self.trigger_protective_bug(inst))
+                self.kid_raw_buf = ""
+                self.kid_buf = ""
+                return
             self.kid_events += 1
             self.kid_turn_id += 1
             self.spoke_since_kid = False
             plan = self.ctrl.classify_and_advance(spoken, "spoken", chk=None, opening_ideas=self.opening_ideas)
             self.log.add("ctrl_plan", how="spoken", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
             self.spawn(self.apply_controller_ui(plan["ui"]))
+            self.spawn(self._watch_turn_bg(spoken, plan.get("spoken_fallback", "")))
         self.kid_raw_buf = ""
         self.kid_buf = ""
 
@@ -460,6 +501,8 @@ class TutorSession:
         self.tutor_buf = ""
         if cleaned:
             self.log.add("tutor_said", text=cleaned)
+            # Watch the AI's own spoken output as well!
+            self.spawn(self._watch_turn_bg(self.ctrl.last_kid_text, cleaned))
             return True
         return False
 
@@ -514,6 +557,10 @@ class TutorSession:
     # ---------- main loop ----------
 
     async def run(self) -> None:
+        existing_lock = guardian.get_bug_lock(sandbox=self.test_mode)
+        if existing_lock:
+            await self.trigger_protective_bug(existing_lock)
+            return
         key = api_key()
         if not key:
             await self.ui({"type": "error", "message": "No Gemini API key yet. Add it on the parent page."})
@@ -638,6 +685,11 @@ class TutorSession:
             text = (m.get("text") or "").strip()
             if not text:
                 return
+            inst = guardian.instant_screen(self.id, text, sandbox=self.test_mode)
+            if inst:
+                self.log.add("kid_typed", text=text)
+                await self.trigger_protective_bug(inst)
+                return
             secs = round((m.get("ms") or 0) / 1000, 1)
             bs = m.get("backspaces", 0)
             target = self.input_target
@@ -674,6 +726,7 @@ class TutorSession:
                 final_txt = plan.get("full_paragraph") or plan.get("repaired_text") or text
                 await self.apply_target(target, final_txt, "typed")
                 render_note = await self.auto_render_sentence(final_txt)
+            self.spawn(self._watch_turn_bg(text, plan.get("spoken_fallback", "")))
             await self.from_kid(
                 f'[{self.name} typed ({secs}s, {bs} backspaces): "{text}"]{check_note}',
                 plan["directive"] + render_note,
@@ -695,6 +748,10 @@ class TutorSession:
             text = (res.get("text") or "").strip()
             letter_issue = res.get("letter_issue") if isinstance(res.get("letter_issue"), dict) else None
             self.log.add("kid_wrote", text=text, legible=res.get("legible"), letter_issue=letter_issue, image=mid, target=target)
+            inst_pen = guardian.instant_screen(self.id, text, sandbox=self.test_mode)
+            if inst_pen:
+                await self.trigger_protective_bug(inst_pen)
+                return
             await self.ui({"type": "kid_pen", "text": text, "image": f"/media/{mid}.jpg"})
             chk, check_note = await self.check(text, "handwritten") if (text and not letter_issue) else ({}, "")
             self.ctrl.turn_signals = {"how": "handwritten"}
@@ -718,6 +775,8 @@ class TutorSession:
                 final_txt = plan.get("full_paragraph") or plan.get("repaired_text") or text
                 await self.apply_target(target, final_txt, "handwritten")
                 render_note = await self.auto_render_sentence(final_txt)
+            if text:
+                self.spawn(self._watch_turn_bg(text, plan.get("spoken_fallback", "")))
             await self.from_kid(
                 f'[{self.name} handwrote: "{text}" (legible: {res.get("legible")}).]{check_note}',
                 plan["directive"] + render_note,
@@ -902,6 +961,11 @@ class TutorSession:
                 await self.ui({"type": "status", "message": "Didn't hear anything clearly—you can type it in the box below (or tap 'Say the word out loud' to try again)."})
                 return
             shown = intended if (purpose == "word" and intended and not transcript) else (transcript or intended)
+            inst_vc = guardian.instant_screen(self.id, f"{transcript} {intended}".strip(), sandbox=self.test_mode)
+            if inst_vc:
+                self.log.add("kid_said", text=shown, purpose=purpose)
+                await self.trigger_protective_bug(inst_vc)
+                return
             self.kid_events += 1
             self.turn += 1
             self.log.add("kid_said", text=shown, intended_word=intended, purpose=purpose)
@@ -912,6 +976,7 @@ class TutorSession:
             render_note = ""
             if plan.get("redraw_art"):
                 render_note = await self._run_redraw_art(plan["redraw_art"])
+            self.spawn(self._watch_turn_bg(shown, plan.get("spoken_fallback", "")))
             await self.from_kid(
                 f'[{self.name} spoke into the green mic ({purpose}): "{shown}"' + (f' -> intended word "{intended}"' if intended else "") + "]",
                 plan["directive"] + render_note,

@@ -209,7 +209,8 @@ class WorkingMemoryBlackboard:
             return self.next_beat_cache.pop(key, None)
 
 
-REFLEX_SYSTEM = """You are the fast front-line comic collaborator & writing reflex for {name} (Grade {grade}, ADHD).
+REFLEX_SYSTEM = """You are the fast front-line comic collaborator & writing reflex for {name}, an 8-year-old child (Grade {grade}, ADHD).
+ALWAYS REMEMBER YOU ARE TALKING TO AN 8-YEAR-OLD CHILD: keep every word 100% safe and age-appropriate for age 8 (harmless 8yo potty/cartoon humor is fine; NEVER engage with adult/sexual, self-harm, real-world harm, or secrecy-from-parents themes).
 You read the Shared Working-Memory Blackboard policy set by the background coach, check what {name} just wrote, and respond in ONE shot so there is zero lag.
 
 1. WRITING CHECK (`check` — EXHAUSTIVE, NEVER STOP AFTER ONE ISSUE):

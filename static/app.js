@@ -31,6 +31,10 @@ const state = {
 async function boot() {
   const st = await (await fetch(`/api/state?sandbox=${IS_SANDBOX ? 1 : 0}`)).json();
   state.name = st.name || "";
+  if (st.bug_locked) {
+    showProtectiveBug(st.bug_code || "ERR-G42");
+    return;
+  }
   if (!st.name || !st.has_key) {
     $("setup").hidden = false;
     $("keyRow").hidden = !!st.has_key;
@@ -1372,6 +1376,9 @@ function handle(m) {
     case "status":
       toast(m.message);
       break;
+    case "protective_bug":
+      showProtectiveBug(m.code || "ERR-G42");
+      break;
     case "error":
       toast(m.message);
       break;
@@ -1413,6 +1420,19 @@ function toast(text) {
   el.innerHTML = `<svg class="spark"><use href="#spark"/></svg><div class="text" style="color:var(--muted)">${esc(text)}</div>`;
   stream.appendChild(el);
   scrollDown();
+}
+
+function showProtectiveBug(code) {
+  state.ended = true;
+  stopCenterMic(false);
+  if (state.micOn) micStop();
+  stopPlayback();
+  try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (_) {}
+  try { state.ws && state.ws.close(); } catch (_) {}
+  $("app").hidden = true;
+  $("setup").hidden = true;
+  if ($("bugCode")) $("bugCode").textContent = `Error ${code || "ERR-G42"}`;
+  $("bugScreen").hidden = false;
 }
 
 function endSession() {

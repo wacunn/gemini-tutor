@@ -66,6 +66,7 @@ class SetupIn(BaseModel):
 
 @app.get("/api/state")
 def state(sandbox: int = 0):
+    from tutor import guardian
     from tutor.projects import list_projects
 
     is_sb = bool(sandbox)
@@ -86,9 +87,12 @@ def state(sandbox: int = 0):
         {"id": a["id"], "title": a.get("title", "Mini-Game"), "summary": a.get("summary", "")}
         for a in list_activities(sandbox=is_sb)[:12]
     ]
+    blk = guardian.get_bug_lock(sandbox=is_sb)
     return {
         "has_key": bool(api_key()),
         "sandbox": is_sb,
+        "bug_locked": bool(blk),
+        "bug_code": (blk or {}).get("code", "ERR-G42") if blk else None,
         "name": rec.get("name"),
         "grade": rec.get("grade"),
         "parent_title": rec.get("parent_title"),
@@ -200,6 +204,7 @@ def settings(body: SettingsIn):
 
 @app.get("/api/parent")
 def parent_data():
+    from tutor import guardian
     from tutor.blackboard import QUOTA
     from tutor.curriculum_tracker import ensure_report_card, format_report_for_ui
     from tutor.projects import list_projects
@@ -212,6 +217,7 @@ def parent_data():
         sessions.append({**s, "review": read_review(s["id"])})
     return {
         "learner": rec,
+        "guardian": guardian.parent_report(),
         "quota": QUOTA.status_dict(),
         "report_card": format_report_for_ui(rc),
         "spelling_deck": deck_summary(rec),
@@ -329,6 +335,14 @@ async def update_apply():
         raise HTTPException(500, f"Update failed: {e}")
     updater.restart_soon()
     return res
+
+
+@app.post("/api/guardian/clear")
+def guardian_clear():
+    from tutor import guardian
+
+    guardian.clear_bug_lock(sandbox=None)
+    return {"ok": True}
 
 
 @app.post("/api/quit")

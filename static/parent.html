@@ -249,7 +249,13 @@
         <a href="/"><button type="button" class="ghost">← Back to Studio</button></a>
       </div>
     </div>
+    <div id="guardianBanner" class="card" hidden style="margin-top:14px;border:2px solid #f28b82;background:#2a1919"></div>
     <div id="quotaNotice" class="card" hidden style="margin-top:14px;border:1px solid #fdd663;color:#fdd663"></div>
+
+    <h2>Conversation Topics &amp; Child-Safety Watcher (Age 8)</h2>
+    <div class="grid" id="guardianTopics">
+      <div class="card muted">Watching agent active — topics appear as soon as he starts writing or talking.</div>
+    </div>
 
     <h2><span class="live-dot" id="liveDot"></span>Live session</h2>
     <div class="grid" id="live">
@@ -374,6 +380,81 @@
           qn.hidden = !msg;
           qn.textContent = msg;
         }
+
+        const G = d.guardian || {};
+        const activeLock = G.active_bug_lock || G.sandbox_bug_lock;
+        const gb = $("guardianBanner");
+        if (gb) {
+          if (activeLock) {
+            gb.hidden = false;
+            gb.innerHTML = `
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">
+                <div>
+                  <div style="color:#f28b82;font-weight:600;font-size:1.05rem">⛔ Protective “App Bug” Triggered (${esc(activeLock.code || "ERR-G42")}${activeLock.sandbox ? " · Parent Sandbox" : ""})</div>
+                  <div style="margin-top:6px">${esc(activeLock.reason || "The Child-Safety Watching Agent paused the session so you can check in.")}</div>
+                  ${activeLock.kid_quote ? `<div class="muted" style="margin-top:6px">Child input: “${esc(activeLock.kid_quote)}”</div>` : ""}
+                  ${activeLock.tutor_quote ? `<div class="muted" style="margin-top:4px">Tutor output: “${esc(activeLock.tutor_quote)}”</div>` : ""}
+                  <div class="muted" style="margin-top:4px;font-size:.82rem">${esc((activeLock.time || "").replace("T", " ").slice(0, 19))} · Category: ${esc(activeLock.category || "safety")}</div>
+                </div>
+                <button type="button" id="clearBugBtn" style="background:#81c995;color:#131314;font-weight:600">Clear Bug Screen &amp; Resume Tutor</button>
+              </div>`;
+            const cbtn = $("clearBugBtn");
+            if (cbtn) {
+              cbtn.onclick = async () => {
+                await fetch("/api/guardian/clear", { method: "POST" });
+                loadAll();
+              };
+            }
+          } else {
+            gb.hidden = true;
+            gb.innerHTML = "";
+          }
+        }
+
+        const gSessions = G.sessions || [];
+        const gAlerts = G.alerts || [];
+        const statusBadge = activeLock
+          ? '<span class="bad">Paused for parent check-in</span>'
+          : gAlerts.some(a => a.level === "watch")
+          ? '<span class="warn">All clear · Watch notes logged</span>'
+          : '<span class="ok">All clear (Age-8 safety active)</span>';
+        const watchNotesHtml = gAlerts.length
+          ? gAlerts.slice(0, 6).map(a => `<div style="margin:6px 0;padding-top:6px;border-top:1px solid #2c2f33">
+              <span class="pill" style="color:${a.level === "nervous_stop" ? "#f28b82" : "#fdd663"}">${a.level === "nervous_stop" ? "Paused" : "Watch"} · ${esc(a.category || "")}</span>
+              <span class="muted" style="font-size:.8rem">${esc((a.time || "").slice(5, 16).replace("T", " "))}</span>
+              <div style="margin-top:3px">${esc(a.reason || a.note || "")}</div>
+              ${(a.kid_quote || a.quote) ? `<div class="muted" style="font-size:.84rem">“${esc(a.kid_quote || a.quote)}”</div>` : ""}
+            </div>`).join("")
+          : '<div class="muted">No concerning topics or safety flags detected.</div>';
+
+        const topicCardsHtml = gSessions.slice(0, 6).map(st => {
+          const stBadge = st.status === "nervous_stop"
+            ? '<span class="pill" style="color:#f28b82">Paused for parent</span>'
+            : st.status === "watch"
+            ? '<span class="pill" style="color:#fdd663">Worth a look</span>'
+            : '<span class="pill" style="color:#81c995">Normal 8yo play</span>';
+          const pills = (st.topics || []).map(tp => `<span class="pill">${esc(tp)}</span>`).join(" ");
+          const samples = (st.samples || []).slice(-3).map(s => `<div class="muted" style="font-size:.83rem">• “${esc(s)}”</div>`).join("");
+          return `<div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <h3>${esc((st.updated || "").slice(0, 16).replace("T", " "))}${st.sandbox ? " (Sandbox)" : ""}</h3>
+              ${stBadge}
+            </div>
+            <div style="margin:4px 0 8px">${esc(st.summary || "Session started.")}</div>
+            ${pills ? `<div style="margin-bottom:8px">${pills}</div>` : ""}
+            ${samples}
+          </div>`;
+        }).join("");
+
+        $("guardianTopics").innerHTML = `
+          <div class="card">
+            <h3>Child-Safety Watching Agent</h3>
+            <div class="big" style="font-size:1.25rem">${statusBadge}</div>
+            <div class="muted" style="margin-top:6px">Turns inspected: <b>${G.turns_checked ?? 0}</b> · Profile: 8-year-old child (shows calm “App Bug” screen if nervous)</div>
+            <h3 style="margin-top:14px">Flagged / Watch Notes</h3>
+            ${watchNotesHtml}
+          </div>
+          ${topicCardsHtml || '<div class="card muted"><h3>Session Topics</h3>Topics of conversation will appear here automatically as he writes or speaks.</div>'}`;
         $("model").innerHTML = `
     <div class="card"><h3>Summary</h3>${esc(M.summary || "Not enough sessions yet.")}<div class="muted" style="margin-top:8px">${esc(M.notes_for_parent || "")}</div></div>
     <div class="card"><h3>What engages him</h3>${list(M.what_engages)}<h3 style="margin-top:12px">What shuts him down</h3>${list(M.what_shuts_down)}</div>

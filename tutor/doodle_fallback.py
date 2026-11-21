@@ -22,7 +22,7 @@ from .config import LITE_MODEL, genai_client
 
 DOODLE_W, DOODLE_H = 800, 600
 
-DOODLE_SYSTEM = """You draw funny *Diary of a Wimpy Kid*-style black-pen cartoons on an 800x600 school notebook page.
+DOODLE_SYSTEM = """You draw funny *Diary of a Wimpy Kid*-style black-pen cartoons on an 800x600 school notebook page for an 8-year-old child (strictly age-8-safe cartoon slapstick only).
 Given the child's comic sentence, return STRICT JSON listing 2 to 6 scene elements using ONLY these element kinds:
 - {"kind":"kid","x":220,"y":360,"scale":1.0,"face":"panicked|shocked|grinning|grumpy|sick","arms":"up|nose_pinch|running|pointing"}
 - {"kind":"cat","x":540,"y":360,"scale":1.0,"mood":"smug|grumpy|crazy"}
