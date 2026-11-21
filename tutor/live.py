@@ -100,6 +100,8 @@ class TutorSession:
         # canvas state
         self.page: list[dict[str, str]] = []
         self.comic: dict[str, Any] | None = None
+        self.drawn_items: dict[str, dict[str, Any]] = {}
+        self.lettering_tries: dict[str, int] = {}
         self.current_card: dict[str, str] | None = None
         self.activity: dict[str, Any] | None = None
         self.build_task: asyncio.Task | None = None
@@ -302,10 +304,12 @@ class TutorSession:
         if self.comic:
             idx = next((i for i, p in enumerate(self.comic["panels"]) if not p.get("image") and p.get("status") != "drawing"), None)
             if idx is None:
-                self.comic["panels"].append({"caption": "", "scene": "", "image": None, "status": "empty"})
+                self.comic["panels"].append({"caption": "", "dialogue": [], "scene": "", "image": None, "status": "empty"})
                 idx = len(self.comic["panels"]) - 1
             p = self.comic["panels"][idx]
-            p["caption"] = sentence
+            c_txt, c_bubs = projects.extract_dialogue(sentence)
+            p["caption"] = c_txt
+            p["dialogue"] = c_bubs
             p["scene"] = sentence
             p["status"] = "drawing"
             await self.push_comic()
@@ -314,7 +318,9 @@ class TutorSession:
             return f" (Panel {idx + 1} is already rendering on screen automatically—do NOT call comic_panel or draw again for this sentence.)"
 
         iid = new_id("draw")
-        item = {"id": iid, "kind": "image", "caption": sentence, "status": "drawing"}
+        d_cap, d_bubs = projects.extract_dialogue(sentence)
+        item = {"id": iid, "kind": "image", "caption": d_cap, "dialogue": d_bubs, "scene": sentence, "status": "drawing"}
+        self.drawn_items[iid] = item
         await self.ui({"type": "item", "item": item})
         self.spawn(self._draw(item, sentence, media.DEFAULT_STYLE_KEY))
         self.log.add("auto_draw", id=iid, sentence=sentence)
@@ -875,6 +881,77 @@ class TutorSession:
                 spoken_fallback=plan.get("spoken_fallback", ""),
             )
 
+        elif kind == "request_dialogue_mic":
+            target_m = str(m.get("target") or "").strip()
+            if not target_m:
+                return
+            self.ctrl.active_mic_request = {"purpose": f"dialogue:{target_m}", "sentence": ""}
+            await self.ui(
+                {
+                    "type": "tutor_mic",
+                    "action": "on",
+                    "purpose": f"dialogue:{target_m}",
+                    "target_word": "",
+                    "sentence": "",
+                    "prompt": "Say out loud what the speech bubble should say!",
+                }
+            )
+
+        elif kind == "comic_lettering":
+            target_l = str(m.get("target") or "").strip()
+            action_l = str(m.get("action") or "").strip()
+            if not target_l or action_l not in ("add_bubble", "edit_bubble", "delete_bubble", "move_bubble", "set_caption"):
+                return
+            raw_check_txt = " ".join(str(m.get(k) or "") for k in ("speaker", "text", "caption")).strip()
+            if raw_check_txt:
+                inst_l = guardian.instant_screen(self.id, raw_check_txt, sandbox=self.test_mode)
+                if inst_l:
+                    self.log.add("kid_typed", text=raw_check_txt, target=target_l)
+                    await self.trigger_protective_bug(inst_l)
+                    return
+
+            if action_l in ("add_bubble", "edit_bubble", "set_caption") and not m.get("force"):
+                mode_l = "caption" if action_l == "set_caption" else "bubble"
+                field_txt = str(m.get("caption") if mode_l == "caption" else m.get("text") or "").strip()
+                bkind_l = str(m.get("kind") or "speech").strip().lower()
+                tries_key = f"{target_l}:{mode_l}"
+                tries_n = self.lettering_tries.get(tries_key, 0)
+                if mode_l == "bubble" or field_txt:
+                    vchk = await asyncio.to_thread(self.ctrl.validate_comic_lettering, field_txt, mode_l, bkind_l, tries_n)
+                    if not vchk.get("ok"):
+                        self.lettering_tries[tries_key] = tries_n + 1
+                        await self.ui({"type": "comic_lettering_fix", "target": target_l, "mode": mode_l, "fix": vchk})
+                        return
+                self.lettering_tries[tries_key] = 0
+
+            updated_ok = False
+            if (target_l.startswith("spine:") or target_l.startswith("panel:")) and self.ctrl.project:
+                updated_ok = projects.apply_comic_lettering(self.ctrl.project, target_l, action_l, m, sandbox=self.test_mode)
+                if updated_ok:
+                    await self.ui({"type": "item", "item": projects.project_ui_payload(self.ctrl.project)})
+            elif target_l.startswith("strip:") and self.comic:
+                try:
+                    s_idx = int(target_l.split(":", 1)[1])
+                except ValueError:
+                    s_idx = -1
+                if 0 <= s_idx < len(self.comic.get("panels") or []):
+                    updated_ok = projects.mutate_lettering_holder(self.comic["panels"][s_idx], action_l, m)
+                    if updated_ok:
+                        await self.push_comic()
+            elif target_l.startswith("draw:"):
+                d_id = target_l.split(":", 1)[1]
+                d_item = self.drawn_items.get(d_id)
+                if d_item:
+                    updated_ok = projects.mutate_lettering_holder(d_item, action_l, m)
+                    if updated_ok:
+                        await self.ui({"type": "item", "item": d_item})
+
+            if updated_ok and action_l != "move_bubble":
+                self.log.add("comic_lettering", target=target_l, action=action_l)
+                if raw_check_txt and action_l in ("add_bubble", "edit_bubble", "set_caption"):
+                    self.spawn(self._watch_turn_bg(raw_check_txt, ""))
+                await self.ui({"type": "comic_lettering_saved", "target": target_l, "action": action_l})
+
         elif kind == "tap":
             val = str(m.get("value") or "").strip()
             if not val:
@@ -1240,8 +1317,10 @@ class TutorSession:
 
         if name == "draw":
             iid = new_id("draw")
-            cap = a.get("caption") or (self.ctrl.active_story[-1] if self.ctrl.active_story else "")
-            item = {"id": iid, "kind": "image", "caption": cap, "status": "drawing"}
+            raw_cap = a.get("caption") or (self.ctrl.active_story[-1] if self.ctrl.active_story else "")
+            d_cap, d_bubs = projects.extract_dialogue(raw_cap)
+            item = {"id": iid, "kind": "image", "caption": d_cap, "dialogue": d_bubs, "scene": a.get("scene", ""), "status": "drawing"}
+            self.drawn_items[iid] = item
             await self.ui({"type": "item", "item": item})
             self.spawn(self._draw(item, a.get("scene", ""), a.get("style", "")))
             return {"status": "Rendering scene on screen (~10s). Continue directly to the next sentence prompt without waiting."}
@@ -1256,7 +1335,7 @@ class TutorSession:
                 "title": a.get("title", "Untitled Comic"),
                 "style": a.get("style") or media.DEFAULT_STYLE_KEY,
                 "characters": a.get("characters", ""),
-                "panels": [{"caption": "", "scene": "", "image": None, "status": "empty"} for _ in range(n)],
+                "panels": [{"caption": "", "dialogue": [], "scene": "", "image": None, "status": "empty"} for _ in range(n)],
             }
             self.tried.append(f"comic: {a.get('title', '')}")
             await self.ui({"type": "goal", "text": self.ctrl.goal_badge()})
@@ -1271,7 +1350,7 @@ class TutorSession:
                     "title": "Story Strip",
                     "style": media.DEFAULT_STYLE_KEY,
                     "characters": "",
-                    "panels": [{"caption": "", "scene": "", "image": None, "status": "empty"} for _ in range(max(3, self.ctrl.goal_target))],
+                    "panels": [{"caption": "", "dialogue": [], "scene": "", "image": None, "status": "empty"} for _ in range(max(3, self.ctrl.goal_target))],
                 }
                 self.ctrl.goal_label = "Panels"
             try:
@@ -1283,7 +1362,9 @@ class TutorSession:
             p = self.comic["panels"][idx]
             cap = a.get("caption") or (self.ctrl.active_story[-1] if self.ctrl.active_story else "")
             if cap:
-                p["caption"] = cap
+                c_txt, c_bubs = projects.extract_dialogue(cap)
+                p["caption"] = c_txt
+                p["dialogue"] = c_bubs
             if a.get("scene"):
                 p["scene"] = a["scene"]
                 p["status"] = "drawing"

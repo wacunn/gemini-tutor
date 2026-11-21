@@ -640,7 +640,7 @@ class SessionController:
         }
 
     def prompt_after_art_rendered(self, target: str) -> tuple[list[dict[str, Any]], str, str]:
-        """Called as soon as a Spine or Panel image finishes drawing so the child checks the picture BEFORE moving on!"""
+        """Called as soon as a Spine or Panel image finishes drawing so the child checks the picture (or adds dialogue/captions!) BEFORE moving on!"""
         self.pending_art_target = target
         self.phase = "AWAITING_ART_CHECK"
         ui: list[dict[str, Any]] = [
@@ -649,9 +649,10 @@ class SessionController:
                 "item": {
                     "id": "art_check_choices",
                     "kind": "choices",
-                    "prompt": "Does this picture & step match your story?",
+                    "prompt": "Does this comic panel match your story? (You can also add speech bubbles or edit the caption!)",
                     "options": [
                         "✓ Looks right — next part!",
+                        "💬 Add speech bubble / caption",
                         "↻ Not quite — fix picture",
                         "↶ Undo / change this sentence",
                     ],
@@ -660,11 +661,134 @@ class SessionController:
             {
                 "type": "input",
                 "mode": "type",
-                "prompt": "Tap 'Looks right', 'Fix picture', or 'Undo / change this sentence':",
+                "prompt": "Tap 'Looks right', '💬 Add speech bubble / caption', 'Fix picture', or 'Undo':",
             },
         ]
-        spoken = "Check your picture—does it match your story, or should we fix or undo it?"
+        spoken = "Check your panel—add a speech bubble or caption if you want, or tap Looks right when you're ready for the next part."
         return ui, f'Say plainly in 1 short sentence: "{spoken}"', spoken
+
+    @staticmethod
+    def _parse_comic_lettering_intent(raw: str) -> dict[str, str] | None:
+        """Detects when the child wants to add/edit speech bubbles, dialogue, or captions ('it isn't a comic', 'add dialogue', 'make Dylan say \"...\"')."""
+        t = (raw or "").strip()
+        if not t:
+            return None
+        low = t.lower()
+        if "add speech bubble / caption" in low or low in {"add dialogue", "add speech bubble", "add a speech bubble", "add caption", "add a caption", "edit caption"}:
+            tab = "caption" if "caption" in low and "bubble" not in low else "bubble"
+            return {"kind": "open", "tab": tab}
+
+        # Direct chat command with an explicit quote: e.g. 'make Dylan say "Get off me!"' or 'add speech bubble: "Whoa!"'
+        m_say = re.search(
+            r"\b(?:make|have|let)\s+([A-Za-z][A-Za-z0-9 _-]{0,18}?)\s+(?:say|yell|shout|scream|think)\s*[:,-]?\s*[\"“']?([^\"”']+?)[\"”']?\s*$",
+            t,
+            re.I,
+        )
+        if m_say and len(m_say.group(2).strip()) >= 2:
+            spk = m_say.group(1).strip()
+            if spk.lower() in {"him", "her", "them", "it"}:
+                spk = ""
+            else:
+                spk = spk[:1].upper() + spk[1:]
+            bkind = "thought" if "think" in low else ("shout" if any(v in low for v in ("yell", "shout", "scream")) else "speech")
+            return {"kind": "add_bubble", "speaker": spk, "text": m_say.group(2).strip(), "bubble_kind": bkind}
+
+        m_bub = re.search(r"\b(?:add\s+(?:a\s+)?(?:speech\s+)?bubble|dialogue)\s*(?:saying|that\s+says|:)\s*[\"“']?([^\"”']+?)[\"”']?\s*$", t, re.I)
+        if m_bub and len(m_bub.group(1).strip()) >= 2:
+            return {"kind": "add_bubble", "speaker": "", "text": m_bub.group(1).strip(), "bubble_kind": "speech"}
+
+        m_cap = re.search(r"\b(?:add|set|change|make)\s+(?:the\s+)?caption\s*(?:to|:)\s*[\"“']?([^\"”']+?)[\"”']?\s*$", t, re.I)
+        if m_cap and len(m_cap.group(1).strip()) >= 2:
+            return {"kind": "set_caption", "text": m_cap.group(1).strip()}
+
+        if re.search(
+            r"\b(isn'?t\s+a\s+comic|not\s+a\s+comic|just\s+images?|just\s+pictures?|add\s+(?:some\s+)?dialogue|"
+            r"add\s+(?:a\s+)?speech\s+bubbles?|put\s+speech\s+bubbles?|want\s+speech\s+bubbles?|needs?\s+speech\s+bubbles?|"
+            r"add\s+captions?|put\s+captions?|where\s+are\s+the\s+speech\s+bubbles|put\s+words\s+on)\b",
+            low,
+        ):
+            tab = "caption" if ("caption" in low and "dialogue" not in low and "bubble" not in low) else "bubble"
+            return {"kind": "open", "tab": tab}
+        return None
+
+    def validate_comic_lettering(
+        self,
+        text: str,
+        mode: str = "bubble",
+        bubble_kind: str = "speech",
+        tries: int = 0,
+    ) -> dict[str, Any]:
+        """Checks capitals, end marks, and spelling on comic speech bubbles & captions WITHOUT rejecting short comic exclamations as fragments!"""
+        t = (text or "").strip()
+        if mode == "caption" and not t:
+            return {"ok": True, "text": ""}
+        if not t:
+            return {"ok": False, "issue": "empty", "message": "Type or speak a word or line first."}
+        if tries >= 2:
+            return {"ok": True, "text": t}
+
+        chk = blackboard.local_check_writing(t)
+        words = _words(t)
+        if blackboard.QUOTA.allow_background() and len(words) >= 1:
+            try:
+                chk_llm = thinking.check_writing(t)
+                if isinstance(chk_llm, dict) and chk_llm.get("misspellings") is not None:
+                    # Merge local typo table too
+                    known = {m["wrote"].lower() for m in (chk_llm.get("misspellings") or [])}
+                    for m_loc in chk.get("misspellings") or []:
+                        if m_loc["wrote"].lower() not in known:
+                            chk_llm.setdefault("misspellings", []).append(m_loc)
+                    chk = chk_llm
+            except Exception as e:
+                blackboard.QUOTA.note_error("lettering_check", e)
+
+        ms = chk.get("misspellings") or []
+        if ms:
+            m0 = ms[0]
+            wrote, meant = m0["wrote"], m0["meant"]
+            choices = self._make_spell_choices(wrote, meant)
+            if len(meant) >= 3:
+                ws = thinking.analyze_word_study(wrote, meant)
+                why = f"{ws.get('parts', meant)} — {ws.get('note', '')}".strip(" —")
+            else:
+                why = f"Use '{meant}' here."
+            return {
+                "ok": False,
+                "issue": "spelling",
+                "wrote": wrote,
+                "meant": meant,
+                "options": choices,
+                "why": why,
+                "message": f"Quick spelling check on “{wrote}” — pick the right spelling below ({why}):",
+            }
+
+        first_alpha = next((ch for ch in t if ch.isalpha()), "")
+        if first_alpha and not first_alpha.isupper():
+            fixed_cap = re.sub(r"[A-Za-z]", lambda m: m.group(0).upper(), t, count=1)
+            return {
+                "ok": False,
+                "issue": "capital",
+                "wrote": words[0] if words else t[:1],
+                "options": [fixed_cap],
+                "why": "Start speech bubbles and captions with a capital letter.",
+                "message": "Capitalize the first letter (or tap below to fix it):",
+            }
+
+        if not re.search(r'[.!?…]["”\')\]]*$', t):
+            bang_opt = t.rstrip(" ,;:-") + "!"
+            dot_opt = t.rstrip(" ,;:-") + "."
+            q_opt = t.rstrip(" ,;:-") + "?"
+            opts = [bang_opt, q_opt] if bubble_kind == "shout" else [bang_opt, dot_opt, q_opt]
+            return {
+                "ok": False,
+                "issue": "end_mark",
+                "wrote": "",
+                "options": opts[:3],
+                "why": "End comic dialogue and captions with !, ., or ?.",
+                "message": "Add !, ., or ? at the end (or tap one below):",
+            }
+
+        return {"ok": True, "text": t}
 
     def start_fix_art_prompt(self, target: str) -> dict[str, Any]:
         """Enters friendly-blame clarification mode and turns ON the Center Green Mic so he can just say what the picture should show!"""
@@ -1231,6 +1355,23 @@ class SessionController:
                     "ui": ui_sp,
                     "directive": f'Confirm the word they just said warmly and explain its spelling parts in 1-2 short sentences: "{sp_line}"',
                 }
+
+        if eff_purpose.startswith("dialogue:") and transcript:
+            target_d = eff_purpose.split(":", 1)[1]
+            clean_t = transcript.strip()
+            if clean_t:
+                clean_t = clean_t[:1].upper() + clean_t[1:]
+            spoken = f'Captured "{clean_t}" in your speech bubble box—check punctuation and hit Put on Panel!'
+            return {
+                "epoch": epoch,
+                "kind": "DIALOGUE_VOICE_FILL",
+                "spoken_fallback": spoken,
+                "ui": [
+                    {"type": "tutor_mic", "action": "off"},
+                    {"type": "lettering_voice_fill", "target": target_d, "text": clean_t},
+                ],
+                "directive": f'Say in 1 short plain sentence: "{spoken}"',
+            }
 
         if eff_purpose == "picture" and transcript:
             if req.get("target"):
@@ -1866,6 +2007,82 @@ class SessionController:
             is_undo, move_end = self._is_wrong_slot_or_undo(raw)
             if is_undo:
                 return self._handle_wrong_slot_or_undo(epoch, move_end)
+
+        # ---------------- 00-LETTERING. ADD SPEECH BUBBLE / DIALOGUE / CAPTION ("it isn't a comic", "add dialogue", 'make Dylan say "..."') ----------------
+        if self.phase not in ("INLINE_WORD_HELP", "WORD_STUDY"):
+            let_intent = self._parse_comic_lettering_intent(raw)
+            if let_intent:
+                target_let = self.pending_art_target or (projects.latest_art_target(self.project) if self.project else "")
+                if let_intent["kind"] == "add_bubble" and self.project and target_let:
+                    vchk = self.validate_comic_lettering(let_intent["text"], mode="bubble", bubble_kind=let_intent.get("bubble_kind", "speech"))
+                    if vchk.get("ok"):
+                        projects.apply_comic_lettering(
+                            self.project,
+                            target_let,
+                            "add_bubble",
+                            {
+                                "speaker": let_intent.get("speaker", ""),
+                                "text": vchk["text"],
+                                "kind": let_intent.get("bubble_kind", "speech"),
+                            },
+                            sandbox=self.test_mode,
+                        )
+                        spoken_b = f'Added the speech bubble "{vchk["text"]}" right onto your comic panel! You can drag it anywhere on the picture.'
+                        ui_b: list[dict[str, Any]] = [
+                            {"type": "reward", "label": "💬 Speech Bubble Added to Panel!"},
+                            {"type": "item", "item": projects.project_ui_payload(self.project)},
+                        ]
+                        return {
+                            "epoch": epoch,
+                            "kind": "COMIC_LETTERING_ADDED",
+                            "spoken_fallback": spoken_b,
+                            "ui": ui_b,
+                            "directive": f'Say in 1 short sentence: "{spoken_b}"',
+                        }
+                    # Needs a quick capital/punctuation/spelling polish inside the panel's bubble tray!
+                    spoken_fix = vchk.get("message") or "Check the spelling or punctuation on that speech bubble:"
+                    return {
+                        "epoch": epoch,
+                        "kind": "COMIC_LETTERING_OPEN",
+                        "spoken_fallback": spoken_fix,
+                        "ui": [
+                            {
+                                "type": "open_comic_lettering",
+                                "target": target_let,
+                                "tab": "bubble",
+                                "prefill_speaker": let_intent.get("speaker", ""),
+                                "prefill_text": let_intent["text"],
+                                "fix": vchk,
+                            }
+                        ],
+                        "directive": f'Say plainly in 1 short sentence: "{spoken_fix}"',
+                    }
+                if let_intent["kind"] == "set_caption" and self.project and target_let:
+                    vchk = self.validate_comic_lettering(let_intent["text"], mode="caption")
+                    if vchk.get("ok"):
+                        projects.apply_comic_lettering(self.project, target_let, "set_caption", {"caption": vchk["text"]}, sandbox=self.test_mode)
+                        spoken_c = "Updated the comic caption box on your panel!"
+                        return {
+                            "epoch": epoch,
+                            "kind": "COMIC_LETTERING_ADDED",
+                            "spoken_fallback": spoken_c,
+                            "ui": [
+                                {"type": "reward", "label": "✎ Comic Caption Updated!"},
+                                {"type": "item", "item": projects.project_ui_payload(self.project)},
+                            ],
+                            "directive": f'Say in 1 short sentence: "{spoken_c}"',
+                        }
+                spoken_open = (
+                    "Opened the speech bubble and caption box right under your panel! "
+                    "Add speech bubbles, shout bubbles, or edit the caption, drag bubbles anywhere on the art, then tap Looks right when you're ready."
+                )
+                return {
+                    "epoch": epoch,
+                    "kind": "COMIC_LETTERING_OPEN",
+                    "spoken_fallback": spoken_open,
+                    "ui": [{"type": "open_comic_lettering", "target": target_let, "tab": let_intent.get("tab", "bubble")}],
+                    "directive": f'Tell {self.name} plainly in 1-2 short sentences: "{spoken_open}"',
+                }
 
         # ---------------- 00. PICTURE APPROVAL & COLLABORATIVE REDRAW ("Did I draw your scene right?") ----------------
         if self.phase == "AWAITING_ART_CHECK" and self.pending_art_target:
@@ -3158,18 +3375,18 @@ class SessionController:
             sp = self.project.setdefault("spine", {})
             ui_actions.append({"type": "remove", "id": "spine_more_choices"})
             if st == "spine_beginning":
-                sp["beginning"] = raw
+                projects.set_spine_beat_text(sp, "beginning", raw)
                 sp["beginning_status"] = "drawing"
                 if self.project.get("title") in ("Untitled Graphic Novel", "Untitled Project", "") and not self.project.get("custom_titled"):
                     self.project["title"] = _infer_book_title(raw, self._suggested_title)
                     self._suggested_title = ""
                 self.project["stage"] = "spine_end"
                 projects.save_project(self.project, sandbox=self.test_mode)
-                ui_actions.append({"type": "reward", "label": f"★ Cover & Kickoff Art Unlocked · “{self.project['title']}”"})
+                ui_actions.append({"type": "reward", "label": f"★ Cover & Kickoff Panel Unlocked · “{self.project['title']}”"})
                 ui_actions.append({"type": "item", "item": projects.project_ui_payload(self.project)})
                 ui_actions.append({"type": "goal", "text": self.goal_badge()})
                 if self.pause_for_art_check:
-                    gate = self._enter_art_check_gate(ui_actions, "spine:beginning", "STORY_SPINE", "your Cover & Kickoff picture")
+                    gate = self._enter_art_check_gate(ui_actions, "spine:beginning", "STORY_SPINE", "your Cover & Kickoff panel")
                     gate["spine_draw"] = {"beat": "beginning", "text": raw}
                     return _finish(gate)
                 ui_actions, directive = self._prompt_spine_step(ui_actions, resumed=False)
@@ -3181,15 +3398,15 @@ class SessionController:
                 })
 
             if st == "spine_end":
-                sp["end"] = raw
+                projects.set_spine_beat_text(sp, "end", raw)
                 sp["end_status"] = "drawing"
                 self.project["stage"] = "spine_middle"
                 projects.save_project(self.project, sandbox=self.test_mode)
-                ui_actions.append({"type": "reward", "label": "★ Big Finale Art Unlocked!"})
+                ui_actions.append({"type": "reward", "label": "★ Big Finale Panel Unlocked!"})
                 ui_actions.append({"type": "item", "item": projects.project_ui_payload(self.project)})
                 ui_actions.append({"type": "goal", "text": self.goal_badge()})
                 if self.pause_for_art_check:
-                    gate = self._enter_art_check_gate(ui_actions, "spine:end", "STORY_SPINE", "your Big Finale picture")
+                    gate = self._enter_art_check_gate(ui_actions, "spine:end", "STORY_SPINE", "your Big Finale panel")
                     gate["spine_draw"] = {"beat": "end", "text": raw}
                     return _finish(gate)
                 ui_actions, directive = self._prompt_spine_step(ui_actions, resumed=False)
@@ -3203,7 +3420,8 @@ class SessionController:
             # st == "spine_middle": append this twist to middle_beats!
             mbeats = list(projects.middle_beats_list(sp))
             beat_idx = len(mbeats)
-            mbeats.append({"text": raw, "image": None, "src": None, "status": "drawing"})
+            m_cap, m_bubs = projects.extract_dialogue(raw)
+            mbeats.append({"text": raw, "caption": m_cap, "dialogue": m_bubs, "image": None, "src": None, "status": "drawing"})
             sp["middle_beats"] = mbeats
             sp["middle"] = " ".join(b.get("text", "") for b in mbeats)
             projects.save_project(self.project, sandbox=self.test_mode)

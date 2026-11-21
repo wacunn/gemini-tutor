@@ -66,51 +66,221 @@ PROJECT_MENU: list[dict[str, str]] = [
 ]
 
 
-def extract_dialogue(text: str) -> tuple[str, list[dict[str, str]]]:
-    """Extracts quoted speech or 'Speaker: line' into comic speech bubbles while preserving caption."""
-    bubbles: list[dict[str, str]] = []
+_SPEECH_VERBS = r"(?:said|says|yelled|yells|shouted|shouts|whispered|whispers|roared|roars|asked|asks|cried|cries|warned|warns|called|calls|barked|barks|grinned|screamed|screams|groaned|groans|thought|thinks|wondered|wonders)"
+
+
+def _infer_bubble_kind(quote: str, verb: str = "") -> str:
+    vb = (verb or "").lower()
+    q = (quote or "").strip()
+    if vb in ("thought", "thinks", "wondered", "wonders"):
+        return "thought"
+    letters = [c for c in q if c.isalpha()]
+    all_caps = len(letters) >= 3 and all(c.isupper() for c in letters)
+    if all_caps or vb in ("yelled", "yells", "shouted", "shouts", "roared", "roars", "screamed", "screams"):
+        return "shout"
+    return "speech"
+
+
+def _default_bubble_pos(idx: int) -> tuple[int, int]:
+    slots = [(10, 8), (44, 24), (14, 46), (46, 56)]
+    return slots[idx % len(slots)]
+
+
+def extract_dialogue(text: str) -> tuple[str, list[dict[str, Any]]]:
+    """Extracts quoted speech or 'Speaker: line' into positioned comic speech bubbles,
+    and strips redundant speech-wrapper clauses from the narrator caption so quotes aren't printed twice."""
+    bubbles: list[dict[str, Any]] = []
     raw = (text or "").strip()
+    if not raw:
+        return "", []
 
-    m_colon = re.match(r"^([A-Z][A-Za-z0-9 _-]{0,18}):\s*[\"']?([^\"']+)[\"']?$", raw)
+    m_colon = re.match(r"^([A-Z][A-Za-z0-9 _-]{0,18}):\s*[\"“']?([^\"”']+)[\"”']?$", raw)
     if m_colon:
-        bubbles.append({"speaker": m_colon.group(1).strip(), "text": m_colon.group(2).strip()})
-        return raw, bubbles
+        spk = m_colon.group(1).strip()
+        qtxt = m_colon.group(2).strip()
+        bx, by = _default_bubble_pos(0)
+        bubbles.append(
+            {
+                "id": new_id("bub"),
+                "speaker": spk,
+                "text": qtxt,
+                "kind": _infer_bubble_kind(qtxt),
+                "x": bx,
+                "y": by,
+            }
+        )
+        return "", bubbles
 
-    for m in re.finditer(r'"([^"]{2,120})"', raw):
+    # Match straight or curly double quotes
+    quote_spans: list[tuple[int, int]] = []
+    for idx_q, m in enumerate(re.finditer(r'["“]([^"”]{1,140})["”]', raw)):
         quote = m.group(1).strip()
+        if not quote:
+            continue
         speaker = ""
+        verb = ""
         before = raw[: m.start()].strip()
         after = raw[m.end() :].strip()
-        m_bef = re.search(
-            r"([A-Z][a-zA-Z0-9]+)\s+(?:said|yelled|shouted|whispered|roared|asked|cried|warned|called|barked|grinned)[,:]?$",
-            before,
-        )
-        m_aft = re.match(r"^(?:said|yelled|shouted|whispered|roared|asked|cried|warned|called|barked)\s+([A-Z][a-zA-Z0-9]+)", after)
+        m_bef = re.search(rf"([A-Z][a-zA-Z0-9]+)\s+({_SPEECH_VERBS})\s*[,:]?$", before)
+        m_aft = re.match(rf"^[, ]*({_SPEECH_VERBS})\s+([A-Z][a-zA-Z0-9]+)\s*[.!?]?", after)
+        span_start, span_end = m.start(), m.end()
         if m_bef:
-            speaker = m_bef.group(1)
+            speaker, verb = m_bef.group(1), m_bef.group(2)
+            # Also trim leading ", and Name yelled," if preceded by a narrative clause
+            lead_conj = re.search(rf"(?:[,;]\s*(?:and|so|then|but)\s+)?[A-Z][a-zA-Z0-9]+\s+{_SPEECH_VERBS}\s*[,:]?\s*$", raw[: m.start()])
+            if lead_conj:
+                span_start = lead_conj.start()
         elif m_aft:
-            speaker = m_aft.group(1)
-        bubbles.append({"speaker": speaker, "text": quote})
+            verb, speaker = m_aft.group(1), m_aft.group(2)
+            span_end = m.end() + m_aft.end()
+        bx, by = _default_bubble_pos(idx_q)
+        bubbles.append(
+            {
+                "id": new_id("bub"),
+                "speaker": speaker,
+                "text": quote,
+                "kind": _infer_bubble_kind(quote, verb),
+                "x": bx,
+                "y": by,
+            }
+        )
+        quote_spans.append((span_start, span_end))
 
-    return raw, bubbles
+    if not bubbles:
+        return raw, []
+
+    # Build clean narrator caption from any remaining non-speech narration
+    rem_parts: list[str] = []
+    pos = 0
+    for s0, s1 in quote_spans:
+        if s0 > pos:
+            rem_parts.append(raw[pos:s0])
+        pos = max(pos, s1)
+    if pos < len(raw):
+        rem_parts.append(raw[pos:])
+    rem = " ".join(" ".join(rem_parts).split()).strip(" ,;:-")
+    if rem and len(re.findall(r"[A-Za-z']+", rem)) >= 3:
+        if not re.search(r"[.!?]$", rem):
+            rem += "."
+        rem = rem[:1].upper() + rem[1:]
+        return rem, bubbles
+    return "", bubbles
+
+
+def _normalize_bubbles(bubbles: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for idx, b in enumerate(bubbles or []):
+        if not isinstance(b, dict):
+            continue
+        txt = str(b.get("text") or "").strip()
+        if not txt:
+            continue
+        dx, dy = _default_bubble_pos(idx)
+        out.append(
+            {
+                "id": str(b.get("id") or f"bub_{idx + 1}"),
+                "speaker": str(b.get("speaker") or "").strip()[:28],
+                "text": txt[:160],
+                "kind": b.get("kind") if b.get("kind") in ("speech", "shout", "thought") else _infer_bubble_kind(txt),
+                "x": max(2, min(84, int(round(float(b.get("x", dx)))))),
+                "y": max(2, min(78, int(round(float(b.get("y", dy)))))),
+            }
+        )
+    return out
+
+
+def mutate_lettering_holder(holder: dict[str, Any], action: str, data: dict[str, Any]) -> bool:
+    """Applies add_bubble / edit_bubble / delete_bubble / move_bubble / set_caption to any panel-like dict."""
+    bubs = _normalize_bubbles(holder.get("dialogue"))
+    if action == "add_bubble":
+        txt = str(data.get("text") or "").strip()
+        if not txt:
+            return False
+        dx, dy = _default_bubble_pos(len(bubs))
+        kind = str(data.get("kind") or "speech").strip().lower()
+        if kind not in ("speech", "shout", "thought"):
+            kind = _infer_bubble_kind(txt)
+        bubs.append(
+            {
+                "id": new_id("bub"),
+                "speaker": str(data.get("speaker") or "").strip()[:28],
+                "text": txt[:160],
+                "kind": kind,
+                "x": max(2, min(84, int(round(float(data.get("x", dx)))))),
+                "y": max(2, min(78, int(round(float(data.get("y", dy)))))),
+            }
+        )
+        holder["dialogue"] = bubs[:6]
+        return True
+
+    if action == "edit_bubble":
+        bid = str(data.get("bubble_id") or "").strip()
+        txt = str(data.get("text") or "").strip()
+        if not bid or not txt:
+            return False
+        kind = str(data.get("kind") or "").strip().lower()
+        for b in bubs:
+            if b["id"] == bid:
+                b["text"] = txt[:160]
+                if "speaker" in data:
+                    b["speaker"] = str(data.get("speaker") or "").strip()[:28]
+                if kind in ("speech", "shout", "thought"):
+                    b["kind"] = kind
+                holder["dialogue"] = bubs
+                return True
+        return False
+
+    if action == "delete_bubble":
+        bid = str(data.get("bubble_id") or "").strip()
+        before_n = len(bubs)
+        bubs = [b for b in bubs if b["id"] != bid]
+        holder["dialogue"] = bubs
+        return len(bubs) != before_n
+
+    if action == "move_bubble":
+        bid = str(data.get("bubble_id") or "").strip()
+        for b in bubs:
+            if b["id"] == bid:
+                b["x"] = max(2, min(84, int(round(float(data.get("x", b["x"]))))))
+                b["y"] = max(2, min(78, int(round(float(data.get("y", b["y"]))))))
+                holder["dialogue"] = bubs
+                return True
+        return False
+
+    if action == "set_caption":
+        holder["caption"] = str(data.get("caption") or "").strip()[:320]
+        holder["caption_edited"] = True
+        return True
+
+    return False
 
 
 def middle_beats_list(sp: dict[str, Any]) -> list[dict[str, Any]]:
     """Returns normalized list of middle plot beats (migrating legacy single `sp['middle']` string if present)."""
     beats = sp.get("middle_beats")
+    raw_list: list[dict[str, Any]] = []
     if isinstance(beats, list) and beats:
-        return beats
-    legacy = (sp.get("middle") or "").strip()
-    if legacy:
-        return [
-            {
-                "text": legacy,
-                "image": sp.get("middle_image"),
-                "src": sp.get("middle_src"),
-                "status": sp.get("middle_status") or ("done" if sp.get("middle_image") else "done"),
-            }
-        ]
-    return []
+        raw_list = [dict(b) for b in beats if isinstance(b, dict)]
+    else:
+        legacy = (sp.get("middle") or "").strip()
+        if legacy:
+            raw_list = [
+                {
+                    "text": legacy,
+                    "image": sp.get("middle_image"),
+                    "src": sp.get("middle_src"),
+                    "status": sp.get("middle_status") or ("done" if sp.get("middle_image") else "done"),
+                }
+            ]
+    for b in raw_list:
+        if "caption" not in b and "dialogue" not in b:
+            cap, bubs = extract_dialogue(b.get("text") or "")
+            b["caption"] = cap
+            b["dialogue"] = bubs
+        else:
+            b.setdefault("caption", b.get("text") or "")
+            b["dialogue"] = _normalize_bubbles(b.get("dialogue"))
+    return raw_list
 
 
 def is_project_nonempty(proj: dict[str, Any]) -> bool:
@@ -526,21 +696,22 @@ def undo_or_move_beat(proj: dict[str, Any], target: str, move_end_to_middle: boo
     if move_end_to_middle and sp.get("end"):
         moved_txt = str(sp.get("end") or "")
         mbs = list(middle_beats_list(sp))
-        mbs.append(
-            {
-                "text": moved_txt,
-                "image": sp.get("end_image"),
-                "src": sp.get("end_src"),
-                "status": sp.get("end_status") or ("done" if sp.get("end_image") else None),
-                "verified": False,
-            }
-        )
+        moved_beat: dict[str, Any] = {
+            "text": moved_txt,
+            "image": sp.get("end_image"),
+            "src": sp.get("end_src"),
+            "status": sp.get("end_status") or ("done" if sp.get("end_image") else None),
+            "verified": False,
+        }
+        if "end_caption" in sp or "end_dialogue" in sp:
+            moved_beat["caption"] = sp.get("end_caption", "")
+            moved_beat["dialogue"] = _normalize_bubbles(sp.get("end_dialogue"))
+        mbs.append(moved_beat)
         sp["middle_beats"] = mbs
         sp["middle"] = " ".join(b.get("text", "") for b in mbs)
+        for k_clr in ("end", "end_image", "end_src", "end_status", "end_caption", "end_dialogue"):
+            sp.pop(k_clr, None)
         sp["end"] = ""
-        sp["end_image"] = None
-        sp["end_src"] = None
-        sp["end_status"] = None
         sp["end_verified"] = False
         proj["stage"] = "spine_end"
         save_project(proj, sandbox=sandbox)
@@ -548,10 +719,9 @@ def undo_or_move_beat(proj: dict[str, Any], target: str, move_end_to_middle: boo
 
     if target == "spine:beginning":
         old_txt = str(sp.get("beginning") or "")
+        for k_clr in ("beginning_image", "beginning_src", "beginning_status", "beginning_caption", "beginning_dialogue"):
+            sp.pop(k_clr, None)
         sp["beginning"] = ""
-        sp["beginning_image"] = None
-        sp["beginning_src"] = None
-        sp["beginning_status"] = None
         sp["beginning_verified"] = False
         proj["stage"] = "spine_beginning"
         save_project(proj, sandbox=sandbox)
@@ -559,10 +729,9 @@ def undo_or_move_beat(proj: dict[str, Any], target: str, move_end_to_middle: boo
 
     if target == "spine:end":
         old_txt = str(sp.get("end") or "")
+        for k_clr in ("end_image", "end_src", "end_status", "end_caption", "end_dialogue"):
+            sp.pop(k_clr, None)
         sp["end"] = ""
-        sp["end_image"] = None
-        sp["end_src"] = None
-        sp["end_status"] = None
         sp["end_verified"] = False
         proj["stage"] = "spine_end"
         save_project(proj, sandbox=sandbox)
@@ -704,10 +873,90 @@ def recent_reference_media_ids(proj: dict[str, Any], limit: int = 2, target: str
     return combined[-limit:]
 
 
+def set_spine_beat_text(sp: dict[str, Any], beat: str, raw_text: str) -> None:
+    """Sets `beginning` or `end` text on `sp` AND extracts initial `caption` + `dialogue` speech bubbles."""
+    cap, bubs = extract_dialogue(raw_text)
+    sp[beat] = raw_text
+    sp[f"{beat}_caption"] = cap
+    sp[f"{beat}_dialogue"] = bubs
+    sp[f"{beat}_caption_edited"] = False
+
+
+def apply_comic_lettering(
+    proj: dict[str, Any],
+    target: str,
+    action: str,
+    data: dict[str, Any],
+    sandbox: bool | None = None,
+) -> bool:
+    """Applies speech/shout/thought bubble or caption edits to `spine:...` or `panel:...` targets and saves."""
+    sp = proj.setdefault("spine", {})
+    changed = False
+    if target in ("spine:beginning", "spine:end"):
+        beat = target.split(":", 1)[1]
+        if f"{beat}_caption" not in sp and f"{beat}_dialogue" not in sp:
+            cap0, bub0 = extract_dialogue(sp.get(beat) or "")
+            sp[f"{beat}_caption"] = cap0
+            sp[f"{beat}_dialogue"] = bub0
+        holder = {
+            "caption": sp.get(f"{beat}_caption", sp.get(beat, "")),
+            "dialogue": sp.get(f"{beat}_dialogue") or [],
+            "caption_edited": bool(sp.get(f"{beat}_caption_edited")),
+        }
+        changed = mutate_lettering_holder(holder, action, data)
+        if changed:
+            sp[f"{beat}_caption"] = holder["caption"]
+            sp[f"{beat}_dialogue"] = holder["dialogue"]
+            sp[f"{beat}_caption_edited"] = holder.get("caption_edited", False)
+    elif target.startswith("spine:middle_"):
+        try:
+            idx = int(target.split("_", 1)[1])
+        except ValueError:
+            return False
+        mbs = middle_beats_list(sp)
+        if 0 <= idx < len(mbs):
+            changed = mutate_lettering_holder(mbs[idx], action, data)
+            if changed:
+                sp["middle_beats"] = mbs
+    elif target.startswith("panel:"):
+        try:
+            pnum = int(target.split(":", 1)[1])
+        except ValueError:
+            return False
+        for ch in proj.get("chapters") or []:
+            for p in ch.get("panels") or []:
+                if p.get("number") == pnum:
+                    changed = mutate_lettering_holder(p, action, data)
+                    break
+
+    if changed:
+        save_project(proj, sandbox=sandbox)
+    return changed
+
+
 def project_ui_payload(proj: dict[str, Any]) -> dict[str, Any]:
     """Formats the full project state (Plot Board + Art Styles + Chapters + Panels + PDF URL) for the browser Canvas."""
     sp = dict(proj.get("spine") or {})
     sp["middle_beats"] = middle_beats_list(sp)
+    for beat_k in ("beginning", "end"):
+        if sp.get(beat_k):
+            if f"{beat_k}_caption" not in sp and f"{beat_k}_dialogue" not in sp:
+                c0, b0 = extract_dialogue(sp.get(beat_k) or "")
+                sp[f"{beat_k}_caption"] = c0
+                sp[f"{beat_k}_dialogue"] = b0
+            else:
+                sp.setdefault(f"{beat_k}_caption", sp.get(beat_k) or "")
+                sp[f"{beat_k}_dialogue"] = _normalize_bubbles(sp.get(f"{beat_k}_dialogue"))
+    norm_chapters = []
+    for ch in proj.get("chapters") or []:
+        c_copy = dict(ch)
+        p_list = []
+        for p in ch.get("panels") or []:
+            p_copy = dict(p)
+            p_copy["dialogue"] = _normalize_bubbles(p.get("dialogue"))
+            p_list.append(p_copy)
+        c_copy["panels"] = p_list
+        norm_chapters.append(c_copy)
     skey = proj.get("style_key") or DEFAULT_STYLE_KEY
     return {
         "id": proj["id"],
@@ -729,7 +978,7 @@ def project_ui_payload(proj: dict[str, Any]) -> dict[str, Any]:
         "codex_sketch_status": proj.get("codex_sketch_status"),
         "codex_sketch_caption": proj.get("codex_sketch_caption", ""),
         "codex_draft_sentences": proj.get("codex_draft_sentences", []),
-        "chapters": proj.get("chapters", []),
+        "chapters": norm_chapters,
         "panel_count": total_panels(proj),
         "target_panels": proj.get("target_panels", 100),
         "sandbox": bool(proj.get("sandbox")),

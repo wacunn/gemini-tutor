@@ -18,7 +18,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from .media import media_path
-from .projects import all_panels, middle_beats_list
+from .projects import all_panels, extract_dialogue, middle_beats_list, project_ui_payload
 
 PAGE_W, PAGE_H = 1275, 1650  # US Letter @ 150 DPI
 MARGIN = 72
@@ -147,77 +147,102 @@ def _render_cover(proj: dict[str, Any], panels: list[dict[str, Any]]) -> Image.I
     return page
 
 
-def _render_spine_pages(proj: dict[str, Any]) -> list[Image.Image]:
-    f_head = _font(42, bold=True)
-    f_sub = _font(24, bold=False)
-    f_lbl = _font(25, bold=True)
-    f_body = _font(25, bold=False)
-
-    spine = proj.get("spine") or {}
-    mbeats = middle_beats_list(spine)
-    sections: list[tuple[str, str, str | None]] = [
-        ("THE BEGINNING (KICKOFF)", spine.get("beginning") or "(In progress)", spine.get("beginning_image")),
-    ]
-    if mbeats:
-        for idx, mb in enumerate(mbeats, 1):
-            sections.append((f"MIDDLE TWIST #{idx}", mb.get("text") or "", mb.get("image")))
-    else:
-        sections.append(("THE MIDDLE (TWISTS & ESCALATION)", "(In progress)", None))
-    sections.append(("THE BIG FINALE", spine.get("end") or "(In progress)", spine.get("end_image")))
-
-    pages: list[Image.Image] = []
-    box_w = PAGE_W - 2 * MARGIN
-    thumb_w, thumb_h = 320, 240
-
-    def _new_page(first_page: bool) -> tuple[Image.Image, ImageDraw.ImageDraw, int]:
-        pg = Image.new("RGB", (PAGE_W, PAGE_H), (249, 247, 242))
-        dr = ImageDraw.Draw(pg)
-        title = "STORY PLOT BOARD" if first_page else "STORY PLOT BOARD (CONT.)"
-        dr.text((MARGIN, 80), title, fill=(24, 26, 30), font=f_head)
-        dr.text((MARGIN, 136), "Kickoff, middle twists, and finale behind this book", fill=(100, 104, 112), font=f_sub)
-        return pg, dr, 206
-
-    page, d, y = _new_page(True)
-    for label, content, img_id in sections:
-        thumb = _load_panel_img(img_id, thumb_w, thumb_h)
-        text_max_w = (box_w - thumb_w - 84) if thumb else (box_w - 64)
-        lines = _wrap(d, content, f_body, text_max_w) or ["(In progress)"]
-        box_h = max(thumb_h + 40 if thumb else 190, 92 + len(lines) * 36)
-        if y + box_h > PAGE_H - 90:
-            pages.append(page)
-            page, d, y = _new_page(False)
-        d.rounded_rectangle([MARGIN, y, MARGIN + box_w, y + box_h], radius=18, fill=(255, 255, 255), outline=(28, 30, 34), width=4)
-        if thumb:
-            ix = MARGIN + box_w - thumb_w - 20
-            iy = y + 20
-            page.paste(thumb, (ix, iy))
-            d.rectangle([ix, iy, ix + thumb_w, iy + thumb_h], outline=(28, 30, 34), width=3)
-        d.text((MARGIN + 32, y + 24), label, fill=(42, 86, 196), font=f_lbl)
-        ty = y + 68
-        for ln in lines[:8]:
-            d.text((MARGIN + 32, ty), ln, fill=(28, 30, 34), font=f_body)
-            ty += 36
-        y += box_h + 26
-
-    pages.append(page)
-    return pages
-
-
-def _draw_speech_bubble(d: ImageDraw.ImageDraw, x: int, y: int, max_w: int, speaker: str, line: str) -> int:
-    f_sp = _font(18, bold=True)
-    f_tx = _font(20, bold=False)
+def _draw_speech_bubble(
+    d: ImageDraw.ImageDraw,
+    art_x: int,
+    art_y: int,
+    art_w: int,
+    art_h: int,
+    bub: dict[str, Any],
+    idx: int = 0,
+) -> None:
+    """Draws a positioned comic Speech (with pointed tail), Shout (spiky yellow burst), or Thought (cloud circles) bubble inside the artwork box."""
+    f_tx = _font(20, bold=True)
+    speaker = str(bub.get("speaker") or "").strip()
+    line = str(bub.get("text") or "").strip()
+    if not line:
+        return
+    kind = str(bub.get("kind") or "speech").strip().lower()
     full = f"{speaker.upper()}: {line}" if speaker else line
-    lines = _wrap(d, full, f_tx, max_w - 28)[:3]
+    max_bw = max(180, min(int(art_w * 0.78), art_w - 28))
+    lines = _wrap(d, full, f_tx, max_bw - 32)[:4]
     if not lines:
-        return y
+        return
     bh = 20 + len(lines) * 26
-    bw = min(max_w, max(d.textbbox((0, 0), ln, font=f_tx)[2] for ln in lines) + 32)
-    d.rounded_rectangle([x, y, x + bw, y + bh], radius=16, fill=(255, 255, 255), outline=(15, 15, 15), width=3)
-    ty = y + 10
+    bw = min(max_bw, max(d.textbbox((0, 0), ln, font=f_tx)[2] for ln in lines) + 34)
+
+    x_pct = float(bub.get("x", 10 if idx % 2 == 0 else 44))
+    y_pct = float(bub.get("y", 8 + idx * 18))
+    bx = art_x + int((x_pct / 100.0) * art_w)
+    by = art_y + int((y_pct / 100.0) * art_h)
+    bx = max(art_x + 8, min(art_x + art_w - bw - 8, bx))
+    by = max(art_y + 8, min(art_y + art_h - bh - 18, by))
+
+    # Hard comic drop shadow
+    d.rounded_rectangle([bx + 4, by + 4, bx + bw + 4, by + bh + 4], radius=18, fill=(15, 15, 15))
+    bg_fill = (255, 250, 208) if kind == "shout" else (255, 255, 255)
+    rad = 6 if kind == "shout" else 20
+    d.rounded_rectangle([bx, by, bx + bw, by + bh], radius=rad, fill=bg_fill, outline=(15, 15, 15), width=4 if kind == "shout" else 3)
+
+    # Tail by bubble kind
+    tail_cx = bx + min(bw - 26, max(26, bw // 3))
+    if kind == "thought":
+        d.ellipse([tail_cx - 7, by + bh + 3, tail_cx + 7, by + bh + 15], fill=(255, 255, 255), outline=(15, 15, 15), width=3)
+        d.ellipse([tail_cx - 14, by + bh + 16, tail_cx - 5, by + bh + 24], fill=(255, 255, 255), outline=(15, 15, 15), width=2)
+    elif kind == "shout":
+        pts = [(tail_cx - 12, by + bh - 2), (tail_cx - 22, by + bh + 18), (tail_cx + 4, by + bh - 2)]
+        d.polygon(pts, fill=bg_fill)
+        d.line([pts[0], pts[1], pts[2]], fill=(15, 15, 15), width=4)
+    else:
+        pts = [(tail_cx - 10, by + bh - 2), (tail_cx - 18, by + bh + 16), (tail_cx + 8, by + bh - 2)]
+        d.polygon(pts, fill=bg_fill)
+        d.line([pts[0], pts[1], pts[2]], fill=(15, 15, 15), width=3)
+
+    ty = by + 10
     for ln in lines:
-        d.text((x + 14, ty), ln, fill=(15, 15, 15), font=f_sp if (speaker and ty == y + 10 and len(lines) == 1) else f_tx)
+        d.text((bx + 16, ty), ln, fill=(15, 15, 15), font=f_tx)
         ty += 26
-    return y + bh + 8
+
+
+def _spine_as_comic_panels(proj: dict[str, Any]) -> list[dict[str, Any]]:
+    """Converts Plot Board beats (`Beginning`, `Middle Twists`, `Big Finale`) into full comic panels with captions & speech bubbles!"""
+    payload = project_ui_payload(proj)
+    sp = payload.get("spine") or {}
+    out: list[dict[str, Any]] = []
+    if sp.get("beginning") or sp.get("beginning_image"):
+        out.append(
+            {
+                "number": "1",
+                "badge": "KICKOFF",
+                "chapter_title": "Story Arc",
+                "image": sp.get("beginning_image") or proj.get("cover_image"),
+                "caption": sp.get("beginning_caption", sp.get("beginning") or ""),
+                "dialogue": sp.get("beginning_dialogue") or [],
+            }
+        )
+    for idx, mb in enumerate(sp.get("middle_beats") or [], 1):
+        out.append(
+            {
+                "number": str(len(out) + 1),
+                "badge": f"TWIST {idx}",
+                "chapter_title": "Story Arc",
+                "image": mb.get("image"),
+                "caption": mb.get("caption", mb.get("text") or ""),
+                "dialogue": mb.get("dialogue") or [],
+            }
+        )
+    if sp.get("end") or sp.get("end_image"):
+        out.append(
+            {
+                "number": str(len(out) + 1),
+                "badge": "FINALE",
+                "chapter_title": "Story Arc",
+                "image": sp.get("end_image"),
+                "caption": sp.get("end_caption", sp.get("end") or ""),
+                "dialogue": sp.get("end_dialogue") or [],
+            }
+        )
+    return out
 
 
 def _render_codex_pages(proj: dict[str, Any], panels: list[dict[str, Any]]) -> list[Image.Image]:
@@ -318,45 +343,48 @@ def _render_panel_pages(proj: dict[str, Any], panels: list[dict[str, Any]]) -> l
             row = i // 2
             x0 = MARGIN + col * (cell_w + gutter)
             y0 = 110 + row * (cell_h + gutter)
+            cap_txt = (p.get("caption") or "").strip()
+            this_art_h = art_h if cap_txt else (cell_h - 10)
 
             # Panel outer frame
             d.rectangle([x0, y0, x0 + cell_w, y0 + cell_h], fill=(255, 255, 255), outline=(15, 15, 15), width=5)
 
             # Panel artwork
-            im = _load_panel_img(p.get("image"), cell_w - 10, art_h)
+            im = _load_panel_img(p.get("image"), cell_w - 10, this_art_h)
             if im:
                 page.paste(im, (x0 + 5, y0 + 5))
             else:
-                d.rectangle([x0 + 5, y0 + 5, x0 + cell_w - 5, y0 + 5 + art_h], fill=(236, 238, 242))
-                d.text((x0 + 24, y0 + art_h // 2), f"Panel {p.get('number', i + 1)} (rendering)", fill=(130, 134, 142), font=f_cap)
+                d.rectangle([x0 + 5, y0 + 5, x0 + cell_w - 5, y0 + 5 + this_art_h], fill=(236, 238, 242))
+                d.text((x0 + 24, y0 + this_art_h // 2), f"Panel {p.get('number', i + 1)} (rendering)", fill=(130, 134, 142), font=f_cap)
 
-            # Panel number badge
-            d.rectangle([x0 + 5, y0 + 5, x0 + 46, y0 + 40], fill=(15, 15, 15))
-            d.text((x0 + 16, y0 + 10), str(p.get("number", page_idx + i + 1)), fill=(255, 255, 255), font=f_num)
+            # Panel badge
+            badge_str = str(p.get("badge") or p.get("number", page_idx + i + 1))
+            bw_num = max(42, d.textbbox((0, 0), badge_str, font=f_num)[2] + 24)
+            d.rectangle([x0 + 5, y0 + 5, x0 + 5 + bw_num, y0 + 40], fill=(255, 245, 194), outline=(15, 15, 15), width=3)
+            d.text((x0 + 16, y0 + 10), badge_str, fill=(15, 15, 15), font=f_num)
 
-            # Speech bubbles overlaid cleanly near top of artwork
-            by = y0 + 14
-            for bub in (p.get("dialogue") or [])[:2]:
-                by = _draw_speech_bubble(d, x0 + 56, by, cell_w - 72, bub.get("speaker", ""), bub.get("text", ""))
+            # Speech / Shout / Thought bubbles overlaid at their saved (x%, y%) coordinates
+            for b_idx, bub in enumerate((p.get("dialogue") or [])[:5]):
+                _draw_speech_bubble(d, x0 + 5, y0 + 5, cell_w - 10, this_art_h, bub, idx=b_idx)
 
-            # Divider & narrative caption box at bottom of panel (auto-scales font so long captions never clip!)
-            cap_top = y0 + 5 + art_h
-            d.rectangle([x0 + 5, cap_top, x0 + cell_w - 5, y0 + cell_h - 5], fill=(250, 246, 232))
-            d.line([x0, cap_top, x0 + cell_w, cap_top], fill=(15, 15, 15), width=4)
-            cap_txt = p.get("caption") or ""
-            cap_lines = _wrap(d, cap_txt, f_cap, cell_w - 36)
-            use_f = f_cap
-            lh = 29
-            max_l = 6
-            if len(cap_lines) > 6:
-                use_f = f_cap_sm
-                cap_lines = _wrap(d, cap_txt, use_f, cell_w - 32)
-                lh = 22
-                max_l = 8
-            cy = cap_top + 12
-            for ln in cap_lines[:max_l]:
-                d.text((x0 + 18, cy), ln, fill=(20, 20, 20), font=use_f)
-                cy += lh
+            # Divider & classic yellow narrative caption box at bottom (hidden cleanly if dialogue-only panel!)
+            if cap_txt:
+                cap_top = y0 + 5 + this_art_h
+                d.rectangle([x0 + 5, cap_top, x0 + cell_w - 5, y0 + cell_h - 5], fill=(255, 245, 194))
+                d.line([x0, cap_top, x0 + cell_w, cap_top], fill=(15, 15, 15), width=4)
+                cap_lines = _wrap(d, cap_txt, f_cap, cell_w - 36)
+                use_f = f_cap
+                lh = 29
+                max_l = 6
+                if len(cap_lines) > 6:
+                    use_f = f_cap_sm
+                    cap_lines = _wrap(d, cap_txt, use_f, cell_w - 32)
+                    lh = 22
+                    max_l = 8
+                cy = cap_top + 12
+                for ln in cap_lines[:max_l]:
+                    d.text((x0 + 18, cy), ln, fill=(20, 20, 20), font=use_f)
+                    cy += lh
 
         # Page number
         pno = f"Page {len(pages) + 1}"
@@ -367,13 +395,14 @@ def _render_panel_pages(proj: dict[str, Any], panels: list[dict[str, Any]]) -> l
 
 
 def build_project_pdf(proj: dict[str, Any]) -> bytes:
-    """Renders a complete multi-page PDF byte stream for any project (even mid-progress drafts)."""
+    """Renders a complete multi-page Comic Book PDF byte stream for any project (even mid-progress drafts)."""
     panels = all_panels(proj)
-    all_pages: list[Image.Image] = [_render_cover(proj, panels)]
-    spine = proj.get("spine") or {}
-    if spine.get("beginning") or spine.get("middle") or spine.get("end") or middle_beats_list(spine):
-        all_pages.extend(_render_spine_pages(proj))
-    all_pages.extend(_render_panel_pages(proj, panels))
+    spine_panels = _spine_as_comic_panels(proj)
+    all_pages: list[Image.Image] = [_render_cover(proj, panels or spine_panels)]
+    if spine_panels:
+        all_pages.extend(_render_panel_pages(proj, spine_panels))
+    if panels:
+        all_pages.extend(_render_panel_pages(proj, panels))
 
     buf = io.BytesIO()
     first, rest = all_pages[0], all_pages[1:]

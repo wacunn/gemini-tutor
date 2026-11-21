@@ -478,34 +478,43 @@ async def project_pdf(pid: str):
 def project_page(pid: str):
     from tutor.projects import load_project, middle_beats_list, total_panels
 
+    from tutor.projects import project_ui_payload
+
     proj = load_project(pid)
     if not proj:
         raise HTTPException(404, "Project not found")
-    sp = proj.get("spine") or {}
-    mbs = middle_beats_list(sp)
+    ui_proj = project_ui_payload(proj)
+    sp = ui_proj.get("spine") or {}
+    mbs = sp.get("middle_beats") or []
+
+    def _web_panel(badge_lbl: str, img_src: str | None, cap_txt: str, bubs_list: list) -> str:
+        img = f"<img src='{html.escape(img_src)}'>" if img_src else "<div class='blank'>Rendering…</div>"
+        bub_parts = []
+        for b in bubs_list or []:
+            spk_html = f"<strong>{html.escape(str(b.get('speaker')))}:</strong> " if b.get("speaker") else ""
+            bkind = html.escape(str(b.get("kind", "speech")))
+            bx, by = int(b.get("x", 12)), int(b.get("y", 10))
+            bub_parts.append(f"<div class='bub {bkind}' style='left:{bx}%;top:{by}%'>{spk_html}{html.escape(str(b.get('text', '')))}</div>")
+        bubs = "".join(bub_parts)
+        cap_html = f"<figcaption>{html.escape(cap_txt)}</figcaption>" if (cap_txt or "").strip() else ""
+        return f"<figure><div class='art-wrap'><span class='pno'>{html.escape(badge_lbl)}</span>{img}{bubs}</div>{cap_html}</figure>"
+
     spine_html = ""
     if sp.get("beginning") or mbs or sp.get("end"):
         rows = []
-        if sp.get("beginning"):
-            bimg = f"<img class='sp-img' src='{html.escape(sp['beginning_src'])}'>" if sp.get("beginning_src") else ""
-            rows.append(f"<div class='sp-card'>{bimg}<div><strong>Kickoff:</strong> {html.escape(sp.get('beginning') or '')}</div></div>")
+        if sp.get("beginning") or sp.get("beginning_src"):
+            rows.append(_web_panel("KICKOFF", sp.get("beginning_src") or ui_proj.get("cover_src"), sp.get("beginning_caption", sp.get("beginning") or ""), sp.get("beginning_dialogue") or []))
         for idx_mb, mb in enumerate(mbs, 1):
-            mimg = f"<img class='sp-img' src='{html.escape(mb['src'])}'>" if mb.get("src") else ""
-            rows.append(f"<div class='sp-card'>{mimg}<div><strong>Twist #{idx_mb}:</strong> {html.escape(mb.get('text') or '')}</div></div>")
-        if sp.get("end"):
-            eimg = f"<img class='sp-img' src='{html.escape(sp['end_src'])}'>" if sp.get("end_src") else ""
-            rows.append(f"<div class='sp-card'>{eimg}<div><strong>Big Finale:</strong> {html.escape(sp.get('end') or '')}</div></div>")
-        spine_html = f"<h2>Story Plot Board</h2><div class='spine'>{''.join(rows)}</div>"
+            rows.append(_web_panel(f"TWIST #{idx_mb}", mb.get("src"), mb.get("caption", mb.get("text") or ""), mb.get("dialogue") or []))
+        if sp.get("end") or sp.get("end_src"):
+            rows.append(_web_panel("FINALE", sp.get("end_src"), sp.get("end_caption", sp.get("end") or ""), sp.get("end_dialogue") or []))
+        spine_html = f"<h2>Story Arc Panels</h2><div class='comic'>{''.join(rows)}</div>"
     ch_blocks = ""
-    for ch in proj.get("chapters") or []:
+    for ch in ui_proj.get("chapters") or []:
         cells = ""
         for pp in ch.get("panels") or []:
-            img = f"<img src='/media/{pp['image']}.jpg'>" if pp.get("image") else "<div class='blank'>Rendering…</div>"
-            bubs = "".join(
-                f"<div class='bub'><strong>{html.escape(b.get('speaker',''))}{': ' if b.get('speaker') else ''}</strong>{html.escape(b.get('text',''))}</div>"
-                for b in (pp.get("dialogue") or [])
-            )
-            cells += f"<figure><div class='art-wrap'><span class='pno'>{pp.get('number','')}</span>{img}{bubs}</div><figcaption>{html.escape(pp.get('caption') or '')}</figcaption></figure>"
+            psrc = f"/media/{pp['image']}.jpg" if pp.get("image") else pp.get("src")
+            cells += _web_panel(str(pp.get("number", "")), psrc, pp.get("caption") or "", pp.get("dialogue") or [])
         if cells:
             ch_blocks += f"<h2>{html.escape(ch.get('title', 'Chapter'))}</h2><div class='comic'>{cells}</div>"
     aud = f"<div class='for'>For {html.escape(proj['audience'])}</div>" if proj.get("audience") else ""
@@ -521,17 +530,18 @@ body{{font-family:'Google Sans Text',-apple-system,sans-serif;max-width:960px;ma
 h1{{font-size:34px;margin:0 0 4px}} h2{{margin:28px 0 12px;font-size:22px}}
 .by{{color:#555}} .for{{color:#777;font-style:italic;margin-bottom:20px}}
 .btn{{display:inline-block;background:#1a56c4;color:#fff;text-decoration:none;padding:9px 18px;border-radius:999px;font-weight:600;font-size:15px}}
-.spine{{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:16px 0}}
-.sp-card{{background:#fff;border:2px solid #222;border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px}}
-.sp-img{{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;border:1.5px solid #222}}
 .comic{{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin:16px 0}}
-.comic figure{{margin:0;border:4px solid #111;background:#fff;display:flex;flex-direction:column}}
-.art-wrap{{position:relative;aspect-ratio:4/3;background:#eee;overflow:hidden}}
+.comic figure{{margin:0;border:4px solid #111;background:#fff;display:flex;flex-direction:column;box-shadow:4px 4px 0 rgba(0,0,0,.18)}}
+.art-wrap{{position:relative;aspect-ratio:4/3;background:#eee;overflow:hidden;flex:1}}
 .art-wrap img{{width:100%;height:100%;object-fit:cover;display:block}}
-.pno{{position:absolute;top:0;left:0;background:#111;color:#fff;padding:3px 10px;font-weight:700;font-size:14px;z-index:2}}
-.bub{{position:relative;z-index:2;margin:8px 10px 0 44px;background:#fff;border:2.5px solid #111;border-radius:14px;padding:6px 12px;font-size:14px;display:inline-block;box-shadow:2px 2px 0 #111}}
+.pno{{position:absolute;top:0;left:0;background:#fff5c2;color:#111;border-right:2.5px solid #111;border-bottom:2.5px solid #111;padding:2px 9px;font-weight:800;font-size:12px;z-index:2}}
+.bub{{position:absolute;z-index:3;max-width:78%;background:#fff;color:#111;border:2.5px solid #111;border-radius:16px;padding:6px 12px;font-family:'Comic Sans MS','Chalkboard SE','Comic Neue',sans-serif;font-weight:700;font-size:14px;line-height:1.25;box-shadow:3px 3px 0 #111}}
+.bub::after{{content:'';position:absolute;left:18px;bottom:-10px;border-width:10px 8px 0 4px;border-style:solid;border-color:#111 transparent transparent transparent}}
+.bub.shout{{background:#fffae0;border-radius:5px;border-width:3px;transform:rotate(-1deg)}}
+.bub.thought{{border-radius:24px}}
+.bub.thought::after{{width:8px;height:8px;border:2.5px solid #111;background:#fff;border-radius:50%;bottom:-11px}}
 .blank{{display:grid;place-items:center;height:100%;color:#888}}
-.comic figcaption{{padding:10px 14px;background:#faf6e8;font-size:16px;border-top:3px solid #111;flex:1}}
+.comic figcaption{{padding:10px 14px;background:#fff5c2;font-family:'Comic Sans MS','Chalkboard SE','Comic Neue',sans-serif;font-weight:600;font-size:16px;border-top:3px solid #111}}
 @media(max-width:700px){{.comic{{grid-template-columns:1fr}}}}
 </style></head><body>
 <div class="nav-bar">
@@ -539,8 +549,8 @@ h1{{font-size:34px;margin:0 0 4px}} h2{{margin:28px 0 12px;font-size:22px}}
   <a class="btn" href="/api/project/{html.escape(proj['id'])}/pdf">Download PDF Book</a>
 </div>
 <div class="top"><div><h1>{html.escape(proj.get('title','Untitled'))}</h1>
-<div class="by">Written &amp; Created by {html.escape(proj.get('author',''))} · {total_panels(proj)} panel(s)</div>{aud}</div></div>
-{spine_html}{ch_blocks or "<p>Plot Board started—chapter panels appear here as you write!</p>"}
+<div class="by">Written &amp; Created by {html.escape(proj.get('author',''))} · {total_panels(proj)} chapter panel(s)</div>{aud}</div></div>
+{spine_html}{ch_blocks or ""}
 </body></html>""")
 
 
@@ -560,7 +570,7 @@ async def piece_pdf(pid: str):
         "audience": p.get("audience", ""),
         "spine": {},
         "chapters": [{"number": 1, "title": p.get("title", "Part 1"), "panels": [
-            {"number": idx + 1, "caption": cp.get("caption", ""), "dialogue": [], "image": cp.get("image")}
+            {"number": idx + 1, "caption": cp.get("caption", ""), "dialogue": cp.get("dialogue") or [], "image": cp.get("image")}
             for idx, cp in enumerate(comic.get("panels") or [])
         ]}],
     }

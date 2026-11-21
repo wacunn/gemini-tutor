@@ -24,6 +24,10 @@ const state = {
   lastServerEpoch: 0,
   micOneShot: false,
   heardKidSpeech: false,
+  lastBook: null,
+  lastComic: null,
+  drawnItems: {},
+  lettering: null,
 };
 
 // ---------------------------------------------------------------- setup
@@ -940,8 +944,23 @@ function renderItem(it) {
       break;
     }
     case "image": {
-      const art = it.status === "done" ? `<img src="${esc(it.src)}" alt="">` : it.status === "failed" ? `<div class="cap">Couldn't draw that one.</div>` : `<div class="shimmer"></div>`;
-      upsertInline(it.id, `<div class="image-item">${art}${it.caption ? `<div class="cap">${esc(it.caption)}</div>` : ""}</div>`);
+      state.drawnItems[it.id] = it;
+      const target = `draw:${it.id}`;
+      const el = upsertInline(
+        it.id,
+        renderComicPanelUnit({
+          target,
+          badge: "COMIC PANEL",
+          src: it.status === "done" ? it.src : null,
+          status: it.status,
+          caption: it.caption ?? "",
+          dialogue: it.dialogue || [],
+          verified: true,
+          canRemove: false,
+          extraClass: "stream-comic",
+        })
+      );
+      wireComicPanels(el);
       break;
     }
     case "card":
@@ -970,13 +989,17 @@ function renderItem(it) {
       upsertInline(it.id, `<div class="saved"><svg style="width:20px;height:20px"><use href="#spark"/></svg><span>Saved “${esc(it.title)}”</span><a href="${esc(it.url)}" target="_blank">Open</a> · <a href="/api/piece/${esc(it.id)}/pdf" target="_blank">Download PDF</a></div>`);
       break;
     case "book_project": {
+      state.lastBook = it;
       const pane = canvasPane("book", "Book · PDF", renderBookProject(it));
       wireBookPane(pane, it);
       break;
     }
-    case "comic":
-      canvasPane("comic", "Comic", renderComic(it));
+    case "comic": {
+      state.lastComic = it;
+      const pane = canvasPane("comic", "Comic", renderComic(it));
+      wireComicPanels(pane);
       break;
+    }
     case "page":
       canvasPane("page", "Page", `<div class="page">${it.segments.map((s) => `<p class="${s.author === "kid" ? "kid" : ""}">${esc(s.text)}</p>`).join("")}</div>`);
       break;
@@ -995,39 +1018,424 @@ function renderItem(it) {
   }
 }
 
-function renderArtMiniActs(target, hasArt, verified, canRemove) {
+function findCaptionForTarget(target) {
   if (!target) return "";
-  const btns = [];
-  if (hasArt && !verified) {
+  if (target.startsWith("spine:") && state.lastBook?.spine) {
+    const sp = state.lastBook.spine;
+    const beat = target.split(":")[1];
+    if (beat === "beginning") return sp.beginning_caption ?? sp.beginning ?? "";
+    if (beat === "end") return sp.end_caption ?? sp.end ?? "";
+    if (beat.startsWith("middle_")) {
+      const idx = Number(beat.split("_")[1]);
+      const mb = (sp.middle_beats || [])[idx];
+      return mb ? (mb.caption ?? mb.text ?? "") : "";
+    }
+  }
+  if (target.startsWith("panel:") && state.lastBook?.chapters) {
+    const pnum = Number(target.split(":")[1]);
+    for (const ch of state.lastBook.chapters) {
+      for (const p of ch.panels || []) {
+        if (Number(p.number) === pnum) return p.caption ?? "";
+      }
+    }
+  }
+  if (target.startsWith("strip:") && state.lastComic?.panels) {
+    const idx = Number(target.split(":")[1]);
+    return state.lastComic.panels[idx]?.caption ?? "";
+  }
+  if (target.startsWith("draw:")) {
+    const did = target.split(":")[1];
+    return state.drawnItems[did]?.caption ?? "";
+  }
+  return "";
+}
+
+function defaultLetteringTarget() {
+  if (state.lastBook?.chapters) {
+    let lastP = null;
+    for (const ch of state.lastBook.chapters) {
+      for (const p of ch.panels || []) lastP = p.number;
+    }
+    if (lastP) return `panel:${lastP}`;
+  }
+  if (state.lastBook?.spine) {
+    const sp = state.lastBook.spine;
+    const mbs = sp.middle_beats || [];
+    if (mbs.length) return `spine:middle_${mbs.length - 1}`;
+    if (sp.end) return "spine:end";
+    if (sp.beginning) return "spine:beginning";
+  }
+  if (state.lastComic?.panels?.length) {
+    let idx = 0;
+    state.lastComic.panels.forEach((p, i) => {
+      if (p.src || p.caption) idx = i;
+    });
+    return `strip:${idx}`;
+  }
+  const drawIds = Object.keys(state.drawnItems || {});
+  if (drawIds.length) return `draw:${drawIds[drawIds.length - 1]}`;
+  return "";
+}
+
+function openLetteringState(target, tab = "bubble", opts = {}) {
+  const effTarget = target || defaultLetteringTarget();
+  if (!effTarget) return;
+  const curCap = findCaptionForTarget(effTarget);
+  state.lettering = {
+    target: effTarget,
+    tab: tab === "caption" ? "caption" : "bubble",
+    kind: opts.kind || "speech",
+    speaker: opts.speaker ?? "",
+    text: opts.text ?? "",
+    caption: opts.caption !== undefined ? opts.caption : curCap,
+    editBubbleId: opts.editBubbleId || "",
+    fix: opts.fix || null,
+  };
+  refreshLetteringHost(effTarget, true);
+}
+
+function refreshLetteringHost(target, focusInput = false) {
+  if (!target) return;
+  if ((target.startsWith("spine:") || target.startsWith("panel:")) && state.lastBook) {
+    const pane = canvasPane("book", "Book · PDF", renderBookProject(state.lastBook));
+    wireBookPane(pane, state.lastBook);
+  } else if (target.startsWith("strip:") && state.lastComic) {
+    const pane = canvasPane("comic", "Comic", renderComic(state.lastComic));
+    wireComicPanels(pane);
+  } else if (target.startsWith("draw:")) {
+    const did = target.split(":")[1];
+    if (state.drawnItems[did]) renderItem(state.drawnItems[did]);
+  }
+  if (focusInput && state.lettering?.target === target) {
+    setTimeout(() => {
+      const tray = document.querySelector(`[data-let-tray="${CSS.escape(target)}"]`);
+      if (tray) {
+        tray.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        const inp = tray.querySelector(".let-main");
+        if (inp) inp.focus();
+      }
+    }, 30);
+  }
+}
+
+function renderPanelComicBar(target, hasArt, verified, canRemove, hasCap) {
+  if (!target) return "";
+  const isProjectTarget = target.startsWith("spine:") || target.startsWith("panel:");
+  const btns = [
+    `<button type="button" class="comic-act-btn primary-let" data-open-let="${esc(target)}" data-let-tab="bubble" title="Add a speech, shout, or thought bubble onto this panel">💬 + Speech Bubble</button>`,
+    `<button type="button" class="comic-act-btn" data-open-let="${esc(target)}" data-let-tab="caption" title="Add, edit, or hide the yellow narrator caption box">✎ ${hasCap ? "Caption" : "+ Caption"}</button>`,
+  ];
+  if (isProjectTarget && hasArt && !verified) {
     btns.push(`<button type="button" class="mini-art-btn ok" data-art-ok="${esc(target)}" title="Picture matches my story">✓ Right</button>`);
   }
-  if (hasArt) {
+  if (isProjectTarget && hasArt) {
     btns.push(`<button type="button" class="mini-art-btn" data-art-fix="${esc(target)}" title="Fix or redraw this picture">↻ Fix art</button>`);
   }
   if (canRemove) {
     btns.push(`<button type="button" class="mini-art-btn del" data-art-del="${esc(target)}" title="Remove this beat">✕ Remove</button>`);
   }
-  return btns.length ? `<div class="art-mini-acts">${btns.join("")}</div>` : "";
+  return `<div class="panel-comic-bar">${btns.join("")}</div>`;
 }
 
-function renderSpineRow(label, text, src, status, placeholder, target = "", verified = false, canRemove = false) {
-  const thumb = src
-    ? `<div class="spine-thumb"><img src="${esc(src)}" alt=""></div>`
+function renderLetteringTray(target) {
+  const L = state.lettering;
+  if (!L || L.target !== target) return "";
+  const isBub = L.tab !== "caption";
+  const fix = L.fix;
+  const fixHtml = fix
+    ? `<div class="let-fix-box">
+        <div>${esc(fix.message || "Quick check:")}</div>
+        ${(fix.options || []).length
+          ? `<div class="let-fix-chips">${fix.options
+              .map((o) => `<button type="button" class="let-fix-chip" data-let-fix-pick="${esc(o)}">${esc(o)}</button>`)
+              .join("")}</div>`
+          : ""}
+      </div>`
+    : "";
+
+  const bodyHtml = isBub
+    ? `<div class="let-style-row">
+        <button type="button" class="let-kind-btn ${L.kind === "speech" ? "on" : ""}" data-let-kind="speech">💬 Speech</button>
+        <button type="button" class="let-kind-btn ${L.kind === "shout" ? "on" : ""}" data-let-kind="shout">💥 SHOUT!</button>
+        <button type="button" class="let-kind-btn ${L.kind === "thought" ? "on" : ""}" data-let-kind="thought">💭 Thought</button>
+        <span class="muted" style="font-size:.75rem;margin-left:auto">Drag bubbles on the art to move them!</span>
+      </div>
+      <div class="let-inputs">
+        <input type="text" class="let-speaker" placeholder="Who? (optional)" value="${esc(L.speaker || "")}" maxlength="26">
+        <input type="text" class="let-main" placeholder="What does the bubble say? (e.g. What is that smell?!)" value="${esc(L.text || "")}" maxlength="160">
+        <button type="button" class="let-mic-btn" data-let-mic="${esc(target)}" title="Say the dialogue line out loud">🎤</button>
+        <button type="button" class="let-save-btn" data-let-save-bub="${esc(target)}">${L.editBubbleId ? "Update Bubble" : "Put on Panel"}</button>
+      </div>`
+    : `<div class="let-inputs">
+        <input type="text" class="let-main" placeholder="Yellow comic caption box (e.g. Meanwhile, on Earth...)" value="${esc(L.caption || "")}" maxlength="300">
+        <button type="button" class="let-save-btn" data-let-save-cap="${esc(target)}">Save Caption</button>
+        <button type="button" class="comic-act-btn" data-let-clear-cap="${esc(target)}" title="Remove caption box so only art & speech bubbles show">Hide Caption</button>
+      </div>`;
+
+  return `<div class="lettering-tray" data-let-tray="${esc(target)}">
+    <div class="lettering-tabs">
+      <div class="let-tab-group">
+        <button type="button" class="let-tab ${isBub ? "on" : ""}" data-let-switch="bubble">💬 Speech Bubble</button>
+        <button type="button" class="let-tab ${!isBub ? "on" : ""}" data-let-switch="caption">✎ Caption Box</button>
+      </div>
+      <button type="button" class="text-btn" style="padding:2px 8px;font-size:.8rem" data-let-close="1">✕</button>
+    </div>
+    ${bodyHtml}
+    ${fixHtml}
+  </div>`;
+}
+
+function renderComicPanelUnit(opts) {
+  const target = opts.target || "";
+  const badge = opts.badge || "";
+  const src = opts.src || null;
+  const status = opts.status || "";
+  const cap = String(opts.caption ?? "").trim();
+  const hasCap = cap.length > 0;
+  const bubs = Array.isArray(opts.dialogue) ? opts.dialogue : [];
+  const cls = status === "drawing" ? "art drawing" : "art";
+  const artInner = src
+    ? `<img src="${esc(src)}" alt="" draggable="false">`
+    : status === "failed"
+    ? `<div style="display:grid;place-items:center;height:100%;color:#666;padding:12px">Couldn't draw that one—tap Fix art to retry.</div>`
     : status === "drawing"
-    ? `<div class="spine-thumb drawing"><div class="shimmer" style="height:100%"></div></div>`
-    : `<div class="spine-thumb empty"><span>Art unlocks</span></div>`;
-  const miniActs = text ? renderArtMiniActs(target, !!src, !!verified, canRemove) : "";
-  return `<div class="spine-row-card">
+    ? `<div class="shimmer" style="height:100%"></div>`
+    : `<div style="display:grid;place-items:center;height:100%;color:#888;font-size:.9rem">Panel ready</div>`;
+
+  const bubsHtml = bubs
+    .map(
+      (d, idx) => `<div class="comic-bubble ${esc(d.kind || "speech")}"
+        data-bub-id="${esc(d.id || `bub_${idx}`)}"
+        data-bub-target="${esc(target)}"
+        data-bub-speaker="${esc(d.speaker || "")}"
+        data-bub-text="${esc(d.text || "")}"
+        data-bub-kind="${esc(d.kind || "speech")}"
+        style="left:${Number(d.x ?? 12)}%;top:${Number(d.y ?? 10)}%"
+        title="Drag anywhere on the panel · Click to edit">
+        <span class="bub-body">${d.speaker ? `<strong>${esc(d.speaker)}:</strong> ` : ""}${esc(d.text || "")}</span>
+        <button type="button" class="bub-del" data-del-bub="${esc(d.id || `bub_${idx}`)}" data-bub-target="${esc(target)}" title="Remove bubble">✕</button>
+      </div>`
+    )
+    .join("");
+
+  return `<div class="comic-unit ${esc(opts.extraClass || "")}" data-comic-unit="${esc(target)}">
+    <div class="panel">
+      <div class="${cls}" data-art-stage="${esc(target)}">
+        ${badge ? `<span class="panel-badge">${esc(badge)}</span>` : ""}
+        ${bubsHtml}
+        ${artInner}
+      </div>
+      ${hasCap ? `<div class="caption" data-edit-cap="${esc(target)}" title="Click to edit or hide caption">${esc(cap)}</div>` : ""}
+    </div>
+    ${renderPanelComicBar(target, !!src || status === "drawing", !!opts.verified, !!opts.canRemove, hasCap)}
+    ${renderLetteringTray(target)}
+  </div>`;
+}
+
+function submitActiveLettering(tray, target) {
+  const L = state.lettering;
+  if (!L || L.target !== target) return;
+  if (L.tab === "caption") {
+    const capVal = tray.querySelector(".let-main")?.value ?? "";
+    L.caption = capVal;
+    send({ type: "comic_lettering", target, action: "set_caption", caption: capVal });
+  } else {
+    const spkVal = tray.querySelector(".let-speaker")?.value ?? "";
+    const txtVal = tray.querySelector(".let-main")?.value ?? "";
+    L.speaker = spkVal;
+    L.text = txtVal;
+    send({
+      type: "comic_lettering",
+      target,
+      action: L.editBubbleId ? "edit_bubble" : "add_bubble",
+      bubble_id: L.editBubbleId || undefined,
+      speaker: spkVal,
+      text: txtVal,
+      kind: L.kind || "speech",
+    });
+  }
+}
+
+function wireComicPanels(root) {
+  if (!root) return;
+  root.querySelectorAll("[data-open-let]").forEach((btn) => {
+    btn.onclick = () => {
+      openLetteringState(btn.dataset.openLet, btn.dataset.letTab || "bubble");
+    };
+  });
+  root.querySelectorAll("[data-edit-cap]").forEach((capEl) => {
+    capEl.onclick = () => {
+      openLetteringState(capEl.dataset.editCap, "caption");
+    };
+  });
+  root.querySelectorAll(".bub-del").forEach((delBtn) => {
+    delBtn.onclick = (e) => {
+      e.stopPropagation();
+      send({
+        type: "comic_lettering",
+        target: delBtn.dataset.bubTarget,
+        action: "delete_bubble",
+        bubble_id: delBtn.dataset.delBub,
+      });
+    };
+  });
+
+  // Drag-to-position + click-to-edit on every comic speech bubble
+  root.querySelectorAll(".comic-bubble").forEach((bubEl) => {
+    bubEl.onpointerdown = (e) => {
+      if (e.target.closest(".bub-del")) return;
+      const stage = bubEl.closest("[data-art-stage]");
+      if (!stage) return;
+      e.preventDefault();
+      bubEl.setPointerCapture(e.pointerId);
+      const rect = stage.getBoundingClientRect();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const origLeft = parseFloat(bubEl.style.left) || 12;
+      const origTop = parseFloat(bubEl.style.top) || 10;
+      let moved = false;
+      let curX = origLeft;
+      let curY = origTop;
+
+      const onMove = (ev) => {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        if (Math.hypot(dx, dy) > 5) moved = true;
+        if (!moved) return;
+        curX = Math.max(2, Math.min(82, origLeft + (dx / Math.max(1, rect.width)) * 100));
+        curY = Math.max(2, Math.min(76, origTop + (dy / Math.max(1, rect.height)) * 100));
+        bubEl.style.left = `${Math.round(curX)}%`;
+        bubEl.style.top = `${Math.round(curY)}%`;
+      };
+      const onUp = () => {
+        bubEl.removeEventListener("pointermove", onMove);
+        bubEl.removeEventListener("pointerup", onUp);
+        if (moved) {
+          send({
+            type: "comic_lettering",
+            target: bubEl.dataset.bubTarget,
+            action: "move_bubble",
+            bubble_id: bubEl.dataset.bubId,
+            x: Math.round(curX),
+            y: Math.round(curY),
+          });
+        } else {
+          openLetteringState(bubEl.dataset.bubTarget, "bubble", {
+            editBubbleId: bubEl.dataset.bubId,
+            speaker: bubEl.dataset.bubSpeaker || "",
+            text: bubEl.dataset.bubText || "",
+            kind: bubEl.dataset.bubKind || "speech",
+          });
+        }
+      };
+      bubEl.addEventListener("pointermove", onMove);
+      bubEl.addEventListener("pointerup", onUp);
+    };
+  });
+
+  // Wire active inline lettering tray controls
+  root.querySelectorAll("[data-let-tray]").forEach((tray) => {
+    const target = tray.dataset.letTray;
+    const syncDraft = () => {
+      if (!state.lettering || state.lettering.target !== target) return;
+      if (state.lettering.tab === "caption") {
+        state.lettering.caption = tray.querySelector(".let-main")?.value ?? "";
+      } else {
+        state.lettering.speaker = tray.querySelector(".let-speaker")?.value ?? "";
+        state.lettering.text = tray.querySelector(".let-main")?.value ?? "";
+      }
+    };
+    tray.querySelectorAll("input").forEach((inp) => {
+      inp.oninput = syncDraft;
+      inp.onkeydown = (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submitActiveLettering(tray, target);
+        }
+      };
+    });
+    tray.querySelectorAll("[data-let-switch]").forEach((tb) => {
+      tb.onclick = () => {
+        syncDraft();
+        state.lettering.tab = tb.dataset.letSwitch;
+        state.lettering.fix = null;
+        refreshLetteringHost(target, true);
+      };
+    });
+    tray.querySelectorAll("[data-let-kind]").forEach((kb) => {
+      kb.onclick = () => {
+        syncDraft();
+        state.lettering.kind = kb.dataset.letKind;
+        refreshLetteringHost(target, true);
+      };
+    });
+    const closeBtn = tray.querySelector("[data-let-close]");
+    if (closeBtn) {
+      closeBtn.onclick = () => {
+        state.lettering = null;
+        refreshLetteringHost(target, false);
+      };
+    }
+    const saveBub = tray.querySelector("[data-let-save-bub]");
+    if (saveBub) saveBub.onclick = () => submitActiveLettering(tray, target);
+    const saveCap = tray.querySelector("[data-let-save-cap]");
+    if (saveCap) saveCap.onclick = () => submitActiveLettering(tray, target);
+    const clrCap = tray.querySelector("[data-let-clear-cap]");
+    if (clrCap) {
+      clrCap.onclick = () => {
+        send({ type: "comic_lettering", target, action: "set_caption", caption: "", force: true });
+      };
+    }
+    const micBtn = tray.querySelector("[data-let-mic]");
+    if (micBtn) {
+      micBtn.onclick = () => {
+        syncDraft();
+        begin();
+        send({ type: "request_dialogue_mic", target });
+      };
+    }
+    tray.querySelectorAll("[data-let-fix-pick]").forEach((chip) => {
+      chip.onclick = () => {
+        syncDraft();
+        const picked = chip.dataset.letFixPick || "";
+        const fix = state.lettering?.fix || {};
+        const mainInp = tray.querySelector(".let-main");
+        if (!mainInp) return;
+        let nextVal = mainInp.value;
+        if (fix.issue === "spelling" && fix.wrote) {
+          const escW = fix.wrote.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          nextVal = nextVal.replace(new RegExp(`\\b${escW}\\b`, "i"), picked);
+        } else {
+          nextVal = picked;
+        }
+        mainInp.value = nextVal;
+        syncDraft();
+        state.lettering.fix = null;
+        const firstAlpha = (nextVal.match(/[A-Za-z]/) || [""])[0];
+        const capOk = !firstAlpha || firstAlpha === firstAlpha.toUpperCase();
+        const endOk = /[.!?…]["”')\]]*$/.test(nextVal.trim());
+        if (capOk && endOk) {
+          submitActiveLettering(tray, target);
+        } else {
+          refreshLetteringHost(target, true);
+        }
+      };
+    });
+  });
+}
+
+function renderSpinePlaceholder(label, placeholder) {
+  return `<div class="spine-row-card" style="grid-column: 1 / -1">
     <div class="spine-beat">
       <strong>${esc(label)}</strong>
-      <div style="margin-top:4px">${text ? esc(text) : `<span class="muted">${esc(placeholder)}</span>`}</div>
-      ${miniActs}
+      <div style="margin-top:4px"><span class="muted">${esc(placeholder)}</span></div>
     </div>
-    ${thumb}
+    <div class="spine-thumb empty"><span>Comic panel unlocks</span></div>
   </div>`;
 }
 
 function wireBookPane(pane, it) {
+  wireComicPanels(pane);
   const sw = pane.querySelector("[data-switch-book]");
   if (sw) sw.onclick = () => toggleSidebar(true);
   const rn = pane.querySelector("[data-rename-cur]");
@@ -1079,19 +1487,66 @@ function renderBookProject(b) {
   const sp = b.spine || {};
   const mbeats = Array.isArray(sp.middle_beats) ? sp.middle_beats : [];
   const hasSpine = b.proj_kind === "epic_graphic_novel" || sp.beginning || sp.end || mbeats.length;
-  const midRowsHtml = mbeats.length
-    ? mbeats
-        .map((mb, i) => renderSpineRow(`Middle Twist #${i + 1}`, mb.text, mb.src, mb.status, "What else happens in the middle?", `spine:middle_${i}`, !!mb.verified, true))
-        .join("")
-    : renderSpineRow("Middle Twists (Add as many as you want!)", "", null, null, "After your Finale, pack the middle with wild twists & obstacles!");
 
-  const spineHtml = hasSpine
-    ? `<div class="spine-box">
-        ${renderSpineRow("The Beginning · Kickoff (Cover Art)", sp.beginning, sp.beginning_src || b.cover_src, sp.beginning_status, "Write the kickoff to unlock your Cover Art!", "spine:beginning", !!sp.beginning_verified, false)}
-        ${midRowsHtml}
-        ${renderSpineRow("The Big Finale · Payoff (End of Book)", sp.end, sp.end_src, sp.end_status, "Jump to the end—how does the whole story pay off?", "spine:end", !!sp.end_verified, false)}
-      </div>`
-    : "";
+  let spineHtml = "";
+  if (hasSpine) {
+    const cards = [];
+    if (sp.beginning || sp.beginning_src || sp.beginning_status === "drawing") {
+      cards.push(
+        renderComicPanelUnit({
+          target: "spine:beginning",
+          badge: "COVER · KICKOFF",
+          src: sp.beginning_src || b.cover_src,
+          status: sp.beginning_status,
+          caption: sp.beginning_caption !== undefined ? sp.beginning_caption : (sp.beginning || ""),
+          dialogue: sp.beginning_dialogue || [],
+          verified: !!sp.beginning_verified,
+          canRemove: false,
+          extraClass: !mbeats.length && !sp.end ? "spine-hero" : "",
+        })
+      );
+    } else {
+      cards.push(renderSpinePlaceholder("Step 1 · The Beginning (Cover & Kickoff Panel)", "Write the kickoff sentence to unlock your Cover Comic Panel!"));
+    }
+
+    if (mbeats.length) {
+      mbeats.forEach((mb, i) => {
+        cards.push(
+          renderComicPanelUnit({
+            target: `spine:middle_${i}`,
+            badge: `MIDDLE TWIST #${i + 1}`,
+            src: mb.src,
+            status: mb.status,
+            caption: mb.caption !== undefined ? mb.caption : (mb.text || ""),
+            dialogue: mb.dialogue || [],
+            verified: !!mb.verified,
+            canRemove: true,
+          })
+        );
+      });
+    } else if (sp.beginning && sp.end) {
+      cards.push(renderSpinePlaceholder("Step 3 · Middle Twists (Add as many panels as you want!)", "Add wild middle twists & speech bubbles between your Kickoff and Finale!"));
+    }
+
+    if (sp.end || sp.end_src || sp.end_status === "drawing") {
+      cards.push(
+        renderComicPanelUnit({
+          target: "spine:end",
+          badge: "BIG FINALE",
+          src: sp.end_src,
+          status: sp.end_status,
+          caption: sp.end_caption !== undefined ? sp.end_caption : (sp.end || ""),
+          dialogue: sp.end_dialogue || [],
+          verified: !!sp.end_verified,
+          canRemove: false,
+        })
+      );
+    } else if (sp.beginning) {
+      cards.push(renderSpinePlaceholder("Step 2 · The Big Finale (End of Book Panel)", "Jump to the very end—how does the whole story pay off?"));
+    }
+
+    spineHtml = `<div class="spine-grid">${cards.join("")}</div>`;
+  }
 
   const codexLiveHtml =
     b.proj_kind === "epic_codex" && (b.codex_sketch_src || b.codex_sketch_status === "drawing" || (b.codex_draft_sentences || []).length)
@@ -1145,15 +1600,18 @@ function renderBookProject(b) {
       const pList = ch.panels || [];
       if (!pList.length) return "";
       const cells = pList
-        .map((p) => {
-          const art = p.src ? `<img src="${esc(p.src)}" alt="">` : "";
-          const cls = p.status === "drawing" ? "art drawing" : "art";
-          const bubs = (p.dialogue || [])
-            .map((d) => `<div class="bubble-overlay">${d.speaker ? `<strong>${esc(d.speaker)}:</strong> ` : ""}${esc(d.text)}</div>`)
-            .join("");
-          const pActs = renderArtMiniActs(`panel:${p.number}`, !!p.src, !!p.verified, true);
-          return `<div class="panel"><div class="${cls}"><span class="num" style="background:#111;color:#fff;padding:2px 8px;border-radius:4px;font-size:.95rem;top:6px;left:6px">${p.number || ""}</span>${bubs ? `<div class="bubbles">${bubs}</div>` : ""}${art}</div><div class="caption">${esc(p.caption || "")}${pActs}</div></div>`;
-        })
+        .map((p) =>
+          renderComicPanelUnit({
+            target: `panel:${p.number}`,
+            badge: `PANEL ${p.number || ""}`,
+            src: p.src,
+            status: p.status,
+            caption: p.caption ?? "",
+            dialogue: p.dialogue || [],
+            verified: !!p.verified,
+            canRemove: true,
+          })
+        )
         .join("");
       return `<div class="ch-label">${esc(ch.title || "Chapter " + ch.number)}</div><div class="comic-grid">${cells}</div>`;
     })
@@ -1178,16 +1636,23 @@ function renderBookProject(b) {
     ${stylesHtml}
     ${spineHtml}
     ${codexLiveHtml}
-    ${chHtml || '<div class="muted" style="padding:8px 2px">Each completed beat unlocks live artwork right here and updates your downloadable PDF immediately!</div>'}`;
+    ${chHtml || '<div class="muted" style="padding:8px 2px">Tip: Click <b>💬 + Speech Bubble</b> or <b>✎ Caption</b> under any panel to add comic dialogue, shout bubbles, or edit captions!</div>'}`;
 }
 
 function renderComic(c) {
-  const panels = c.panels
-    .map((p, i) => {
-      const art = p.src ? `<img src="${esc(p.src)}" alt="">` : "";
-      const cls = p.status === "drawing" ? "art drawing" : "art";
-      return `<div class="panel"><div class="${cls}">${art || `<span class="num">${i + 1}</span>`}</div><div class="caption">${esc(p.caption || "")}</div></div>`;
-    })
+  const panels = (c.panels || [])
+    .map((p, i) =>
+      renderComicPanelUnit({
+        target: `strip:${i}`,
+        badge: `PANEL ${i + 1}`,
+        src: p.src,
+        status: p.status,
+        caption: p.caption ?? "",
+        dialogue: p.dialogue || [],
+        verified: true,
+        canRemove: false,
+      })
+    )
     .join("");
   return `<div class="comic-title">${esc(c.title || "")}</div><div class="comic-grid">${panels}</div>`;
 }
@@ -1295,6 +1760,41 @@ function handle(m) {
       break;
     case "reward":
       if (m.label) showRewardBadge(m.label);
+      break;
+    case "open_comic_lettering":
+      openLetteringState(m.target || "", m.tab || "bubble", {
+        speaker: m.prefill_speaker || "",
+        text: m.prefill_text || "",
+        fix: m.fix || null,
+      });
+      break;
+    case "comic_lettering_fix":
+      if (state.lettering && (!m.target || state.lettering.target === m.target)) {
+        state.lettering.fix = m.fix || null;
+        refreshLetteringHost(state.lettering.target, true);
+      } else {
+        openLetteringState(m.target || "", m.mode === "caption" ? "caption" : "bubble", { fix: m.fix || null });
+      }
+      break;
+    case "comic_lettering_saved":
+      if (state.lettering && (!m.target || state.lettering.target === m.target)) {
+        const tgt = state.lettering.target;
+        state.lettering = null;
+        refreshLetteringHost(tgt, false);
+      }
+      showRewardBadge(m.action === "set_caption" ? "✎ Comic Caption Updated!" : m.action === "delete_bubble" ? "Bubble Removed" : "💬 Speech Bubble Added!");
+      break;
+    case "lettering_voice_fill":
+      if (m.text) {
+        const tgt = m.target || state.lettering?.target || "";
+        const curTab = state.lettering?.tab || "bubble";
+        openLetteringState(tgt, curTab, {
+          speaker: state.lettering?.speaker || "",
+          text: curTab === "bubble" ? m.text : (state.lettering?.text || ""),
+          caption: curTab === "caption" ? m.text : undefined,
+          editBubbleId: state.lettering?.editBubbleId || "",
+        });
+      }
       break;
     case "input": {
       if (typeof m.epoch === "number") {

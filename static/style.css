@@ -1556,3 +1556,380 @@ body.fresh .dock {
   border-radius: 999px;
   padding: 3px 12px;
 }
+
+/* ---------- Authentic Comic Panels, Speech/Shout/Thought Bubbles & Captions ---------- */
+.comic-unit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.comic-unit.stream-comic {
+  max-width: 540px;
+}
+
+.panel {
+  background: #fff;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 3.5px solid #0d0d0d;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.42);
+  display: flex;
+  flex-direction: column;
+}
+
+.panel .art {
+  aspect-ratio: 4/3;
+  background: #f2f1ec;
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+}
+
+.panel .panel-badge {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  background: #fff5c2;
+  color: #111;
+  border-right: 2.5px solid #111;
+  border-bottom: 2.5px solid #111;
+  padding: 2px 9px;
+  font-family: "Comic Sans MS", "Chalkboard SE", "Comic Neue", var(--font);
+  font-weight: 800;
+  font-size: 0.76rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.panel .caption {
+  background: #fff5c2;
+  color: #111;
+  padding: 9px 12px;
+  min-height: 0;
+  font-family: "Comic Sans MS", "Chalkboard SE", "Marker Felt", "Comic Neue", var(--font);
+  font-weight: 600;
+  font-size: 1.02rem;
+  line-height: 1.35;
+  border-top: 3px solid #0d0d0d;
+  cursor: pointer;
+}
+
+.panel .caption:hover {
+  background: #ffef9e;
+}
+
+/* Draggable Speech, Shout & Thought Bubbles with Real Tails */
+.comic-bubble {
+  position: absolute;
+  z-index: 4;
+  max-width: 78%;
+  background: #ffffff;
+  color: #111111;
+  border: 2.5px solid #111111;
+  border-radius: 18px;
+  padding: 6px 24px 6px 11px;
+  font-family: "Comic Sans MS", "Chalkboard SE", "Marker Felt", "Comic Neue", sans-serif;
+  font-weight: 700;
+  font-size: 0.88rem;
+  line-height: 1.25;
+  box-shadow: 3px 3px 0 #111111;
+  cursor: grab;
+  touch-action: none;
+}
+
+.comic-bubble:active {
+  cursor: grabbing;
+}
+
+.comic-bubble.speech::before {
+  content: "";
+  position: absolute;
+  left: 16px;
+  bottom: -12px;
+  border-width: 12px 9px 0 4px;
+  border-style: solid;
+  border-color: #111111 transparent transparent transparent;
+}
+
+.comic-bubble.speech::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  bottom: -8px;
+  border-width: 9px 7px 0 3px;
+  border-style: solid;
+  border-color: #ffffff transparent transparent transparent;
+}
+
+.comic-bubble.shout {
+  background: #fffae0;
+  border: 3px solid #111111;
+  border-radius: 5px;
+  transform: rotate(-1.5deg);
+  letter-spacing: 0.02em;
+}
+
+.comic-bubble.shout::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  bottom: -13px;
+  border-width: 13px 10px 0 3px;
+  border-style: solid;
+  border-color: #111111 transparent transparent transparent;
+}
+
+.comic-bubble.shout::after {
+  content: "";
+  position: absolute;
+  left: 20px;
+  bottom: -8px;
+  border-width: 9px 7px 0 2px;
+  border-style: solid;
+  border-color: #fffae0 transparent transparent transparent;
+}
+
+.comic-bubble.thought {
+  border-radius: 24px;
+  background: #ffffff;
+}
+
+.comic-bubble.thought::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  bottom: -10px;
+  width: 9px;
+  height: 9px;
+  background: #fff;
+  border: 2.5px solid #111;
+  border-radius: 50%;
+}
+
+.comic-bubble.thought::after {
+  content: "";
+  position: absolute;
+  left: 11px;
+  bottom: -18px;
+  width: 5px;
+  height: 5px;
+  background: #fff;
+  border: 2px solid #111;
+  border-radius: 50%;
+}
+
+.comic-bubble .bub-del {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #666;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.45;
+}
+
+.comic-bubble:hover .bub-del {
+  opacity: 1;
+  background: #f1f3f4;
+  color: #c5221f;
+}
+
+.panel-comic-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.comic-act-btn {
+  background: #24272c;
+  color: #e8eaed;
+  border: 1px solid #3c4043;
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-family: var(--font);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.comic-act-btn:hover {
+  background: #30343b;
+  border-color: #8ab4f8;
+}
+
+.comic-act-btn.primary-let {
+  background: rgba(138, 180, 248, 0.14);
+  color: #aecbfa;
+  border-color: rgba(138, 180, 248, 0.45);
+}
+
+.comic-act-btn.primary-let:hover {
+  background: rgba(138, 180, 248, 0.24);
+}
+
+.lettering-tray {
+  background: #202226;
+  border: 1.5px solid #4285f4;
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lettering-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.let-tab-group {
+  display: flex;
+  gap: 6px;
+}
+
+.let-tab {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid #3c4043;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.let-tab.on {
+  background: #8ab4f8;
+  color: #131314;
+  border-color: #8ab4f8;
+  font-weight: 600;
+}
+
+.let-style-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.let-kind-btn {
+  background: #16181b;
+  color: var(--text-2);
+  border: 1px solid #3c4043;
+  border-radius: 8px;
+  padding: 3px 9px;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.let-kind-btn.on {
+  border-color: #fdd663;
+  color: #fdd663;
+  background: rgba(253, 214, 99, 0.12);
+}
+
+.let-inputs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.let-inputs input {
+  background: #131416;
+  color: var(--text);
+  border: 1px solid #3c4043;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 0.9rem;
+  font-family: var(--font);
+}
+
+.let-inputs input.let-speaker {
+  width: 125px;
+  flex: 0 0 auto;
+}
+
+.let-inputs input.let-main {
+  flex: 1 1 180px;
+  min-width: 150px;
+}
+
+.let-save-btn {
+  background: #8ab4f8;
+  color: #131314;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-weight: 600;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.let-mic-btn {
+  background: rgba(52, 168, 83, 0.18);
+  color: #81c995;
+  border: 1px solid rgba(129, 201, 149, 0.45);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.let-fix-box {
+  background: rgba(253, 214, 99, 0.1);
+  border: 1px solid rgba(253, 214, 99, 0.4);
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: 0.84rem;
+  color: #fde293;
+}
+
+.let-fix-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.let-fix-chip {
+  background: #2b2e33;
+  color: #fff;
+  border: 1px solid #8ab4f8;
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.let-fix-chip:hover {
+  background: #4285f4;
+}
+
+.spine-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.spine-grid .spine-hero {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 720px) {
+  .spine-grid {
+    grid-template-columns: 1fr;
+  }
+}
