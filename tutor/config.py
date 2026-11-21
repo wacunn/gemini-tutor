@@ -32,6 +32,10 @@ REVIEW_MODEL = os.environ.get("TUTOR_REVIEW_MODEL", "gemini-4-carbon")
 # Sub-second synchronous clause/spelling check & 2-kernel generator on the hot turn path
 FAST_MODEL = os.environ.get("TUTOR_FAST_MODEL", "gemini-3.5-flash")
 FALLBACK_MODEL = os.environ.get("TUTOR_FALLBACK_MODEL", "gemini-3.8-flash")
+# Small, fast model for light jobs (next story question + starters, background learning updates)
+LITE_MODEL = os.environ.get("TUTOR_LITE_MODEL", "gemini-3.1-flash-lite")
+# Adaptive coach decision model (judgment call each turn)
+COACH_MODEL = os.environ.get("TUTOR_COACH_MODEL", FAST_MODEL)
 
 VOICES = [
     ("Umbriel", "easy-going"),

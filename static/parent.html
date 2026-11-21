@@ -255,6 +255,10 @@
       <div class="card muted">No session running.</div>
     </div>
 
+    <h2>How the coach is adapting to him</h2>
+    <div class="grid" id="coach"></div>
+    <details style="margin-top:12px"><summary>Coach decision log (latest first)</summary><div id="coachLog" class="t" style="margin-top:10px"></div></details>
+
     <h2>Ontario Curriculum Report Card (Grades 3–4)</h2>
     <div id="reportCard"></div>
 
@@ -309,6 +313,9 @@
         <label style="flex:1;min-width:140px">Child's name <input id="childName" /></label>
         <label style="width:100px">Grade <input id="childGrade" type="number" min="1" max="12" /></label>
         <label style="flex:1;min-width:140px">What they call you <input id="parentTitle" /></label>
+      </div>
+      <div class="row" style="flex-wrap:wrap;margin-bottom:10px">
+        <label style="display:flex;align-items:center;gap:8px;width:auto"><input id="cursiveReady" type="checkbox" style="width:auto" /> Ready to start cursive (the coach will introduce a few letters at a time)</label>
       </div>
       <div class="row" style="flex-wrap:wrap">
         <label style="flex:1;min-width:160px">Voice <select id="voice"></select></label>
@@ -368,6 +375,27 @@
     <div class="card"><h3>Open hypotheses</h3>${list(M.hypotheses)}</div>
     <div class="card"><h3>Plan for next session</h3>${esc(M.plan_next_session || "–")}<h3 style="margin-top:12px">Ideas to try</h3>${list(M.ideas_to_try)}</div>`;
 
+        const C = L.coach_model || {};
+        const ss = C.skill_stats || {};
+        const rate = (k) => { const a = ss[k] || []; return a.length ? `${a.filter(Boolean).length}/${a.length}` : "–"; };
+        const lastDay = (C.day_states || []).slice(-1)[0] || {};
+        const decs = (C.decisions || []).slice().reverse();
+        const pushed = decs.filter(x => !x.accept).length, accepted = decs.filter(x => x.accept).length;
+        $("coach").innerHTML = `
+    <div class="card"><h3>Unprompted skills (recent first drafts)</h3>
+      <div>Complete sentences: <b>${rate("complete")}</b></div>
+      <div>Starting capital: <b>${rate("capital")}</b> · End mark: <b>${rate("end_mark")}</b></div>
+      <div>No misspellings: <b>${rate("spelling_clean")}</b> · Verb endings OK: <b>${rate("verb_endings")}</b></div>
+      <div>Linking words (because/when/but/so): <b>${rate("connector")}</b> · Dialogue: <b>${rate("dialogue")}</b></div>
+      <div class="muted" style="margin-top:6px">Spelling he found himself: ${C.self_catches ?? 0} · after the coach pointed: ${C.ai_catches ?? 0}</div></div>
+    <div class="card"><h3>Today / recent state</h3>
+      <div class="big" style="font-size:1.3rem">${esc(lastDay.energy || "–")} energy · ${esc(lastDay.willingness || "–")} willingness</div>
+      <div class="muted">${esc(lastDay.note || "")}</div>
+      <div class="muted" style="margin-top:6px">Last ${decs.length} decisions: ${accepted} accepted straight to art, ${pushed} asked for one change</div></div>
+    <div class="card"><h3>Hypotheses being tested on him</h3>${(C.hypotheses || []).map(h => `<div style="margin:5px 0"><span class="pill">${esc(h.id)}</span> ${esc(h.text)} <span class="${h.for > h.against ? "ok" : h.against > h.for ? "warn" : "muted"}">(${h.for || 0} for / ${h.against || 0} against)</span></div>`).join("") || '<div class="muted">Starts after his first writing turn.</div>'}</div>
+    <div class="card"><h3>What works for him</h3>${list(C.what_works)}<h3 style="margin-top:12px">Saved for the editing pass</h3>${list((C.deferred || []).slice(-8).reverse().map(x => x.issue))}</div>`;
+        $("coachLog").innerHTML = decs.slice(0, 40).map(x => `<div class="${x.accept ? "g" : "k"}">${esc((x.time || "").slice(5, 16).replace("T", " "))} · “${esc(x.sentence)}” → <b>${x.accept ? "accept" : "ask: " + esc(x.focus) + (x.spell_rung ? " (rung " + x.spell_rung + ")" : "")}</b>${x.guardrail ? ` <span class="pill">guardrail: ${esc(x.guardrail)}</span>` : ""}<div class="muted" style="margin-left:14px">${esc(x.rationale || "")}${x.kid_words && !x.accept ? `<br>said: “${esc(x.kid_words)}”` : ""}</div></div>`).join("") || '<div class="muted">No decisions yet.</div>';
+
         const rows = L.sessions.filter(s => s.metrics).map(s =>
           `<tr><td>${esc(s.date.slice(0, 10))}</td><td>${s.minutes}m</td><td>${s.metrics.complete_first_try_rate == null ? "–" : Math.round(s.metrics.complete_first_try_rate * 100) + "%"}</td><td>${s.metrics.sentence_attempts ?? "–"}</td><td>${s.metrics.typed_chars ?? "–"}</td><td>${s.metrics.kid_spoken_words ?? "–"}</td><td>${s.metrics.talk_ratio_kid_to_tutor ?? "–"}</td></tr>`).join("");
         $("trend").innerHTML = rows ? `<table style="width:100%;border-collapse:collapse" class="t"><tr class="muted"><td>Date</td><td>Length</td><td>Complete 1st try</td><td>Sentences</td><td>Typed chars</td><td>Spoken words</td><td>Kid:tutor talk</td></tr>${rows}</table>` : '<span class="muted">After the first reviewed session.</span>';
@@ -390,6 +418,7 @@
               if (e.kind === "tutor_said") return `<div class="g">${t} Gemini: ${esc(e.text)}</div>`;
               if (e.kind === "critic") return `<div class="n">${t} critic: ${esc(e.state?.verdict)} ${esc(e.state?.issue || "")}</div>`;
               if (e.kind === "tracker") return `<div class="n">${t} tracker: engagement ${esc(e.state?.engagement?.level)} ${esc(e.state?.risk || "")}</div>`;
+              if (e.kind === "coach") return `<div class="n">${t} coach: ${e.accept ? "accept" : "ask " + esc(e.focus)}${e.guardrail ? " [" + esc(e.guardrail) + "]" : ""} — ${esc(e.rationale || "")}</div>`;
               if (e.kind === "tool") return `<div class="n">${t} [${esc(e.name)}] ${esc(JSON.stringify(e.args).slice(0, 160))}</div>`;
               return "";
             }).join("");
@@ -449,6 +478,7 @@
         $("childName").value = L.name || "";
         $("childGrade").value = L.grade || 3;
         $("parentTitle").value = L.parent_title || "Mom";
+        $("cursiveReady").checked = !!L.cursive_ready;
         $("voice").innerHTML = st.voices.map(([v, d]) => `<option value="${v}" ${v === st.voice ? "selected" : ""}>${v} (${d})</option>`).join("");
       }
 
@@ -466,6 +496,7 @@
             grade: Number($("childGrade").value) || 3,
             parent_title: $("parentTitle").value,
             voice: $("voice").value,
+            cursive_ready: $("cursiveReady").checked,
           }),
         });
         const k = $("key").value.trim();

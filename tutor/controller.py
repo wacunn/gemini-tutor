@@ -16,17 +16,19 @@ Replacement-grade engine covering Ontario Grades 3–4 Language Strands B, C, an
 from __future__ import annotations
 
 import re
+import threading
+import time
 from typing import Any
 
 from google import genai
 from google.genai import types
 
 from . import curriculum_tracker as ct
-from . import projects, research_packs, spelling_srs, thinking
-from .config import FALLBACK_MODEL, FAST_MODEL, genai_client
+from . import coach, projects, research_packs, spelling_srs, thinking
+from .config import FALLBACK_MODEL, FAST_MODEL, LITE_MODEL, genai_client
 from .record import save_learner
 
-PLANNER_MODEL = FAST_MODEL
+PLANNER_MODEL = LITE_MODEL  # next story question + starters: small model is ~40% faster with equal quality
 
 GREETINGS = {"hi", "hey", "hello", "yo", "sup", "hiya", "start", "ready", "ok", "okay"}
 AVOIDANCE_WORDS = {
@@ -76,13 +78,16 @@ Your job: generate the exact next prompt by reading THEIR actual characters, plo
 CRITICAL RULES:
 1. ALWAYS REMIND + ASK SPECIFICALLY: Briefly remind them of the exact detail from their story/pitch so they don't have to hold it in working memory, then ask a curious, specific question ('where', 'why', 'how', 'what goes wrong first when...') that zooms into THIS exact beat!
    - BAD (generic static script): "Your story is all set, so let's zoom into Panel 1. Write one complete sentence describing the very first moment."
-   - GOOD (specific AI story director): "At the start of your story, Bob gets a small, smelly cat! For Panel 1, where did Bob find that smelly cat, or why did he decide to bring it home? Tell me in one complete sentence!"
-   - GOOD (Act II complication): "Okay, Bob has his tiny smelly cat! For the middle of your story, what big problem does that awful smell cause for Bob—write a complete sentence using 'because', 'when', or 'but'!"
-2. Keep `spoken_prompt` to 1–2 crisp, natural sentences ending with the clear sentence/connector expectation.
-3. Also output `kernel_1` and `kernel_2`: two short (5–8 word) optional spark sentences using THEIR exact characters/topic (never write the combined sentence for them).
+   - GOOD: "Bob just got a small, smelly cat! Where on earth did he find it, and why did he bring it home?"
+   - GOOD: "Okay, that cat stinks. What disaster does the smell cause first—and why?"
+2. Let the QUESTION draw out the skill: 'why' questions invite "because", 'what happened when' invites "when", 'but then' invites "but". NEVER name grammar ideas. Never say: complete sentence, punctuation, connector, conjunction, clause, grammar, Act I/II/III, tier.
+3. Keep `spoken_prompt` to 1–2 crisp, natural sentences.
+4. `starters`: 2–3 short tappable sentence STARTERS (3–6 words, ending in "…") built from THEIR characters that use the target linking words (e.g. "Bob barfed because…", "When the cat walked in, …"). Starters, never full sentences.
+5. Also output `kernel_1` and `kernel_2`: two short (5–8 word) optional spark sentences using THEIR exact characters/topic (never write the combined sentence for them).
 Return strict JSON:
-{"spoken_prompt":"1-2 natural sentences reminding them of their story + asking a specific question for this beat + naming the complete-sentence/connector goal.",
- "input_prompt":"Short 1-line specific question + complete-sentence cue for the input bar.",
+{"spoken_prompt":"1-2 natural sentences reminding them of their story + asking a specific question for this beat.",
+ "input_prompt":"Short 1-line specific question for the input bar.",
+ "starters":["Bob barfed because…","When the cat…"],
  "kernel_1":"Short optional spark sentence 1 from their story.",
  "kernel_2":"Short optional spark sentence 2 from their story.",
  "connectors":"when | because | but"}"""
@@ -106,7 +111,7 @@ def ai_direct_next_beat(
     )
     try:
         client = genai_client()
-        for model in (PLANNER_MODEL, FALLBACK_MODEL):
+        for model in (PLANNER_MODEL, FAST_MODEL):
             try:
                 resp = client.models.generate_content(
                     model=model,
@@ -123,6 +128,7 @@ def ai_direct_next_beat(
                     return {
                         "spoken_prompt": str(out["spoken_prompt"]).strip(),
                         "input_prompt": str(out["input_prompt"]).strip(),
+                        "starters": [str(s).strip() for s in (out.get("starters") or []) if str(s).strip()][:3],
                         "kernel_1": str(out.get("kernel_1") or "The door creaks open.").strip(),
                         "kernel_2": str(out.get("kernel_2") or "Something unexpected jumps out.").strip(),
                         "connectors": str(out.get("connectors") or connector_goal).strip(),
@@ -134,6 +140,7 @@ def ai_direct_next_beat(
     return {
         "spoken_prompt": step_goal,
         "input_prompt": step_goal,
+        "starters": [],
         "kernel_1": "The iron pressure plate clicks.",
         "kernel_2": "A hidden piston drops the floor over lava.",
         "connectors": connector_goal,
@@ -283,6 +290,15 @@ class SessionController:
         self.draw_unlocked: bool = False
         self.ui_locked_this_turn: set[str] = set()
 
+        # Adaptive AI Coach (sense -> decide -> act -> learn)
+        coach.ensure_model(rec)
+        self.coach_enabled: bool = True
+        self._coach_lock = threading.RLock()
+        self.coach_session: dict[str, Any] = coach.new_session_state()
+        self.turn_signals: dict[str, Any] = {}
+        self.spell_pick: dict[str, Any] | None = None
+        self.last_coach: dict[str, Any] | None = None
+
     def spine_summary(self) -> str:
         if not self.project:
             return ""
@@ -317,18 +333,18 @@ class SessionController:
                     "spine_end": "Big Finale",
                     "spine_middle": f"Middle Twist #{n_mid + 1}",
                 }.get(stage, "Plotting")
-                return f"Plot Board: {step} · Tier {tier}"
+                return f"Plot Board: {step}"
             if kind == "epic_codex":
                 labels = {0: "Reading Inference", 1: "Paragraph 1/3", 2: "Paragraph 2/3", 3: "Paragraph 3/3"}
                 return f"Codex Entries: {pcount} · {labels.get(self.codex_step, 'Drafting')}"
             if kind == "medium_pitch":
                 return f"Pitch Book (TREE): Page {min(4, self.tree_step + 1)}/4"
             ch_num = len(self.project.get("chapters") or [1])
-            return f"Ch.{ch_num} · Book Panels: {pcount} (Today: {self.goal_done}/{self.session_panels_target}) · Tier {tier}"
+            return f"Ch.{ch_num} · {pcount} panel{'s' if pcount != 1 else ''} · today {self.goal_done}/{self.session_panels_target}"
         if self.phase == "WORD_STUDY" and self.word_target:
             return f"{self.goal_label}: {self.goal_done}/{self.goal_target} · Word Forge"
         streak = f" · Streak {self.first_try_streak}" if self.first_try_streak >= 2 else ""
-        return f"{self.goal_label}: {self.goal_done}/{self.goal_target} · Tier {tier}{streak}"
+        return f"{self.goal_label}: {self.goal_done}/{self.goal_target}{streak}"
 
     def _opening_options(self, opening_ideas: list[dict[str, Any]] | None) -> list[str]:
         opts: list[str] = []
@@ -510,7 +526,7 @@ class SessionController:
         assert self.project is not None
         ui.append({"type": "goal", "text": self.goal_badge()})
         if self.tree_step == 0:
-            ask = f"Page 1: What bold idea or rule are you pitching to {self.parent_title}? (1 complete sentence)"
+            ask = f"Page 1: What bold idea or rule are you pitching to {self.parent_title}?"
             ui.append({"type": "input", "mode": "type", "prompt": ask, "prefill": ""})
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
             return ui, f"Starting a 4-Page Illustrated Pitch Book for {self.parent_title}. Ask in 1–2 natural sentences what bold idea they want to pitch on Page 1."
@@ -531,9 +547,20 @@ class SessionController:
         }
         goal_desc, conns = step_specs[min(self.tree_step, 3)]
         beat = ai_direct_next_beat(self.rec, goal_desc, self.active_story, connector_goal=conns)
-        ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
+        self._beat_input(ui, beat)
         self.ui_locked_this_turn.update({"show_card", "ask_input"})
         return ui, f"Say this story-specific prompt naturally in 1–2 sentences: {beat['spoken_prompt']}"
+
+    def _beat_input(self, ui: list[dict[str, Any]], beat: dict[str, Any]) -> None:
+        """Next story question + (if the Coach thinks he still needs them) tappable sentence starters."""
+        ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": "", "hint_pen": bool(self.coach_session.get("suggest_pen"))})
+        starters = beat.get("starters") or []
+        if self.coach_session.get("next_scaffold", "starter_chips") == "starter_chips" and starters:
+            self.coach_session["offered_chips"] = starters
+            ui.append({"type": "item", "item": {"id": "starters", "kind": "starters", "options": starters}})
+        else:
+            self.coach_session["offered_chips"] = []
+            ui.append({"type": "remove", "id": "starters"})
 
     def _prompt_spine_step(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
         assert self.project is not None
@@ -558,7 +585,7 @@ class SessionController:
                 spine_context=self.spine_summary(),
                 connector_goal="finally | so | when",
             )
-            ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
+            self._beat_input(ui, beat)
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
             return ui, f"Cover Art is rendering! Deliver this specific Finale question in 1–2 plain sentences: {beat['spoken_prompt']}"
 
@@ -572,7 +599,7 @@ class SessionController:
                 spine_context=self.spine_summary(),
                 connector_goal="because | when | but",
             )
-            ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
+            self._beat_input(ui, beat)
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
             return ui, f"Finale Art is rendering! Now start building the middle twists in 1–2 plain sentences: {beat['spoken_prompt']}"
 
@@ -584,7 +611,7 @@ class SessionController:
                 spine_context=self.spine_summary(),
                 connector_goal="when | because | but",
             )
-            ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
+            self._beat_input(ui, beat)
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
             return ui, f"Twist #1 Art is rendering! Ask what ELSE happens next in the middle in 1–2 plain sentences: {beat['spoken_prompt']}"
 
@@ -606,7 +633,7 @@ class SessionController:
                 },
             }
         )
-        ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
+        self._beat_input(ui, beat)
         self.ui_locked_this_turn.update({"show_card", "show_choices", "ask_input"})
         return ui, f"Twist #{n_mid} Art is rendering! Ask what else happens in the middle (or invite starting Chapter 1 panels) in 1–2 plain sentences: {beat['spoken_prompt']}"
 
@@ -671,7 +698,7 @@ class SessionController:
             spine_context=self.spine_summary(),
             connector_goal=conns,
         )
-        ui.append({"type": "input", "mode": "type", "prompt": beat["input_prompt"], "prefill": ""})
+        self._beat_input(ui, beat)
         self.ui_locked_this_turn.update({"show_card", "ask_input"})
         return ui, f"Deliver this specific, story-aware prompt for Panel {next_pnum} in 1–2 natural sentences: {beat['spoken_prompt']}"
 
@@ -743,6 +770,210 @@ class SessionController:
             res["full_paragraph"] = full_paragraph
         return res
 
+    # ---------------- ADAPTIVE AI COACH ----------------
+
+    def _coach_context(self) -> str:
+        if not self.project:
+            return f"Free writing ({self.active_mechanic or 'quick comic strip'})."
+        kind = self.project.get("kind")
+        stage = self.project.get("stage", "")
+        if kind == "epic_graphic_novel":
+            n_mid = len(projects.middle_beats_list(self.project.get("spine") or {}))
+            if stage == "spine_beginning":
+                return "Graphic novel plot board: the KICKOFF (who is the hero + what trouble starts it). This sentence unlocks the cover art."
+            if stage == "spine_end":
+                return "Graphic novel plot board: the BIG FINALE (how the whole story ends up). Unlocks finale art."
+            if stage == "spine_middle":
+                return f"Graphic novel plot board: MIDDLE TWIST #{n_mid + 1} (what else goes wrong / escalates). Good spot for because/when/but."
+            ch = len(self.project.get("chapters") or [1])
+            return f"Graphic novel, chapter {ch}, panel {projects.total_panels(self.project) + 1}. Dialogue in quotes becomes a speech bubble."
+        if kind == "epic_codex":
+            return f"Fact codex step {self.codex_step} (0 = inference about the 3 sources; 1-3 = building a 3-sentence encyclopedia paragraph)."
+        if kind == "medium_pitch":
+            steps = {0: "the big idea he is pitching", 1: "a reason it will work (because/since)", 2: "answering the parent's worry (although/even though)", 3: "the deal (if/so)"}
+            return f"Persuasive pitch page {self.tree_step + 1}: {steps.get(min(self.tree_step, 3))}."
+        return "Quick 3-panel comic strip."
+
+    def _launch_inline_word_help(self, ui: list[dict[str, Any]], sentence: str, wrote: str, meant: str) -> dict[str, Any]:
+        """Spelling ladder rung 5: word-part card + sentence pre-filled with the word highlighted."""
+        if " " in meant.strip():
+            ws_card: dict[str, Any] = {"word": meant, "wrote": wrote, "parts": " + ".join(meant.split()), "note": f"'{meant}' is written as separate words."}
+        elif len(meant) <= 2:
+            ws_card = {"word": meant, "wrote": wrote, "parts": meant, "note": f"In '{_phrase_around_word(sentence, wrote)}', it's '{meant}'."}
+        else:
+            ws_card = dict(thinking.analyze_word_study(wrote, meant))
+        self.phase_before_inline_help = self.phase if self.phase != "INLINE_WORD_HELP" else self.phase_before_inline_help
+        self.phase = "INLINE_WORD_HELP"
+        self.word_target = ws_card
+        self.inline_word_help_tries = 0
+        self.pending_spell_sentence = sentence
+        self.pending_spell_targets = [{"wrote": wrote, "meant": meant}]
+        ui.append({"type": "item", "item": {"id": "word", "kind": "word", "word": ws_card["word"], "parts": [x.strip() for x in ws_card["parts"].split("+")], "note": ws_card["note"]}})
+        ui.append({"type": "input", "mode": "type", "prompt": f"Study '{ws_card['parts']}', then fix '{wrote}' in your sentence.", "prefill": sentence, "select_word": wrote})
+        self.ui_locked_this_turn.update({"show_word", "ask_input"})
+        return ws_card
+
+    @staticmethod
+    def _is_clean(chk: dict[str, Any] | None) -> bool:
+        if not chk:
+            return False
+        sents = chk.get("sentences") or []
+        return (
+            bool(sents)
+            and all(s.get("issue") == "none" and s.get("capital_ok") and s.get("end_ok") for s in sents)
+            and not chk.get("misspellings")
+            and not chk.get("grammar_fixes")
+            and (chk.get("features") or {}).get("dialogue_punct_ok", True) is not False
+        )
+
+    def _coach_turn(self, raw: str, how: str, chk: dict[str, Any] | None) -> tuple[str | None, Any]:
+        with self._coach_lock:
+            return self._coach_turn_locked(raw, how, chk)
+
+    def _coach_turn_locked(self, raw: str, how: str, chk: dict[str, Any] | None) -> tuple[str | None, Any]:
+        cs = self.coach_session
+        model = coach.ensure_model(self.rec)
+        sig = dict(self.turn_signals or {})
+        self.turn_signals = {}
+        sig["minutes"] = round((time.time() - cs["started"]) / 60, 1)
+        sig["used_chip"] = coach.chip_used(raw, cs.get("offered_chips") or [])
+        last = cs.get("last_request")
+        outcome = coach.outcome_of_last_request(last, chk or {}, raw) if last else {}
+        if outcome.get("self_caught_words"):
+            model["self_catches"] = model.get("self_catches", 0) + len(outcome["self_caught_words"])
+        elif last and last.get("focus") == "spelling" and outcome.get("complied") and (last.get("spell_rung") or 0) >= 3:
+            model["ai_catches"] = model.get("ai_catches", 0) + 1
+        sig["outcome"] = outcome
+        if chk and (not last or not outcome.get("kept_same_idea")):
+            coach.record_first_draft_stats(model, chk)
+
+        story = self.spine_summary() or "\n".join(self.active_story[-6:])
+        context = self._coach_context()
+
+        if self._is_clean(chk) and cs.get("consecutive_fixes", 0) == 0:
+            # Nothing to fix: accept instantly (art starts now) and let the coach update its model in the background.
+            cs["consecutive_fixes"] = 0
+            cs["last_request"] = None
+            self.spell_pick = None
+            snapshot = {**cs, "turns": list(cs.get("turns") or [])}
+            threading.Thread(target=self._coach_learn_bg, args=(raw, how, dict(chk or {}), sig, context, story, snapshot), daemon=True).start()
+            fast = {"accept": True, "focus": "none", "scaffold": "none", "next_scaffold": cs.get("next_scaffold", "starter_chips"), "kid_words": "", "rationale": "Clean sentence: accepted instantly (coach learns in background).", "guardrail": "fast_path_clean", "latency_s": 0.0}
+            self.last_coach = fast
+            return "accept", fast
+
+        decision = coach.decide(self.rec, cs, raw, how, chk or {}, sig, context, story)
+        if decision is None:
+            return None, None
+
+        cs["today_state"] = decision.get("today_state") or cs.get("today_state") or {}
+        cs["next_scaffold"] = decision["next_scaffold"]
+        cs["suggest_pen"] = bool(decision.get("suggest_pen"))
+        oc_txt = ""
+        if outcome:
+            oc_txt = f"{outcome.get('last_focus')}: {'did it' if outcome.get('complied') else ('ignored/changed idea' if outcome.get('complied') is False else 'n/a')}"
+            if outcome.get("self_caught_words"):
+                oc_txt += f", self-caught {outcome['self_caught_words']}"
+        cs["turns"] = (cs.get("turns") or [])[-29:] + [
+            {
+                "min": sig["minutes"],
+                "how": how,
+                "text": raw,
+                "secs": sig.get("secs"),
+                "backspaces": sig.get("backspaces"),
+                "accept": decision["accept"],
+                "focus": decision["focus"],
+                "outcome": oc_txt,
+            }
+        ]
+        coach.apply_learning(model, decision, raw)
+        self.last_coach = decision
+        if not self.test_mode:
+            save_learner(self.rec)
+
+        if decision["accept"]:
+            cs["consecutive_fixes"] = 0
+            cs["last_request"] = None
+            cs["deferred"] = cs.get("deferred", 0) + len(decision.get("deferred") or [])
+            self.spell_pick = None
+            return "accept", decision
+
+        cs["consecutive_fixes"] = cs.get("consecutive_fixes", 0) + 1
+        cs["pushed"] = cs.get("pushed", 0) + 1
+        cs["last_request"] = {
+            "focus": decision["focus"],
+            "focus_word": decision.get("focus_word", ""),
+            "spell_rung": decision.get("spell_rung", 0),
+            "misspelled": decision.get("misspelled") or [],
+            "sentence": raw,
+        }
+        return "fix", self._coach_fix_plan(raw, decision, chk or {})
+
+    def _coach_learn_bg(self, raw: str, how: str, chk: dict[str, Any], sig: dict[str, Any], context: str, story: str, snapshot: dict[str, Any]) -> None:
+        try:
+            d = coach.decide(self.rec, snapshot, raw, how, chk, sig, context, story, model=coach.LEARN_MODEL)
+        except Exception:
+            d = None
+        if not d:
+            return
+        with self._coach_lock:
+            cs = self.coach_session
+            cs["today_state"] = d.get("today_state") or cs.get("today_state") or {}
+            cs["next_scaffold"] = d.get("next_scaffold") or cs.get("next_scaffold", "starter_chips")
+            cs["suggest_pen"] = bool(d.get("suggest_pen"))
+            cs["turns"] = (cs.get("turns") or [])[-29:] + [
+                {"min": sig.get("minutes"), "how": how, "text": raw, "secs": sig.get("secs"), "backspaces": sig.get("backspaces"), "accept": True, "focus": "none", "outcome": ""}
+            ]
+            d = {**d, "accept": True, "focus": "none", "guardrail": "fast_path_clean", "rationale": "[background] " + str(d.get("rationale") or "")}
+            coach.apply_learning(coach.ensure_model(self.rec), d, raw)
+            if not self.test_mode:
+                save_learner(self.rec)
+
+    def _coach_fix_plan(self, raw: str, d: dict[str, Any], chk: dict[str, Any]) -> dict[str, Any]:
+        ui: list[dict[str, Any]] = []
+        self.last_kid_kind = "COACH_FIX"
+        self.draw_unlocked = False
+        self.had_revision = True
+        self.engaged_draft = raw
+        inp: dict[str, Any] = {
+            "type": "input",
+            "mode": "type",
+            "prompt": d["input_prompt"],
+            "prefill": d.get("prefill") or raw,
+            "hint_pen": bool(d.get("suggest_pen")),
+        }
+        focus = d["focus"]
+        if focus == "spelling":
+            rung = d.get("spell_rung", 3)
+            self.pending_spell_sentence = raw
+            self.pending_spell_targets = [{"wrote": m["wrote"], "meant": m["meant"]} for m in (chk.get("misspellings") or [])]
+            inp["prefill"] = raw
+            if rung == 5:
+                self._launch_inline_word_help(ui, raw, d["focus_word"], d["focus_correct"])
+                inp = {}
+            elif rung == 4:
+                self.spell_pick = {"wrote": d["focus_word"], "correct": d["focus_correct"], "options": d["spell_options"], "sentence": raw}
+                ui.append({"type": "item", "item": {"id": "spell_pick", "kind": "choices", "prompt": f"Which one is “{d['focus_word']}” supposed to be?", "options": d["spell_options"]}})
+            elif rung == 3:
+                inp["select_word"] = d["focus_word"]
+        elif focus in ("verb_ending", "word_choice") and d.get("focus_word"):
+            inp["prefill"] = raw
+            inp["select_word"] = d["focus_word"]
+        if d.get("scaffold") == "starter_chips" and d.get("chips"):
+            self.coach_session["offered_chips"] = d["chips"]
+            ui.append({"type": "item", "item": {"id": "starters", "kind": "starters", "options": d["chips"]}})
+        if inp:
+            ui.append(inp)
+        self.ui_locked_this_turn.update({"ask_input", "show_choices", "show_card", "show_word"})
+        return {
+            "kind": self.last_kid_kind,
+            "ui": ui,
+            "directive": (
+                f'Say this to {self.name} in your own natural voice (1–2 short sentences, same meaning, no extra corrections, '
+                f'no school words like "complete sentence" or "punctuation"): "{d["kid_words"]}"'
+            ),
+            "coach": {k: d.get(k) for k in ("accept", "focus", "focus_word", "spell_rung", "scaffold", "rationale", "guardrail", "today_state", "latency_s")},
+        }
+
     # ---------------- MAIN SYNCHRONOUS TURN CLASSIFIER & STATE MACHINE ----------------
 
     def classify_and_advance(
@@ -754,6 +985,7 @@ class SessionController:
         handwriting_issue: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self.ui_locked_this_turn.clear()
+        self.last_coach = None
         raw = (text or "").strip()
         norm = _norm(raw)
         wlist = _words(raw)
@@ -801,6 +1033,10 @@ class SessionController:
 
         if chk:
             self.record_misspellings(chk)
+        if how in ("typed", "spoken", "handwritten") and (
+            norm in AVOIDANCE_WORDS or any(re.search(pat, norm) for pat in REFUSAL_PATTERNS) or re.search(r"\b(can we just|just draw|its fine|it's fine)\b", norm)
+        ):
+            self.coach_session["avoid_count"] = self.coach_session.get("avoid_count", 0) + 1
 
         ui_actions: list[dict[str, Any]] = []
         resolved_inline_word: str = ""
@@ -1052,6 +1288,25 @@ class SessionController:
         # ---------------- 2. TAP INPUTS ----------------
         if how == "tap":
             self.prev_norm_text = norm
+            if self.spell_pick and raw.strip().lower() in [o.lower() for o in self.spell_pick.get("options", [])]:
+                sp = self.spell_pick
+                self.spell_pick = None
+                self.last_kid_kind = "SPELL_PICK"
+                ui_actions.append({"type": "remove", "id": "spell_pick"})
+                if raw.strip().lower() == sp["correct"].lower():
+                    ui_actions.append({"type": "input", "mode": "type", "prompt": f"That's the one. Now type “{sp['correct']}” into your sentence.", "prefill": sp["sentence"], "select_word": sp["wrote"]})
+                    self.ui_locked_this_turn.add("ask_input")
+                    return {
+                        "kind": self.last_kid_kind,
+                        "ui": ui_actions,
+                        "directive": f"{self.name} picked the right spelling '{sp['correct']}'. In ONE short line, say that's it and have him type it into his sentence (the old word is highlighted).",
+                    }
+                card = self._launch_inline_word_help(ui_actions, sp["sentence"], sp["wrote"], sp["correct"])
+                return {
+                    "kind": self.last_kid_kind,
+                    "ui": ui_actions,
+                    "directive": f"He picked '{raw}', but it's '{sp['correct']}'. Without saying wrong, point to the parts '{card['parts']}' in one short sentence and have him type it into his sentence.",
+                }
             if "add another middle twist" in norm and self.project and self.project.get("stage") == "spine_middle":
                 self.last_kid_kind = "PROJECT_PICK"
                 ui_actions.append({"type": "remove", "id": "spine_more_choices"})
@@ -1314,6 +1569,34 @@ class SessionController:
         self.prev_norm_text = norm
         self.avoidance_streak = 0
         self.refusal_streak = 0
+
+        # ---- ADAPTIVE AI COACH decides accept vs. one focused fix (falls back to the legacy rules if unavailable)
+        coach_accepted = False
+        coach_info: dict[str, Any] | None = None
+        if self.coach_enabled and how in ("typed", "handwritten") and not resolved_inline_word:
+            verdict, payload = self._coach_turn(raw, how, chk)
+            if verdict == "fix":
+                return payload
+            if verdict == "accept":
+                coach_accepted = True
+                coach_info = {k: payload.get(k) for k in ("accept", "focus", "scaffold", "rationale", "guardrail", "today_state", "latency_s", "deferred")}
+                # Record any spelling words he fixed after an earlier request; leave the rest for the editing pass.
+                if self.pending_spell_targets and not self.test_mode:
+                    for t in self.pending_spell_targets:
+                        if len(t.get("meant", "")) >= 3 and not re.search(rf"\b{re.escape(t['wrote'].lower())}\b", raw.lower()):
+                            spelling_srs.record_retrieval_result(self.rec, t["meant"], correct_first_try=False)
+                    save_learner(self.rec)
+                self.pending_spell_targets = []
+                self.pending_spell_sentence = ""
+                base_sents = (chk or {}).get("sentences") or [{"text": raw}]
+                chk = {
+                    **(chk or {}),
+                    "sentences": [{**s, "issue": "none", "complete": True, "capital_ok": True, "end_ok": True} for s in base_sents],
+                    "misspellings": [],
+                    "grammar_fixes": [],
+                    "features": {**((chk or {}).get("features") or {}), "dialogue_punct_ok": True},
+                }
+                self.tier_nudged_this_item = True  # Coach owns upgrade asks; skip legacy tier gates
 
         sents = (chk or {}).get("sentences") or []
         feats = (chk or {}).get("features") or {}
@@ -1636,7 +1919,7 @@ class SessionController:
                 }
 
         # ---------------- 8. VERIFIED COMPLETE STEP! ----------------
-        if self.hint_step == 0 and not self.tier_nudged_this_item and not resolved_inline_word:
+        if self.hint_step == 0 and (coach_accepted or not self.tier_nudged_this_item) and not resolved_inline_word:
             self.first_try_streak += 1
         self.hint_step = 0
         self.tier_nudged_this_item = False
@@ -1646,6 +1929,11 @@ class SessionController:
         self.active_story.append(raw)
 
         def _finish(plan_dict: dict[str, Any]) -> dict[str, Any]:
+            if coach_info:
+                plan_dict["coach"] = coach_info
+                reaction = (self.last_coach or {}).get("kid_words") or ""
+                if reaction:
+                    plan_dict["directive"] = f'Open with a quick story reaction in this spirit (a few words, your own voice): "{reaction[:160]}". Then: ' + plan_dict["directive"]
             if resolved_repaired_text:
                 plan_dict["repaired_text"] = resolved_repaired_text
                 plan_dict["directive"] = f"Locked '{resolved_inline_word}' into your sentence ('{resolved_repaired_text}')! " + plan_dict["directive"]

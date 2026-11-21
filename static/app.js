@@ -414,6 +414,7 @@ function sendText() {
   begin();
   const ms = state.typing.first ? Math.round(performance.now() - state.typing.first) : 0;
   addKid(esc(text));
+  document.getElementById("item-starters")?.remove();
   send({ type: "text", text, ms, backspaces: state.typing.backspaces });
   input.value = "";
   input.style.height = "auto";
@@ -714,8 +715,24 @@ function upsertInline(id, html, cls = "") {
   return el;
 }
 
+function insertStarter(text) {
+  const t = String(text || "").replace(/(…|\.\.\.)\s*$/, "").trimEnd() + " ";
+  input.value = t;
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 200) + "px";
+  $("sendBtn").hidden = false;
+  $("micBtn").hidden = true;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
 function renderItem(it) {
   switch (it.kind) {
+    case "starters": {
+      const el = upsertInline("starters", `<div class="starters">${(it.options || []).map((o) => `<button type="button" class="chip starter-chip">${esc(o)}</button>`).join("")}</div>`);
+      el.querySelectorAll(".starter-chip").forEach((b) => (b.onclick = () => insertStarter(b.textContent)));
+      break;
+    }
     case "image": {
       const art = it.status === "done" ? `<img src="${esc(it.src)}" alt="">` : it.status === "failed" ? `<div class="cap">Couldn't draw that one.</div>` : `<div class="shimmer"></div>`;
       upsertInline(it.id, `<div class="image-item">${art}${it.caption ? `<div class="cap">${esc(it.caption)}</div>` : ""}</div>`);
@@ -1026,6 +1043,7 @@ function handle(m) {
         $("micBtn").hidden = !!input.value.trim();
       }
       if (m.mode === "type") input.focus();
+      if (m.hint_pen) $("penBtn").classList.add("highlight");
       if (typeof m.prefill === "string") {
         let selStart = input.value.length;
         let selEnd = input.value.length;

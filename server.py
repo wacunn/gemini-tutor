@@ -178,6 +178,7 @@ class SettingsIn(BaseModel):
     name: Optional[str] = None
     parent_title: Optional[str] = None
     grade: Optional[int] = None
+    cursive_ready: Optional[bool] = None
 
 
 @app.post("/api/settings")
@@ -189,6 +190,8 @@ def settings(body: SettingsIn):
             rec[k] = v.strip()
     if body.grade is not None:
         rec["grade"] = max(1, min(12, body.grade))
+    if body.cursive_ready is not None:
+        rec["cursive_ready"] = bool(body.cursive_ready)
     save_learner(rec)
     return {"ok": True}
 

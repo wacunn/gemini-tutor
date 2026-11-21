@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.0
+- **Adaptive AI Coach replaces the hard-coded correction rules (`tutor/coach.py`, `tutor/controller.py`):**
+  - Each writing turn, an AI coach reads the writing check, how he is behaving right now (speed, backspaces, pushback, whether he followed the last ask, starter-chip use, minutes in), and a saved learner model (unprompted skill evidence, hypotheses being tested on him, what works, recent days' energy). It then decides: draw it now, or ask for ONE change, and how much help to give.
+  - Help levels: a story question, tappable sentence starters (e.g. "Bob barfed because…") that fade as he uses linking words on his own, a partial frame, or an example.
+  - 5-step spelling ladder: find it yourself → "I spot 2 words" → highlighted word → "which of these is it?" then type it → word-part card. Words he finds himself are tracked separately.
+  - Guardrails in code only: at most 2 asks in a row before drawing, spelling help always names the exact word on the pointing steps, no school vocabulary in anything he sees or hears, every ask checked against the actual writing check, and a fallback to the old rules if the coach is unavailable.
+- **Faster turns using smaller models where they're good enough (`tutor/config.py`):**
+  - Clean sentences skip the coach entirely and draw instantly; the coach learns from them in the background.
+  - The next story question + starters now use `gemini-3.1-flash-lite` (about 40% faster, same quality in tests). The coach and writing check stay on `gemini-3.5-flash` (the small model was less accurate and less consistent in simulations).
+- **Kid-facing language cleanup:** removed "Tier", "complete sentence", "connector", and "Act I/II/III" from prompts, the goal pill, and the voice tutor's instructions.
+- **Parent page:** new "How the coach is adapting to him" panel (unprompted skill rates, today's energy, hypotheses with evidence for/against, what works, things saved for a later editing pass), a full coach decision log with reasons, and a "Ready to start cursive" setting.
+
 ## 0.8.1
 - **Defaulted Art Style to Notebook Ink Doodle (`tutor/media.py`, `tutor/projects.py`, `tutor/live.py`, `static/app.js`):**
   - Made **Notebook Ink Doodle** (*Diary of a Wimpy Kid* black-pen doodle on blue-lined school notebook paper) the #1 default style across all books, comic strips, and sentence drawings.

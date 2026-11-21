@@ -33,7 +33,9 @@ No command line needed after installing: click the **Parent icon** (top right) â
 | Part | Model | What It Does |
 |---|---|---|
 | Live voice tutor | `gemini-3.8-live` | Real-time voice conversation and canvas tools |
-| Sentence, grammar, spelling & handwriting check | `gemini-3.5-flash` | Checks sentence completeness, verb endings (`B3.2`), punctuation, spelling, primary-line handwriting, and story follow-up questions |
+| Adaptive coach | `gemini-3.5-flash` | Decides each turn whether to draw now or ask for one change, and how much help to give, based on his writing and how he's doing today |
+| Sentence, grammar, spelling & handwriting check | `gemini-3.5-flash` | Checks sentence completeness, verb endings (`B3.2`), punctuation, spelling, and primary-line handwriting |
+| Story questions & sentence starters | `gemini-3.1-flash-lite` | Fast next question about his story plus tappable starters |
 | Progress & session planner | `gemini-4-hydrogen` | Tracks engagement, vets game ideas, and generates custom reading packs |
 | Mini-game builder | `gemini-3.8-flash` | Builds playable HTML5 mini-games controlled by complete sentences |
 | Comic illustrator | `gemini-3.1-flash-image` | Draws comic panels and covers in the child's chosen art style |

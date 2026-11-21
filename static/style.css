@@ -1352,3 +1352,16 @@ body.fresh .dock {
     margin-left: 0;
   }
 }
+
+/* ---------- coach starter chips (tap to drop into the box) ---------- */
+.starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 2px;
+}
+
+.starter-chip {
+  font-style: italic;
+  opacity: .92;
+}

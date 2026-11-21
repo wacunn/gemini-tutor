@@ -390,6 +390,33 @@ class TutorSession:
             return True
         return False
 
+    def _log_coach(self) -> None:
+        d = self.ctrl.last_coach
+        if not d:
+            return
+        self.log.add(
+            "coach",
+            accept=d.get("accept"),
+            focus=d.get("focus"),
+            focus_word=d.get("focus_word"),
+            spell_rung=d.get("spell_rung"),
+            scaffold=d.get("scaffold"),
+            next_scaffold=d.get("next_scaffold"),
+            today_state=d.get("today_state"),
+            kid_words=d.get("kid_words"),
+            rationale=d.get("rationale"),
+            guardrail=d.get("guardrail"),
+            deferred=d.get("deferred"),
+            latency_s=d.get("latency_s"),
+        )
+        if not self.test_mode:
+            LIVE.setdefault(self.id, {})["coach"] = {
+                "today_state": d.get("today_state"),
+                "last": {k: d.get(k) for k in ("accept", "focus", "rationale", "guardrail")},
+                "pushed": self.ctrl.coach_session.get("pushed", 0),
+                "deferred": self.ctrl.coach_session.get("deferred", 0),
+            }
+
     def page_text(self) -> str:
         return "\n".join(s["text"] for s in self.page)
 
@@ -545,10 +572,12 @@ class TutorSession:
 
             chk, check_note = await self.check(text, "typed", secs)
             self.log.add("kid_typed", text=text, seconds=secs, backspaces=bs, target=target)
+            self.ctrl.turn_signals = {"secs": secs, "backspaces": bs, "how": "typed"}
             plan = await asyncio.to_thread(
                 self.ctrl.classify_and_advance, text, "typed", chk, self.opening_ideas
             )
             self.log.add("ctrl_plan", how="typed", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
+            self._log_coach()
             await self.apply_controller_ui(plan["ui"])
             render_note = ""
             if plan.get("spine_draw") and self.ctrl.project:
@@ -584,10 +613,12 @@ class TutorSession:
             self.log.add("kid_wrote", text=text, legible=res.get("legible"), letter_issue=letter_issue, image=mid, target=target)
             await self.ui({"type": "kid_pen", "text": text, "image": f"/media/{mid}.jpg"})
             chk, check_note = await self.check(text, "handwritten") if (text and not letter_issue) else ({}, "")
+            self.ctrl.turn_signals = {"how": "handwritten"}
             plan = await asyncio.to_thread(
                 self.ctrl.classify_and_advance, text or "?", "handwritten", chk, self.opening_ideas, letter_issue
             )
             self.log.add("ctrl_plan", how="pen", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
+            self._log_coach()
             await self.apply_controller_ui(plan["ui"])
             render_note = ""
             if plan.get("spine_draw") and self.ctrl.project:
