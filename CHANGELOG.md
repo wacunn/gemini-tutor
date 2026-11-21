@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0
+- **Fast Small-Model Talker + Shared Working-Memory Blackboard (`tutor/blackboard.py`, `tutor/config.py`, `tutor/controller.py`, `tutor/live.py`):**
+  - Replaced serial multi-LLM per-turn calls with a single `<1s` `gemini-3.1-flash-lite` reflex call (`3.2s` hard cap + `0ms` local fallback) reading a Shared Working-Memory Blackboard updated asynchronously by background specialists.
+  - Set `HttpRetryOptions(attempts=1)` to eliminate `google-genai`'s hidden 5-attempt × 60s retry sleep on Free-Tier `429` limits, paused background observers automatically under rate limits, and added a Live speech watchdog so turns never hang.
+- **Guaranteed Artwork on Both Paid & Free-Tier API Keys (`tutor/media.py`, `tutor/doodle_fallback.py`):**
+  - Automatically falls back to a custom *Diary of a Wimpy Kid*-style lined-notebook ink cartoon renderer when Free-Tier keys return `429`/`403` on paid image endpoints so panels never fail blank.
+- **Picture Approval Gate, Chronological Scene Isolation & Director Corrections (`tutor/projects.py`, `tutor/controller.py`, `tutor/live.py`, `static/app.js`):**
+  - Pauses after each Cover, Finale, Twist, and Panel drawing to ask *"Did I draw your scene right, or did I miss something?"* (**Looks right — next part!** / **Not quite — fix picture**) BEFORE prompting the next story beat, taking friendly blame and redrawing with added details when needed.
+  - Isolated reference images and scene context strictly chronologically so future Finale settings (e.g. *"on the moon"*) never bleed into earlier Earth scenes, added a Director Meta-Correction detector so complaints like *"why are you having the spaceship stuck on the moon and not earth?"* trigger a redraw instead of becoming a story twist, and added **↻ Fix art** / **✕ Remove** buttons on every beat and panel.
+- **Sacred Composer Input, Spelling Retry Escalation, One-Shot Word Mic & Web View Back Button (`static/app.js`, `server.py`, `tutor/controller.py`, `tutor/thinking.py`):**
+  - Never overwrites text the child is actively typing (`turnEpoch` staleness cancellation + safe restore chip).
+  - Escalates failed spelling retries (`"fase"` → `"fasse"`, `"fkying"`, `"uoos"` → `"whose"`) directly to the full Word Card (`f + ace`) with a **🎤 Say the word out loud so I can help** one-shot mic button, strips all `"no speech detected"` variants, blocks unprompted mid-story `save_piece` goodbyes, and adds a sticky **← Back to Studio** bar on Web view pages.
+
 ## 0.9.2
 - **The coach decides "can we just draw it" from context (`tutor/coach.py`, `tutor/controller.py`):**
   - If he has a real sentence waiting on a fix, the coach can choose to draw it as-is right away (the issue is just logged), offer a quick deal ("add the period and it draws instantly", with his sentence back in the box and no further asks), or pick another move.

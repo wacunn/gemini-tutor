@@ -31,7 +31,7 @@ def targets_text() -> str:
 
 
 def _client() -> genai.Client:
-    return genai_client()
+    return genai_client(timeout_ms=6500)
 
 
 def _json(text: str) -> Any:
@@ -46,6 +46,10 @@ def _json(text: str) -> Any:
 
 
 def _call(system: str, prompt: str, temperature: float = 0.2) -> dict[str, Any]:
+    from .blackboard import QUOTA
+
+    if not QUOTA.allow_background():
+        return {}
     client = _client()
     for model in (OBSERVER_MODEL, FAST_MODEL, FALLBACK_MODEL):
         try:
@@ -59,7 +63,10 @@ def _call(system: str, prompt: str, temperature: float = 0.2) -> dict[str, Any]:
             out = _json(resp.text)
             if isinstance(out, dict):
                 return out
-        except Exception:
+        except Exception as e:
+            QUOTA.note_error("observer", e)
+            if not QUOTA.allow_background():
+                break
             continue
     return {}
 

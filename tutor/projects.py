@@ -369,6 +369,7 @@ def update_panel_media(proj: dict[str, Any], panel_number: int, media_id: str | 
                 if media_id:
                     p["image"] = media_id
                     p["src"] = f"/media/{media_id}.jpg"
+                    p["verified"] = False
                 save_project(proj, sandbox=sandbox)
                 return
 
@@ -386,6 +387,7 @@ def update_spine_media(proj: dict[str, Any], beat: str, media_id: str | None, st
             if media_id:
                 mbeats[idx]["image"] = media_id
                 mbeats[idx]["src"] = f"/media/{media_id}.jpg"
+                mbeats[idx]["verified"] = False
         save_project(proj, sandbox=sandbox)
         return
 
@@ -393,9 +395,100 @@ def update_spine_media(proj: dict[str, Any], beat: str, media_id: str | None, st
     if media_id:
         sp[f"{beat}_image"] = media_id
         sp[f"{beat}_src"] = f"/media/{media_id}.jpg"
+        sp[f"{beat}_verified"] = False
         if beat == "beginning":
             proj["cover_image"] = media_id
     save_project(proj, sandbox=sandbox)
+
+
+def get_art_text(proj: dict[str, Any], target: str) -> str:
+    sp = proj.get("spine") or {}
+    if target.startswith("spine:"):
+        beat = target.split(":", 1)[1]
+        if beat.startswith("middle_"):
+            try:
+                idx = int(beat.split("_", 1)[1])
+                mbs = middle_beats_list(sp)
+                return mbs[idx].get("text", "") if 0 <= idx < len(mbs) else ""
+            except ValueError:
+                return ""
+        return str(sp.get(beat) or "")
+    if target.startswith("panel:"):
+        try:
+            pnum = int(target.split(":", 1)[1])
+        except ValueError:
+            return ""
+        for ch in proj.get("chapters") or []:
+            for p in ch.get("panels") or []:
+                if p.get("number") == pnum:
+                    return str(p.get("scene") or p.get("caption") or "")
+    return ""
+
+
+def mark_art_verified(proj: dict[str, Any], target: str, sandbox: bool | None = None) -> None:
+    sp = proj.setdefault("spine", {})
+    if target.startswith("spine:"):
+        beat = target.split(":", 1)[1]
+        if beat.startswith("middle_"):
+            try:
+                idx = int(beat.split("_", 1)[1])
+                mbs = sp.setdefault("middle_beats", middle_beats_list(sp))
+                if 0 <= idx < len(mbs):
+                    mbs[idx]["verified"] = True
+            except ValueError:
+                pass
+        else:
+            sp[f"{beat}_verified"] = True
+        save_project(proj, sandbox=sandbox)
+        return
+    if target.startswith("panel:"):
+        try:
+            pnum = int(target.split(":", 1)[1])
+        except ValueError:
+            return
+        for ch in proj.get("chapters") or []:
+            for p in ch.get("panels") or []:
+                if p.get("number") == pnum:
+                    p["verified"] = True
+                    save_project(proj, sandbox=sandbox)
+                    return
+
+
+def prepare_art_redraw(proj: dict[str, Any], target: str, extra_detail: str, sandbox: bool | None = None) -> dict[str, Any] | None:
+    """Combines original sentence + child's clarifying detail, sets status='drawing', and returns redraw descriptor."""
+    orig = get_art_text(proj, target)
+    combined = f"{orig.rstrip()} ({extra_detail.strip()})" if orig else extra_detail.strip()
+    sp = proj.setdefault("spine", {})
+    if target.startswith("spine:"):
+        beat = target.split(":", 1)[1]
+        if beat.startswith("middle_"):
+            try:
+                idx = int(beat.split("_", 1)[1])
+                mbs = sp.setdefault("middle_beats", middle_beats_list(sp))
+                if 0 <= idx < len(mbs):
+                    mbs[idx]["status"] = "drawing"
+                    mbs[idx]["verified"] = False
+            except ValueError:
+                return None
+        else:
+            sp[f"{beat}_status"] = "drawing"
+            sp[f"{beat}_verified"] = False
+        save_project(proj, sandbox=sandbox)
+        return {"kind": "spine", "beat": beat, "scene": combined}
+    if target.startswith("panel:"):
+        try:
+            pnum = int(target.split(":", 1)[1])
+        except ValueError:
+            return None
+        for ch in proj.get("chapters") or []:
+            for p in ch.get("panels") or []:
+                if p.get("number") == pnum:
+                    p["scene"] = combined
+                    p["status"] = "drawing"
+                    p["verified"] = False
+                    save_project(proj, sandbox=sandbox)
+                    return {"kind": "panel", "panel": pnum, "scene": combined}
+    return None
 
 
 def update_codex_sketch(proj: dict[str, Any], media_id: str | None, status: str, caption: str = "", sandbox: bool | None = None) -> None:
@@ -410,12 +503,142 @@ def update_codex_sketch(proj: dict[str, Any], media_id: str | None, status: str,
     save_project(proj, sandbox=sandbox)
 
 
-def recent_reference_media_ids(proj: dict[str, Any], limit: int = 2) -> list[str]:
+def latest_art_target(proj: dict[str, Any]) -> str:
+    """Returns the target identifier ('panel:N' or 'spine:...') of the most recently added scene."""
+    panels = all_panels(proj)
+    if panels:
+        return f"panel:{panels[-1].get('number', len(panels))}"
     sp = proj.get("spine") or {}
-    mbeat_imgs = [b.get("image") for b in middle_beats_list(sp) if b.get("image")]
-    spine_mids = ([sp["beginning_image"]] if sp.get("beginning_image") else []) + mbeat_imgs + ([sp["end_image"]] if sp.get("end_image") else [])
+    mbs = middle_beats_list(sp)
+    if mbs:
+        return f"spine:middle_{len(mbs) - 1}"
+    if sp.get("end"):
+        return "spine:end"
+    if sp.get("beginning"):
+        return "spine:beginning"
+    return ""
+
+
+def remove_art_beat(proj: dict[str, Any], target: str, sandbox: bool | None = None) -> str:
+    """Removes an accidental/unwanted middle twist or panel so a book never gets permanently stuck."""
+    sp = proj.setdefault("spine", {})
+    if target.startswith("spine:middle_"):
+        try:
+            idx = int(target.split("_", 1)[1])
+        except ValueError:
+            return ""
+        mbs = list(middle_beats_list(sp))
+        if 0 <= idx < len(mbs):
+            removed = mbs.pop(idx).get("text", "")
+            sp["middle_beats"] = mbs
+            sp["middle"] = " ".join(b.get("text", "") for b in mbs)
+            if proj.get("stage") == "drafting_panels" and not all_panels(proj) and not mbs:
+                proj["stage"] = "spine_middle"
+            save_project(proj, sandbox=sandbox)
+            return removed
+    if target.startswith("panel:"):
+        try:
+            pnum = int(target.split(":", 1)[1])
+        except ValueError:
+            return ""
+        for ch in proj.get("chapters") or []:
+            plist = ch.get("panels") or []
+            for i, p in enumerate(plist):
+                if p.get("number") == pnum:
+                    removed = plist.pop(i).get("caption", "")
+                    # Renumber subsequent panels cleanly
+                    num = 1
+                    for c2 in proj.get("chapters") or []:
+                        for p2 in c2.get("panels") or []:
+                            p2["number"] = num
+                            num += 1
+                    save_project(proj, sandbox=sandbox)
+                    return removed
+    return ""
+
+
+def chronological_scene_context(proj: dict[str, Any], target: str = "") -> str:
+    """Builds strictly CHRONOLOGICAL character & setting context up to `target` (NEVER leaking future Finale settings like 'on the moon' into earlier Earth scenes!)."""
+    sp = proj.get("spine") or {}
+    bits: list[str] = []
+    if proj.get("characters"):
+        bits.append(f"Characters: {proj['characters'][:180]}")
+    beg = (sp.get("beginning") or "").strip()
+    mbs = middle_beats_list(sp)
+
+    if target == "spine:beginning":
+        return " | ".join(bits)
+
+    if target == "spine:end":
+        if beg:
+            bits.append(f"Story start: {beg[:180]}")
+        if mbs:
+            bits.append(f"Earlier twist: {mbs[-1].get('text', '')[:160]}")
+        bits.append("Draw the BIG FINALE scene described above.")
+        return " | ".join(bits)
+
+    if target.startswith("spine:middle_"):
+        try:
+            idx = int(target.split("_", 1)[1])
+        except ValueError:
+            idx = len(mbs) - 1
+        if beg:
+            bits.append(f"Story start (initial setting/characters): {beg[:180]}")
+        prev_twists = [b.get("text", "").strip() for b in mbs[: max(0, idx)] if b.get("text")]
+        if prev_twists:
+            bits.append(f"Immediately preceding scene right before this moment: {' -> '.join(prev_twists[-2:])[:260]}")
+        bits.append("CRITICAL: Draw ONLY this current middle moment in its CURRENT setting right after the preceding scene (do NOT jump ahead to future finale locations!).")
+        return " | ".join(bits)
+
+    # Panel context: chronological kickoff + middle twists + preceding panels (never future finale unless at end)
+    if beg:
+        bits.append(f"Story start: {beg[:160]}")
+    panels = all_panels(proj)
+    pnum = len(panels)
+    if target.startswith("panel:"):
+        try:
+            pnum = int(target.split(":", 1)[1])
+        except ValueError:
+            pass
+    prev_panels = [p.get("caption", "") for p in panels if p.get("number", 0) < pnum and p.get("caption")]
+    if prev_panels:
+        bits.append(f"Immediately preceding panel(s): {' -> '.join(prev_panels[-2:])[:240]}")
+    elif mbs:
+        bits.append(f"Plot context: {mbs[0].get('text', '')[:180]}")
+    bits.append("Draw ONLY this exact panel's current moment and current location.")
+    return " | ".join(bits)
+
+
+def recent_reference_media_ids(proj: dict[str, Any], limit: int = 2, target: str = "") -> list[str]:
+    """Returns reference images ONLY from chronologically earlier or matching beats—NEVER leaking future Finale art (`end_image`) into Middle Twists or early Chapters!"""
+    sp = proj.get("spine") or {}
+    mbs = middle_beats_list(sp)
+    beg_id = [sp["beginning_image"]] if sp.get("beginning_image") else []
+
+    if target == "spine:beginning":
+        return []
+    if target == "spine:end":
+        mbeat_imgs = [b["image"] for b in mbs if b.get("image")]
+        return (beg_id + mbeat_imgs)[-limit:]
+    if target.startswith("spine:middle_"):
+        try:
+            idx = int(target.split("_", 1)[1])
+        except ValueError:
+            idx = len(mbs)
+        prior_mids = [b["image"] for b in mbs[: max(0, idx)] if b.get("image")]
+        return (beg_id + prior_mids)[-limit:]
+    if target.startswith("panel:"):
+        try:
+            pnum = int(target.split(":", 1)[1])
+        except ValueError:
+            pnum = 999999
+        prior_mids = [b["image"] for b in mbs if b.get("image")]
+        prior_panels = [p["image"] for p in all_panels(proj) if p.get("image") and p.get("number", 0) < pnum]
+        return (beg_id + prior_mids + prior_panels)[-limit:]
+
+    mbeat_imgs = [b["image"] for b in mbs if b.get("image")]
     panel_mids = [p["image"] for p in all_panels(proj) if p.get("image")]
-    combined = spine_mids + panel_mids
+    combined = beg_id + mbeat_imgs + panel_mids
     return combined[-limit:]
 
 

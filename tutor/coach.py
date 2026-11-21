@@ -494,12 +494,19 @@ def validate(out: dict[str, Any], raw: str, chk: dict[str, Any], session: dict[s
         force_accept("no_focus_given")
         return d
 
-    # Validate the focus is actually present per the checker (prevents hallucinated corrections).
+    # If LLM picked complete_sentence/run_on because a typo ('uoos'->'whose') looked like two clauses, pivot to spelling!
     if d["focus"] == "complete_sentence" and not any(s.get("issue") not in ("none", "run_on") for s in sents) and sents:
-        force_accept("focus_not_present")
+        if ms:
+            d["focus"] = "spelling"
+        else:
+            force_accept("focus_not_present")
     elif d["focus"] == "run_on" and not any(s.get("issue") == "run_on" for s in sents):
-        force_accept("focus_not_present")
-    elif d["focus"] == "capital" and not any(s.get("capital_ok") is False for s in sents):
+        if ms:
+            d["focus"] = "spelling"
+        else:
+            force_accept("focus_not_present")
+
+    if d["focus"] == "capital" and not any(s.get("capital_ok") is False for s in sents):
         force_accept("focus_not_present")
     elif d["focus"] == "end_mark" and not any(s.get("end_ok") is False for s in sents):
         force_accept("focus_not_present")

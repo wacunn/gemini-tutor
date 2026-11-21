@@ -1365,3 +1365,38 @@ body.fresh .dock {
   font-style: italic;
   opacity: .92;
 }
+
+
+/* ---------- inline picture check / fix / remove buttons ---------- */
+.art-mini-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.mini-art-btn {
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid #3c4043;
+  color: var(--text-2);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: .76rem;
+  font-family: var(--font);
+  cursor: pointer;
+}
+
+.mini-art-btn:hover {
+  background: rgba(255, 255, 255, .13);
+  color: var(--text);
+}
+
+.mini-art-btn.ok {
+  border-color: rgba(129, 201, 149, .55);
+  color: #81c995;
+}
+
+.mini-art-btn.del:hover {
+  border-color: #f28b82;
+  color: #f28b82;
+}

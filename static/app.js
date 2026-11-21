@@ -21,6 +21,9 @@ const state = {
   typing: { first: 0, backspaces: 0 },
   canvas: { tabs: {}, active: null },
   styleDrawerOpen: null,
+  lastServerEpoch: 0,
+  micOneShot: false,
+  heardKidSpeech: false,
 };
 
 // ---------------------------------------------------------------- setup
@@ -63,7 +66,6 @@ async function boot() {
   renderHeroStarters(st.projects || []);
   wireSidebar();
   $("input").focus();
-  if (!IS_SANDBOX) fetch("/api/prewarm", { method: "POST" }).catch(() => {});
 }
 
 function toggleSidebar(open) {
@@ -336,6 +338,8 @@ async function micStart() {
 
 function micStop() {
   state.micOn = false;
+  state.micOneShot = false;
+  state.heardKidSpeech = false;
   $("micBtn").classList.remove("on");
   try { micStream && micStream.getTracks().forEach((t) => t.stop()); } catch (_) {}
   try { micCtx && micCtx.close(); } catch (_) {}
@@ -421,7 +425,7 @@ function sendText() {
   $("sendBtn").hidden = true;
   $("micBtn").hidden = false;
   state.typing = { first: 0, backspaces: 0 };
-  clearAsk();
+  setAsk("Reading your line…", null);
 }
 
 function setAsk(text, mode) {
@@ -693,6 +697,10 @@ function upsertTutor(turn, text) {
 }
 
 function upsertKidSpoken(turn, text) {
+  const cleaned = String(text || "").replace(/\b(?:no\s+speech(?:\s+detected)?|inaudible|silence|background\s+noise)\b[.\s!]*/gi, " ").trim();
+  if (!cleaned) return;
+  state.heardKidSpeech = true;
+  text = cleaned;
   let el = document.getElementById("kid-" + turn);
   if (!el) {
     el = addKid("", "kid-" + turn);
@@ -788,16 +796,33 @@ function renderItem(it) {
   }
 }
 
-function renderSpineRow(label, text, src, status, placeholder) {
+function renderArtMiniActs(target, hasArt, verified, canRemove) {
+  if (!target) return "";
+  const btns = [];
+  if (hasArt && !verified) {
+    btns.push(`<button type="button" class="mini-art-btn ok" data-art-ok="${esc(target)}" title="Picture matches my story">✓ Right</button>`);
+  }
+  if (hasArt) {
+    btns.push(`<button type="button" class="mini-art-btn" data-art-fix="${esc(target)}" title="Fix or redraw this picture">↻ Fix art</button>`);
+  }
+  if (canRemove) {
+    btns.push(`<button type="button" class="mini-art-btn del" data-art-del="${esc(target)}" title="Remove this beat">✕ Remove</button>`);
+  }
+  return btns.length ? `<div class="art-mini-acts">${btns.join("")}</div>` : "";
+}
+
+function renderSpineRow(label, text, src, status, placeholder, target = "", verified = false, canRemove = false) {
   const thumb = src
     ? `<div class="spine-thumb"><img src="${esc(src)}" alt=""></div>`
     : status === "drawing"
     ? `<div class="spine-thumb drawing"><div class="shimmer" style="height:100%"></div></div>`
     : `<div class="spine-thumb empty"><span>Art unlocks</span></div>`;
+  const miniActs = text ? renderArtMiniActs(target, !!src, !!verified, canRemove) : "";
   return `<div class="spine-row-card">
     <div class="spine-beat">
       <strong>${esc(label)}</strong>
       <div style="margin-top:4px">${text ? esc(text) : `<span class="muted">${esc(placeholder)}</span>`}</div>
+      ${miniActs}
     </div>
     ${thumb}
   </div>`;
@@ -829,6 +854,26 @@ function wireBookPane(pane, it) {
       send({ type: "set_style", style_key: key });
     };
   });
+  pane.querySelectorAll("[data-art-ok]").forEach((btn) => {
+    btn.onclick = () => {
+      begin();
+      send({ type: "art_feedback", target: btn.dataset.artOk, ok: true });
+    };
+  });
+  pane.querySelectorAll("[data-art-fix]").forEach((btn) => {
+    btn.onclick = () => {
+      begin();
+      addKid("↻ Fix this picture");
+      send({ type: "art_feedback", target: btn.dataset.artFix, ok: false });
+    };
+  });
+  pane.querySelectorAll("[data-art-del]").forEach((btn) => {
+    btn.onclick = () => {
+      if (!confirm("Remove this beat from your book?")) return;
+      begin();
+      send({ type: "art_feedback", target: btn.dataset.artDel, remove: true });
+    };
+  });
 }
 
 function renderBookProject(b) {
@@ -837,15 +882,15 @@ function renderBookProject(b) {
   const hasSpine = b.proj_kind === "epic_graphic_novel" || sp.beginning || sp.end || mbeats.length;
   const midRowsHtml = mbeats.length
     ? mbeats
-        .map((mb, i) => renderSpineRow(`Middle Twist #${i + 1}`, mb.text, mb.src, mb.status, "What else happens in the middle?"))
+        .map((mb, i) => renderSpineRow(`Middle Twist #${i + 1}`, mb.text, mb.src, mb.status, "What else happens in the middle?", `spine:middle_${i}`, !!mb.verified, true))
         .join("")
     : renderSpineRow("Middle Twists (Add as many as you want!)", "", null, null, "After your Finale, pack the middle with wild twists & obstacles!");
 
   const spineHtml = hasSpine
     ? `<div class="spine-box">
-        ${renderSpineRow("The Beginning · Kickoff (Cover Art)", sp.beginning, sp.beginning_src || b.cover_src, sp.beginning_status, "Write the kickoff to unlock your Cover Art!")}
+        ${renderSpineRow("The Beginning · Kickoff (Cover Art)", sp.beginning, sp.beginning_src || b.cover_src, sp.beginning_status, "Write the kickoff to unlock your Cover Art!", "spine:beginning", !!sp.beginning_verified, false)}
         ${midRowsHtml}
-        ${renderSpineRow("The Big Finale · Payoff", sp.end, sp.end_src, sp.end_status, "Jump to the end—how does the whole story pay off?")}
+        ${renderSpineRow("The Big Finale · Payoff (End of Book)", sp.end, sp.end_src, sp.end_status, "Jump to the end—how does the whole story pay off?", "spine:end", !!sp.end_verified, false)}
       </div>`
     : "";
 
@@ -907,7 +952,8 @@ function renderBookProject(b) {
           const bubs = (p.dialogue || [])
             .map((d) => `<div class="bubble-overlay">${d.speaker ? `<strong>${esc(d.speaker)}:</strong> ` : ""}${esc(d.text)}</div>`)
             .join("");
-          return `<div class="panel"><div class="${cls}"><span class="num" style="background:#111;color:#fff;padding:2px 8px;border-radius:4px;font-size:.95rem;top:6px;left:6px">${p.number || ""}</span>${bubs ? `<div class="bubbles">${bubs}</div>` : ""}${art}</div><div class="caption">${esc(p.caption || "")}</div></div>`;
+          const pActs = renderArtMiniActs(`panel:${p.number}`, !!p.src, !!p.verified, true);
+          return `<div class="panel"><div class="${cls}"><span class="num" style="background:#111;color:#fff;padding:2px 8px;border-radius:4px;font-size:.95rem;top:6px;left:6px">${p.number || ""}</span>${bubs ? `<div class="bubbles">${bubs}</div>` : ""}${art}</div><div class="caption">${esc(p.caption || "")}${pActs}</div></div>`;
         })
         .join("");
       return `<div class="ch-label">${esc(ch.title || "Chapter " + ch.number)}</div><div class="comic-grid">${cells}</div>`;
@@ -1012,7 +1058,21 @@ function handle(m) {
     case "interrupted":
       stopPlayback();
       break;
+    case "tutor_fallback_speech":
+      upsertTutor(m.turn, m.text);
+      if (!tutorAudible() && window.speechSynthesis && m.text) {
+        try {
+          window.speechSynthesis.cancel();
+          const u = new SpeechSynthesisUtterance(m.text);
+          u.rate = 1.03;
+          window.speechSynthesis.speak(u);
+        } catch (_) {}
+      }
+      break;
     case "turn_complete":
+      if (state.micOn && state.micOneShot && state.heardKidSpeech) {
+        micStop();
+      }
       break;
     case "item":
       renderItem(m.item);
@@ -1033,34 +1093,58 @@ function handle(m) {
     case "reward":
       if (m.label) showRewardBadge(m.label);
       break;
-    case "input":
-      setAsk(m.prompt, m.mode);
-      if (typeof m.prefill === "string") {
-        input.value = m.prefill;
-        input.style.height = "auto";
-        input.style.height = Math.min(input.scrollHeight, 200) + "px";
-        $("sendBtn").hidden = !input.value.trim();
-        $("micBtn").hidden = !!input.value.trim();
+    case "input": {
+      if (typeof m.epoch === "number") {
+        if (m.epoch < state.lastServerEpoch) break;
+        state.lastServerEpoch = m.epoch;
       }
-      if (m.mode === "type") input.focus();
-      if (m.hint_pen) $("penBtn").classList.add("highlight");
+      const modeNorm = m.mode === "talk_word" ? "talk" : m.mode;
+      setAsk(m.prompt, modeNorm);
+      const userAlreadyTyping = input.value.trim().length > 0;
       if (typeof m.prefill === "string") {
-        let selStart = input.value.length;
-        let selEnd = input.value.length;
-        if (m.select_word) {
-          const escRe = String(m.select_word).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const match = new RegExp(`\\b${escRe}\\b`, "i").exec(input.value) || new RegExp(escRe, "i").exec(input.value);
-          if (match) {
-            selStart = match.index;
-            selEnd = match.index + match[0].length;
+        if (!userAlreadyTyping) {
+          input.value = m.prefill;
+          input.style.height = "auto";
+          input.style.height = Math.min(input.scrollHeight, 200) + "px";
+          $("sendBtn").hidden = !input.value.trim();
+          $("micBtn").hidden = !!input.value.trim();
+          let selStart = input.value.length;
+          let selEnd = input.value.length;
+          if (m.select_word) {
+            const escRe = String(m.select_word).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const match = new RegExp(`\\b${escRe}\\b`, "i").exec(input.value) || new RegExp(escRe, "i").exec(input.value);
+            if (match) {
+              selStart = match.index;
+              selEnd = match.index + match[0].length;
+            }
+          } else if (typeof m.cursor_pos === "number") {
+            selStart = selEnd = Math.max(0, Math.min(input.value.length, m.cursor_pos));
           }
-        } else if (typeof m.cursor_pos === "number") {
-          selStart = selEnd = Math.max(0, Math.min(input.value.length, m.cursor_pos));
+          input.setSelectionRange(selStart, selEnd);
+        } else if (m.prefill.trim() && m.prefill.trim() !== input.value.trim()) {
+          // NEVER overwrite what the child is currently typing! Offer a harmless 1-tap restore chip instead.
+          const el = upsertInline("saved-draft", `<div class="choices"><button type="button" class="chip">Load earlier line to edit (“${esc(m.prefill.slice(0, 38))}${m.prefill.length > 38 ? "…" : ""}”)</button></div>`);
+          const b = el.querySelector("button");
+          if (b) {
+            b.onclick = () => {
+              input.value = m.prefill;
+              input.dispatchEvent(new Event("input"));
+              input.focus();
+              el.remove();
+            };
+          }
         }
-        input.setSelectionRange(selStart, selEnd);
+      }
+      if (m.mode === "type" && !userAlreadyTyping) input.focus();
+      if (m.hint_pen) $("penBtn").classList.add("highlight");
+      if (m.mode === "talk_word" || m.mode === "talk") {
+        state.micOneShot = true;
+        state.heardKidSpeech = false;
+        if (!state.micOn) micStart();
       }
       if (m.mode === "pen") openPen(m.prompt, { keepStrokes: !!m.keep_strokes, spot: m.spot || null });
       break;
+    }
     case "kid_pen": {
       const ph = stream.querySelector('[data-pending="pen"]');
       const html = `<img src="${esc(m.image)}" alt="">${esc(m.text || "")}`;

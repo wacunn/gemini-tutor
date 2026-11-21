@@ -25,7 +25,7 @@ from .record import new_id
 
 MEDIA = DATA / "media"
 IMAGE_MODEL = "gemini-3.1-flash-image"
-IMAGE_FALLBACK = "nano-banana-pro-preview"
+IMAGE_FALLBACK = "gemini-2.5-flash-image"
 VISION_MODEL = FAST_MODEL  # gemini-3.5-flash
 
 DEFAULT_STYLE_KEY = "notebook_doodle"
@@ -174,27 +174,40 @@ def generate_image(
     instr += f"Scene: {scene}"
     parts.append(types.Part(text=instr))
 
+    from . import doodle_fallback
+    from .blackboard import QUOTA
+
     last_err = None
-    for model in (IMAGE_MODEL, IMAGE_FALLBACK):
-        try:
-            resp = client.models.generate_content(
-                model=model,
-                contents=[types.Content(role="user", parts=parts)],
-                config=types.GenerateContentConfig(
-                    response_modalities=["IMAGE"],
-                    image_config=types.ImageConfig(aspect_ratio=aspect),
-                ),
-            )
-            for p in resp.candidates[0].content.parts:
-                if p.inline_data and p.inline_data.data:
-                    jpg = _to_jpeg(p.inline_data.data)
-                    mid = new_id("img")
-                    media_path(mid).write_bytes(jpg)
-                    return mid, jpg
-            last_err = RuntimeError("no image returned")
-        except Exception as e:
-            last_err = e
-    raise RuntimeError(f"image failed: {last_err}")
+    if QUOTA.allow_paid_image():
+        img_client = genai_client(timeout_ms=15000)
+        for model in (IMAGE_MODEL, IMAGE_FALLBACK):
+            try:
+                resp = img_client.models.generate_content(
+                    model=model,
+                    contents=[types.Content(role="user", parts=parts)],
+                    config=types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                        image_config=types.ImageConfig(aspect_ratio=aspect),
+                    ),
+                )
+                for p in (resp.candidates[0].content.parts if resp.candidates else []):
+                    if p.inline_data and p.inline_data.data:
+                        jpg = _to_jpeg(p.inline_data.data)
+                        mid = new_id("img")
+                        media_path(mid).write_bytes(jpg)
+                        return mid, jpg
+                last_err = RuntimeError("no image returned")
+            except Exception as e:
+                last_err = e
+                QUOTA.note_error("image", e)
+                if not QUOTA.allow_paid_image():
+                    break
+
+    # Free-Tier API key or image endpoint rate-limited: draw a Notebook Ink Doodle so the panel NEVER fails!
+    jpg = doodle_fallback.render_notebook_doodle(scene, allow_llm=QUOTA.allow_background())
+    mid = new_id("img")
+    media_path(mid).write_bytes(jpg)
+    return mid, jpg
 
 
 HANDWRITING_SYSTEM = """You read a child's stylus/finger handwriting written on 4-line primary handwriting paper:

@@ -200,6 +200,7 @@ def settings(body: SettingsIn):
 
 @app.get("/api/parent")
 def parent_data():
+    from tutor.blackboard import QUOTA
     from tutor.curriculum_tracker import ensure_report_card, format_report_for_ui
     from tutor.projects import list_projects
     from tutor.spelling_srs import deck_summary
@@ -211,6 +212,7 @@ def parent_data():
         sessions.append({**s, "review": read_review(s["id"])})
     return {
         "learner": rec,
+        "quota": QUOTA.status_dict(),
         "report_card": format_report_for_ui(rc),
         "spelling_deck": deck_summary(rec),
         "projects": list_projects(),
@@ -253,9 +255,10 @@ def prewarm():
     """Called when the start screen loads: get opening ideas ready before he types anything."""
     global _prewarm_running
     import json as _json, threading, time as _time
+    from tutor.blackboard import QUOTA
     from tutor.config import DATA
 
-    if not api_key() or not load_learner().get("name"):
+    if not api_key() or not load_learner().get("name") or not QUOTA.allow_background():
         return {"ok": False}
     f = DATA / "opening_ideas.json"
     if f.exists():
@@ -281,30 +284,32 @@ def version_info():
 @app.get("/api/health")
 async def health_check():
     """Verifies REST + Live v1alpha WebSocket connectivity with the configured API key."""
+    from tutor.blackboard import QUOTA
     from tutor.config import FAST_MODEL, LIVE_FALLBACK_MODELS, api_key, genai_client
 
     if not api_key():
         return {"ok": False, "error": "No Gemini API key configured yet."}
     try:
         def _rest():
-            c = genai_client()
+            c = genai_client(timeout_ms=4500)
             r = c.models.generate_content(model=FAST_MODEL, contents="OK")
             return bool(r.text)
 
         await asyncio.to_thread(_rest)
     except Exception as e:
-        return {"ok": False, "stage": "rest", "error": str(e)[:240]}
+        QUOTA.note_error("health", e)
+        return {"ok": False, "stage": "rest", "error": str(e)[:240], "quota": QUOTA.status_dict()}
 
     c_live = genai_client(live=True)
     last_err = ""
     for m in LIVE_FALLBACK_MODELS:
         try:
             async with c_live.aio.live.connect(model=m, config={"response_modalities": ["AUDIO"]}):
-                return {"ok": True, "live_model": m, "rest_model": FAST_MODEL}
+                return {"ok": True, "live_model": m, "rest_model": FAST_MODEL, "quota": QUOTA.status_dict()}
         except Exception as e:
             last_err = str(e)[:240]
             continue
-    return {"ok": False, "stage": "live_websocket", "error": last_err}
+    return {"ok": False, "stage": "live_websocket", "error": last_err, "quota": QUOTA.status_dict()}
 
 
 @app.get("/api/update/check")
@@ -457,21 +462,26 @@ async def project_pdf(pid: str):
 
 @app.get("/project/{pid}", response_class=HTMLResponse)
 def project_page(pid: str):
-    from tutor.projects import load_project, total_panels
+    from tutor.projects import load_project, middle_beats_list, total_panels
 
     proj = load_project(pid)
     if not proj:
         raise HTTPException(404, "Project not found")
     sp = proj.get("spine") or {}
+    mbs = middle_beats_list(sp)
     spine_html = ""
-    if sp.get("beginning") or sp.get("middle") or sp.get("end"):
-        spine_html = (
-            "<div class='spine'>"
-            f"<div><strong>Act I · Beginning:</strong> {html.escape(sp.get('beginning') or '…')}</div>"
-            f"<div><strong>Act II · Middle:</strong> {html.escape(sp.get('middle') or '…')}</div>"
-            f"<div><strong>Act III · End:</strong> {html.escape(sp.get('end') or '…')}</div>"
-            "</div>"
-        )
+    if sp.get("beginning") or mbs or sp.get("end"):
+        rows = []
+        if sp.get("beginning"):
+            bimg = f"<img class='sp-img' src='{html.escape(sp['beginning_src'])}'>" if sp.get("beginning_src") else ""
+            rows.append(f"<div class='sp-card'>{bimg}<div><strong>Kickoff:</strong> {html.escape(sp.get('beginning') or '')}</div></div>")
+        for idx_mb, mb in enumerate(mbs, 1):
+            mimg = f"<img class='sp-img' src='{html.escape(mb['src'])}'>" if mb.get("src") else ""
+            rows.append(f"<div class='sp-card'>{mimg}<div><strong>Twist #{idx_mb}:</strong> {html.escape(mb.get('text') or '')}</div></div>")
+        if sp.get("end"):
+            eimg = f"<img class='sp-img' src='{html.escape(sp['end_src'])}'>" if sp.get("end_src") else ""
+            rows.append(f"<div class='sp-card'>{eimg}<div><strong>Big Finale:</strong> {html.escape(sp.get('end') or '')}</div></div>")
+        spine_html = f"<h2>Story Plot Board</h2><div class='spine'>{''.join(rows)}</div>"
     ch_blocks = ""
     for ch in proj.get("chapters") or []:
         cells = ""
@@ -485,15 +495,21 @@ def project_page(pid: str):
         if cells:
             ch_blocks += f"<h2>{html.escape(ch.get('title', 'Chapter'))}</h2><div class='comic'>{cells}</div>"
     aud = f"<div class='for'>For {html.escape(proj['audience'])}</div>" if proj.get("audience") else ""
+    back_js = "if(window.opener){window.close();return false;}if(history.length>1){history.back();return false;}"
     return HTMLResponse(f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(proj.get('title','Book'))}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-body{{font-family:'Google Sans Text',-apple-system,sans-serif;max-width:960px;margin:40px auto;padding:0 24px 64px;color:#1d1d1f;background:#faf9f6;line-height:1.6}}
+body{{font-family:'Google Sans Text',-apple-system,sans-serif;max-width:960px;margin:0 auto;padding:16px 24px 64px;color:#1d1d1f;background:#faf9f6;line-height:1.6}}
+.nav-bar{{position:sticky;top:0;z-index:20;background:rgba(250,249,246,.95);backdrop-filter:blur(8px);padding:12px 0;margin-bottom:18px;border-bottom:1px solid #e5e2dc;display:flex;justify-content:space-between;align-items:center;gap:12px}}
+.back-btn{{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#1d1d1f;border:1.5px solid #ccc;text-decoration:none;padding:8px 16px;border-radius:999px;font-weight:600;font-size:15px}}
+.back-btn:hover{{background:#f0efe9;border-color:#999}}
 .top{{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}}
-h1{{font-size:36px;margin:0 0 4px}} h2{{margin:32px 0 12px;font-size:22px}}
+h1{{font-size:34px;margin:0 0 4px}} h2{{margin:28px 0 12px;font-size:22px}}
 .by{{color:#555}} .for{{color:#777;font-style:italic;margin-bottom:20px}}
-.btn{{display:inline-block;background:#1a56c4;color:#fff;text-decoration:none;padding:10px 20px;border-radius:999px;font-weight:600}}
-.spine{{background:#fff;border:2px solid #222;border-radius:14px;padding:16px 20px;margin:20px 0;display:grid;gap:8px}}
+.btn{{display:inline-block;background:#1a56c4;color:#fff;text-decoration:none;padding:9px 18px;border-radius:999px;font-weight:600;font-size:15px}}
+.spine{{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:16px 0}}
+.sp-card{{background:#fff;border:2px solid #222;border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px}}
+.sp-img{{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;border:1.5px solid #222}}
 .comic{{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin:16px 0}}
 .comic figure{{margin:0;border:4px solid #111;background:#fff;display:flex;flex-direction:column}}
 .art-wrap{{position:relative;aspect-ratio:4/3;background:#eee;overflow:hidden}}
@@ -504,10 +520,13 @@ h1{{font-size:36px;margin:0 0 4px}} h2{{margin:32px 0 12px;font-size:22px}}
 .comic figcaption{{padding:10px 14px;background:#faf6e8;font-size:16px;border-top:3px solid #111;flex:1}}
 @media(max-width:700px){{.comic{{grid-template-columns:1fr}}}}
 </style></head><body>
+<div class="nav-bar">
+  <a class="back-btn" href="/" onclick="{back_js}">← Back to Studio</a>
+  <a class="btn" href="/api/project/{html.escape(proj['id'])}/pdf">Download PDF Book</a>
+</div>
 <div class="top"><div><h1>{html.escape(proj.get('title','Untitled'))}</h1>
-<div class="by">Written &amp; Created by {html.escape(proj.get('author',''))} · {total_panels(proj)} panel(s)</div>{aud}</div>
-<a class="btn" href="/api/project/{html.escape(proj['id'])}/pdf">Download PDF Book</a></div>
-{spine_html}{ch_blocks or "<p>Story Spine started—panels appear here as you write!</p>"}
+<div class="by">Written &amp; Created by {html.escape(proj.get('author',''))} · {total_panels(proj)} panel(s)</div>{aud}</div></div>
+{spine_html}{ch_blocks or "<p>Plot Board started—chapter panels appear here as you write!</p>"}
 </body></html>""")
 
 
@@ -551,17 +570,21 @@ def piece_page(pid: str):
             cells += f"<figure>{img}<figcaption>{html.escape(pp.get('caption') or '')}</figcaption></figure>"
         comic_html = f"<div class='comic'>{cells}</div>"
     aud = f"<div class='for'>For {html.escape(p['audience'])}</div>" if p.get("audience") else ""
+    back_js = "if(window.opener){window.close();return false;}if(history.length>1){history.back();return false;}"
     return HTMLResponse(f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(p['title'])}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-body{{font-family:Charter,'Iowan Old Style',Georgia,serif;max-width:900px;margin:48px auto;padding:0 24px;color:#1d1d1f;line-height:1.65;font-size:20px}}
+body{{font-family:Charter,'Iowan Old Style',Georgia,serif;max-width:900px;margin:0 auto;padding:16px 24px 48px;color:#1d1d1f;line-height:1.65;font-size:20px}}
+.nav-bar{{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.95);padding:12px 0;margin-bottom:20px;border-bottom:1px solid #e5e2dc;display:flex;justify-content:space-between;align-items:center}}
+.back-btn{{font-family:-apple-system,sans-serif;display:inline-flex;align-items:center;gap:6px;background:#fff;color:#1d1d1f;border:1.5px solid #ccc;text-decoration:none;padding:8px 16px;border-radius:999px;font-weight:600;font-size:15px}}
 h1{{font-size:36px;margin:0 0 4px}} .by{{color:#555}} .for{{color:#777;font-style:italic;margin-bottom:28px}}
 .comic{{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin:24px 0}}
 .comic figure{{margin:0;border:3px solid #111;background:#fff}} .comic img{{width:100%;display:block}}
 .comic .blank{{aspect-ratio:4/3;background:#eee}}
 .comic figcaption{{padding:8px 12px;font-family:'Comic Neue','Trebuchet MS',sans-serif;font-size:18px;border-top:3px solid #111}}
-@media print{{body{{margin:0}}}}
+@media print{{.nav-bar{{display:none}} body{{margin:0}}}}
 </style></head><body>
+<div class="nav-bar"><a class="back-btn" href="/" onclick="{back_js}">← Back to Studio</a></div>
 <h1>{html.escape(p['title'])}</h1><div class="by">by {html.escape(p.get('author',''))}</div>{aud}{comic_html}{paras}
 </body></html>""")
 

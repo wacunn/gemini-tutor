@@ -19,14 +19,14 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from .config import FALLBACK_MODEL, FAST_MODEL, HYDROGEN_MODEL, genai_client
+from .config import FALLBACK_MODEL, FAST_MODEL, HYDROGEN_MODEL, LITE_MODEL, genai_client
 
 CHECK_MODEL = FAST_MODEL  # sub-second synchronous syntax/spelling check on hot path
 INVENT_MODEL = HYDROGEN_MODEL  # gemini-4-hydrogen for inventing tailored mechanics
 
 
-def _client() -> genai.Client:
-    return genai_client()
+def _client(timeout_ms: int = 3800) -> genai.Client:
+    return genai_client(timeout_ms=timeout_ms)
 
 
 def _json(text: str) -> Any:
@@ -56,7 +56,7 @@ For each sentence-like unit:
 - end_ok: ends with . ! or ? (optionally followed by closing quotation mark).
 
 For misspellings (B2.1–B2.3):
-- List ONLY genuine orthographic/phonological/morphological spelling errors (e.g. {"wrote":"traped","meant":"trapped"}, {"wrote":"smelee","meant":"smelly"}, {"wrote":"wantd","meant":"wanted"}, {"wrote":"noon","meant":"no one"} when context clearly means 'no one').
+- List ONLY genuine orthographic/phonological/morphological spelling errors, INCLUDING phonetic spellings of sight/function words in context (e.g. {"wrote":"traped","meant":"trapped"}, {"wrote":"smelee","meant":"smelly"}, {"wrote":"fase","meant":"face"}, {"wrote":"fasse","meant":"face"}, {"wrote":"uoos","meant":"whose"} in "Dylan uoos Cat", {"wrote":"wantd","meant":"wanted"}, {"wrote":"noon","meant":"no one"} when context clearly means 'no one').
 - Do NOT list capitalization differences ("minecraft" vs "Minecraft") or standard game/music proper nouns (creeper, wither, redstone, nether, enderman, Megadeth, Metallica).
 
 For grammar_fixes (Ontario B3.2 — verb tense & subject-verb agreement, irregular verbs, missing required articles):
@@ -107,6 +107,11 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
         if low.count(" and then ") >= 2 or (low.count(" and ") >= 3 and len(s_words) >= 14 and not re.search(r"[.!?;]", st[:-1])):
             issue = "run_on"
             complete = False
+        elif issue == "run_on" and len(s_words) <= 14 and " and then " not in low:
+            # Don't mistake a misspelled relative/subordinating word ("Dylan uoos cat..." -> "whose") for a run-on!
+            if re.search(r"\b(uoos|hoos|whos|whose|who|becuase|becuz|becuse|cuz|because|when|while|which|that)\b", low):
+                issue = "none"
+                complete = True
 
         # Never let 2+ content-word phrases hide as "not_a_sentence_attempt"
         if issue == "not_a_sentence_attempt" and len(s_words) >= 2 and st.lower() not in {"i dont know", "i don't know", "no thanks", "not really"}:
@@ -197,6 +202,21 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
         rule = str(g.get("rule") or f"Change '{wrote}' to {' or '.join(repr(o) for o in opts[:2])}.").strip()
         clean_gf.append({"wrote": wrote, "options": opts[:3], "rule": rule})
 
+    # Deterministic "a <vowel>" -> "an <vowel>" check (e.g. "A alien" -> "An alien")
+    _u_sound = {"unicorn", "uniform", "unit", "universe", "university", "user", "usual", "useful", "one", "once"}
+    for m_art in re.finditer(r"\b(a)\s+([aeiou][a-z]{2,})\b", text, re.I):
+        art_w, next_w = m_art.group(1), m_art.group(2)
+        if next_w.lower() not in _u_sound and art_w.lower() not in seen_gf:
+            fixed_art = "An" if art_w[0].isupper() else "an"
+            seen_gf.add(f"{art_w} {next_w}".lower())
+            clean_gf.append(
+                {
+                    "wrote": f"{art_w} {next_w}",
+                    "options": [f"{fixed_art} {next_w}"],
+                    "rule": f"Before a vowel sound like '{next_w}', use '{fixed_art}' instead of '{art_w}'.",
+                }
+            )
+
     return {
         "sentences": verified_sents,
         "misspellings": clean_ms,
@@ -213,11 +233,13 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
 
 
 def check_writing(text: str) -> dict[str, Any]:
+    from . import blackboard
+
     t = (text or "").strip()
     if not t:
         return {"sentences": [], "misspellings": [], "grammar_fixes": []}
-    client = _client()
-    for model in (CHECK_MODEL, FALLBACK_MODEL):
+    client = _client(timeout_ms=3600)
+    for model in (LITE_MODEL, CHECK_MODEL):
         try:
             resp = client.models.generate_content(
                 model=model,
@@ -231,10 +253,20 @@ def check_writing(text: str) -> dict[str, Any]:
             )
             out = _json(resp.text)
             if isinstance(out, dict):
-                return _post_verify_check(t, out)
-        except Exception:
+                chk = _post_verify_check(t, out)
+                known_ms = {m["wrote"].lower() for m in (chk.get("misspellings") or [])}
+                for w in re.findall(r"[A-Za-z']+", t):
+                    wl = w.lower()
+                    if wl in blackboard.COMMON_TYPOS and wl not in known_ms:
+                        chk.setdefault("misspellings", []).append({"wrote": w, "meant": blackboard.COMMON_TYPOS[wl]})
+                        known_ms.add(wl)
+                return chk
+        except Exception as e:
+            blackboard.QUOTA.note_error("check", e)
+            if not blackboard.QUOTA.allow_background():
+                break
             continue
-    return _post_verify_check(t, {})
+    return blackboard.local_check_writing(t)
 
 
 def summarize_check(chk: dict[str, Any]) -> str:
@@ -272,9 +304,27 @@ Write ONE short, plain, 100% linguistically accurate sentence explaining the pat
 Return JSON: {"word":"...","parts":"part1 + part2","note":"One short accurate sentence."}"""
 
 
+def _local_word_study(wrote: str, meant: str) -> dict[str, str]:
+    m = meant.strip()
+    ml = m.lower()
+    if ml.endswith("ce") and len(m) >= 4:
+        return {"word": m, "wrote": wrote, "parts": f"{m[:-3]} + ace" if ml.endswith("ace") else f"{m[:-2]} + ce", "note": f"In '{m}', 'c' followed by silent 'e' makes the /s/ sound."}
+    for suf in ("ing", "ed", "er", "est", "ly", "ful", "less", "ness", "y"):
+        if ml.endswith(suf) and len(m) > len(suf) + 2:
+            return {"word": m, "wrote": wrote, "parts": f"{m[:-len(suf)]} + {suf}", "note": f"Build '{m}' from '{m[:-len(suf)]}' + '-{suf}'."}
+    if len(m) >= 5:
+        mid = len(m) // 2
+        return {"word": m, "wrote": wrote, "parts": f"{m[:mid]} + {m[mid:]}", "note": f"Look closely at the two chunks in '{m}'."}
+    return {"word": m, "wrote": wrote, "parts": m, "note": f"Look closely at the letters in '{m}'."}
+
+
 def analyze_word_study(wrote: str, meant: str) -> dict[str, str]:
-    client = _client()
-    for model in (CHECK_MODEL, FALLBACK_MODEL):
+    from . import blackboard
+
+    if not blackboard.QUOTA.allow_background():
+        return _local_word_study(wrote, meant)
+    client = _client(timeout_ms=2800)
+    for model in (LITE_MODEL, CHECK_MODEL):
         try:
             resp = client.models.generate_content(
                 model=model,
@@ -294,9 +344,10 @@ def analyze_word_study(wrote: str, meant: str) -> dict[str, str]:
                     "parts": str(out["parts"]).strip(),
                     "note": str(out.get("note") or f"Notice the spelling in '{meant}' compared with '{wrote}'.").strip(),
                 }
-        except Exception:
-            continue
-    return {"word": meant, "wrote": wrote, "parts": meant, "note": f"Look closely at the letters in '{meant}'."}
+        except Exception as e:
+            blackboard.QUOTA.note_error("word_study", e)
+            break
+    return _local_word_study(wrote, meant)
 
 
 INVENT_SYSTEM = """You are the activity designer behind a 1:1 AI writing & spelling tutor for one specific Grade 3 child.

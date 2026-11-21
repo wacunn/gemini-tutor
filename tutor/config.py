@@ -109,10 +109,13 @@ def api_key() -> str | None:
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
 
-def genai_client(*, live: bool = False) -> Any:
-    """Creates a google-genai Client. Uses api_version='v1alpha' for Live Bidi WebSockets
-    so google-genai 1.x, 2.x, and 3.x all connect cleanly without HTTP 404."""
+def genai_client(*, live: bool = False, timeout_ms: int = 10000) -> Any:
+    """Creates a google-genai Client.
+    - For Live WebSockets: forces api_version='v1alpha' across google-genai 1.x–3.x.
+    - For REST calls: disables google-genai's built-in 5-attempt 60s tenacity backoff (attempts=1)
+      and clamps server deadline >= 10000ms (Gemini API minimum allowed server deadline is 10s)."""
     from google import genai
+    from google.genai import types
 
     _ensure_ssl_certs()
     key = api_key()
@@ -120,7 +123,13 @@ def genai_client(*, live: bool = False) -> Any:
         raise RuntimeError("GEMINI_API_KEY not set")
     if live:
         return genai.Client(api_key=key, http_options={"api_version": "v1alpha"})
-    return genai.Client(api_key=key)
+    return genai.Client(
+        api_key=key,
+        http_options=types.HttpOptions(
+            timeout=max(10000, int(timeout_ms)),
+            retry_options=types.HttpRetryOptions(attempts=1),
+        ),
+    )
 
 
 def save_api_key(value: str) -> None:

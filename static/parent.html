@@ -246,9 +246,10 @@
       <div class="row">
         <button id="topUpdBtn" hidden>Update available — Update now</button>
         <a href="/?sandbox=1"><button type="button" class="ghost">Try Tutor (Parent Sandbox)</button></a>
-        <a href="/">Back to tutor</a>
+        <a href="/"><button type="button" class="ghost">← Back to Studio</button></a>
       </div>
     </div>
+    <div id="quotaNotice" class="card" hidden style="margin-top:14px;border:1px solid #fdd663;color:#fdd663"></div>
 
     <h2><span class="live-dot" id="liveDot"></span>Live session</h2>
     <div class="grid" id="live">
@@ -367,6 +368,12 @@
         const L = d.learner, M = L.model || {};
         $("title").textContent = (L.name || "Child") + " · parent page";
         $("sub").textContent = `Grade ${L.grade} · ${L.sessions.length} session(s)`;
+        const qn = $("quotaNotice");
+        if (qn) {
+          const msg = (d.quota && d.quota.notice) || "";
+          qn.hidden = !msg;
+          qn.textContent = msg;
+        }
         $("model").innerHTML = `
     <div class="card"><h3>Summary</h3>${esc(M.summary || "Not enough sessions yet.")}<div class="muted" style="margin-top:8px">${esc(M.notes_for_parent || "")}</div></div>
     <div class="card"><h3>What engages him</h3>${list(M.what_engages)}<h3 style="margin-top:12px">What shuts him down</h3>${list(M.what_shuts_down)}</div>

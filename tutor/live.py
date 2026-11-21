@@ -20,7 +20,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from google import genai
 from google.genai import types
 
-from . import builder, controller, curriculum_tracker, media, observers, projects, thinking
+from . import blackboard, builder, controller, curriculum_tracker, media, observers, projects, thinking
 from .config import DATA, LIVE_FALLBACK_MODELS, LIVE_MODEL, api_key, genai_client
 from .prompt import TOOL_SPECS, build_system_prompt, opening_message
 from .record import (
@@ -40,11 +40,19 @@ from .record import (
 LIVE: dict[str, dict[str, Any]] = {}
 
 
+_NOISE_RE = re.compile(
+    r"(?:[<\[\(\{]\s*)?\b(?:no\s+speech(?:\s+detected)?|inaudible|background\s+noise|silence)\b[.\s!]*(?:[>\]\)\}])?",
+    re.I,
+)
+
+
 def _clean_transcript(raw: str) -> str:
-    """Strips control tags (<no speech>, {pause}, [inaudible]) even when split across streaming chunks."""
-    s = re.sub(r"<[^>]*>|\{[^}]*\}|\[[^\]]*\]", "", raw or "")
+    """Strips control tags and all 'no speech detected' / 'silence' / 'inaudible' markers anywhere in the string."""
+    s = re.sub(r"<[^>]*>|\{[^}]*\}|\[[^\]]*\]", " ", raw or "")
     s = re.sub(r"[<{[][^>}\]]*$", "", s)  # strip any trailing half-open tag while streaming
-    if re.fullmatch(r"\s*(?:no speech(?: detected)?|silence|inaudible|noise)\s*", s, re.I):
+    s = _NOISE_RE.sub(" ", s)
+    s = re.sub(r"\s{2,}", " ", s)
+    if not s.strip(" .,!?-"):
         return ""
     return s
 
@@ -67,6 +75,7 @@ class TutorSession:
         self.id = new_id("test" if test_mode else "sess")
         self.log = SessionLog(self.id, test_mode=test_mode)
         self.ctrl = controller.SessionController(self.rec, test_mode=test_mode)
+        self.ctrl.pause_for_art_check = True
         self.live: Any = None
         self.send_lock = asyncio.Lock()
         self.closed = False
@@ -148,23 +157,62 @@ class TutorSession:
         self.bg.add(t)
         t.add_done_callback(self.bg.discard)
 
-    async def _send_content(self, text: str, image: bytes | None = None) -> None:
-        await self.ready.wait()
+    async def _emit_fallback_speech(self, fallback_text: str) -> None:
+        clean_fb = (fallback_text or "").strip()
+        if not clean_fb or self.closed:
+            return
+        self.turn += 1
+        self.spoke_since_kid = True
+        self.log.add("tutor_said", text=clean_fb, fallback=True)
+        await self.ui({"type": "tutor_fallback_speech", "turn": self.turn, "text": clean_fb})
+        await self.ui({"type": "turn_complete", "kid_turn": self.kid_turn_id})
+
+    async def _speech_watchdog(self, expected_kid_turn: int, fallback_text: str) -> None:
+        await asyncio.sleep(4.2)
+        if (
+            not self.closed
+            and self.kid_turn_id == expected_kid_turn
+            and not self.spoke_since_kid
+            and not self.tutor_busy
+            and fallback_text
+        ):
+            await self._emit_fallback_speech(fallback_text)
+
+    async def _send_content(self, text: str, image: bytes | None = None, spoken_fallback: str = "") -> None:
+        if not self.ready.is_set():
+            try:
+                await asyncio.wait_for(self.ready.wait(), timeout=1.2)
+            except asyncio.TimeoutError:
+                await self._emit_fallback_speech(spoken_fallback)
+                return
         if not self.live:
+            await self._emit_fallback_speech(spoken_fallback)
             return
         parts = [types.Part(text=text)]
         if image:
             parts.append(types.Part.from_bytes(data=media.small_jpeg(image), mime_type="image/jpeg"))
+        my_turn = self.kid_turn_id
+        sent_ok = False
         async with self.send_lock:
-            try:
-                await self.live.send_client_content(turns=types.Content(role="user", parts=parts), turn_complete=True)
-            except Exception as e:
-                self.log.add("error", where="send_content", error=str(e))
+            if self.live:
+                try:
+                    await asyncio.wait_for(
+                        self.live.send_client_content(turns=types.Content(role="user", parts=parts), turn_complete=True),
+                        timeout=3.0,
+                    )
+                    sent_ok = True
+                except Exception as e:
+                    blackboard.QUOTA.note_error("live_send", e)
+                    self.log.add("error", where="send_content", error=str(e))
+        if not sent_ok:
+            await self._emit_fallback_speech(spoken_fallback)
+        elif spoken_fallback:
+            self.spawn(self._speech_watchdog(my_turn, spoken_fallback))
 
     def opening(self) -> str:
         if self.opening_ideas:
             self.log.add("ideas", situation="opening (pre-generated)", focus="", ideas=self.opening_ideas)
-        elif not self.inventing:
+        elif not self.inventing and blackboard.QUOTA.allow_background():
             self.inventing = True
             self.spawn(self._invent("Session starting; generate 3 intrinsically-integrated sentence mechanics.", "B3.1 complete sentences"))
         return opening_message(self.rec, self.opening_ideas)
@@ -181,6 +229,8 @@ class TutorSession:
 
     async def audit_tutor_turn(self) -> None:
         """Scores every completed tutor turn for the parent dashboard and queues silent correction ONLY if off-track."""
+        if not blackboard.QUOTA.allow_background():
+            return
         try:
             recent = self.recent_exchange(8)
             if "Tutor:" not in recent:
@@ -214,9 +264,11 @@ class TutorSession:
         if not ok and out.get("next_move"):
             self.silent_context.append(f"[Auditor note for next turn: {out['next_move']}]")
 
-    async def apply_controller_ui(self, ui_actions: list[dict[str, Any]]) -> None:
+    async def apply_controller_ui(self, ui_actions: list[dict[str, Any]], epoch: int | None = None) -> None:
+        ep = epoch if epoch is not None else self.ctrl.blackboard.current_epoch()
         for act in ui_actions:
-            await self.ui(act)
+            out_act = {**act, "epoch": ep} if act.get("type") == "input" else act
+            await self.ui(out_act)
             if act.get("type") == "item":
                 it = act.get("item", {})
                 if it.get("kind") == "card":
@@ -268,14 +320,31 @@ class TutorSession:
         self.log.add("auto_draw", id=iid, sentence=sentence)
         return " (The illustration for this sentence is already rendering on screen automatically—do NOT call draw again for this sentence.)"
 
+    async def _maybe_prompt_art_check(self, target: str) -> None:
+        if self.ctrl.phase == "AWAITING_ART_CHECK" and self.ctrl.pending_art_target == target:
+            ui_chk, _, _ = self.ctrl.prompt_after_art_rendered(target)
+            await self.apply_controller_ui(ui_chk)
+
+    async def _run_redraw_art(self, rd: dict[str, Any] | None) -> str:
+        if not rd or not self.ctrl.project:
+            return ""
+        if rd.get("kind") == "spine":
+            self.spawn(self._draw_spine_beat(self.ctrl.project, rd["beat"], rd["scene"]))
+            return " (Redrawing the Story Spine scene now—do NOT call draw.)"
+        if rd.get("kind") == "panel":
+            self.spawn(self._draw_project_panel(self.ctrl.project, int(rd["panel"]), rd["scene"]))
+            return " (Redrawing the Comic Panel now—do NOT call draw.)"
+        return ""
+
     async def _draw_project_panel(self, proj: dict[str, Any], panel_number: int, sentence: str) -> None:
+        target = f"panel:{panel_number}"
         refs = []
-        for mid in projects.recent_reference_media_ids(proj, limit=2):
+        for mid in projects.recent_reference_media_ids(proj, limit=2, target=target):
             try:
                 refs.append(media.media_path(mid).read_bytes())
             except OSError:
                 pass
-        continuity = proj.get("characters") or (proj.get("spine") or {}).get("beginning", "")[:180]
+        continuity = projects.chronological_scene_context(proj, target)
         try:
             mid, _ = await asyncio.to_thread(
                 media.generate_image,
@@ -293,16 +362,18 @@ class TutorSession:
             projects.update_panel_media(proj, panel_number, None, "failed", sandbox=self.test_mode)
             await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
             self.log.add("error", where="draw_project_panel", error=str(e))
+        await self._maybe_prompt_art_check(target)
 
     async def _draw_spine_beat(self, proj: dict[str, Any], beat: str, sentence: str) -> None:
-        """Immediately renders Cover / Story Spine artwork for Act I, Act II, and Act III so the child sees art right away!"""
+        """Immediately renders Cover / Story Spine artwork with strictly chronological setting context (never leaking future Finale locations!)."""
+        target = f"spine:{beat}"
         refs = []
-        for mid in projects.recent_reference_media_ids(proj, limit=2):
+        for mid in projects.recent_reference_media_ids(proj, limit=2, target=target):
             try:
                 refs.append(media.media_path(mid).read_bytes())
             except OSError:
                 pass
-        continuity = proj.get("characters") or (proj.get("spine") or {}).get("beginning", "")[:180]
+        continuity = projects.chronological_scene_context(proj, target)
         try:
             mid, _ = await asyncio.to_thread(
                 media.generate_image,
@@ -319,6 +390,7 @@ class TutorSession:
             projects.update_spine_media(proj, beat, None, "failed", sandbox=self.test_mode)
             await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
             self.log.add("error", where="draw_spine_beat", error=str(e))
+        await self._maybe_prompt_art_check(target)
 
     async def _draw_codex_sketch(self, proj: dict[str, Any], prompt_txt: str) -> None:
         """Renders an immediate blueprint field sketch as soon as the Codex Reading Inference Check locks in!"""
@@ -336,7 +408,7 @@ class TutorSession:
             await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
             self.log.add("error", where="draw_codex_sketch", error=str(e))
 
-    async def from_kid(self, payload: str, directive: str, image: bytes | None = None) -> None:
+    async def from_kid(self, payload: str, directive: str, image: bytes | None = None, spoken_fallback: str = "") -> None:
         prefix = ""
         if not self.first_input_sent:
             self.first_input_sent = True
@@ -347,11 +419,12 @@ class TutorSession:
             self.silent_context.clear()
         self.kid_turn_id += 1
         self.spoke_since_kid = False
+        fb = spoken_fallback or ((self.ctrl.last_coach or {}).get("kid_words") or "")
         full = (
             f"{prefix}{payload}{notes}\n"
             f"[TURN PLAN (follow strictly; speak ONCE in 1-2 sentences and do NOT repeat after tool calls): {directive}]"
         )
-        await self._send_content(full, image)
+        await self._send_content(full, image, spoken_fallback=fb)
 
     async def notify(self, text: str, image: bytes | None = None) -> None:
         """Used only for major async completions (e.g. a live HTML5 game finished building)."""
@@ -474,7 +547,8 @@ class TutorSession:
                     self.live = None
                     err_s = str(e)
                     self.log.add("error", where="live", model=active_live_model, error=err_s)
-                    if ("404" in err_s or "not found" in err_s.lower() or "not supported" in err_s.lower()) and model_idx + 1 < len(model_candidates):
+                    blackboard.QUOTA.note_error("live_connect", err_s)
+                    if any(k in err_s.lower() for k in ("404", "not found", "not supported", "429", "quota", "resource_exhausted", "1011")) and model_idx + 1 < len(model_candidates):
                         model_idx += 1
                         continue
                     attempts += 1
@@ -570,17 +644,26 @@ class TutorSession:
             self.input_target = None
             self.kid_events += 1
 
-            chk, check_note = await self.check(text, "typed", secs)
             self.log.add("kid_typed", text=text, seconds=secs, backspaces=bs, target=target)
             self.ctrl.turn_signals = {"secs": secs, "backspaces": bs, "how": "typed"}
-            plan = await asyncio.to_thread(
-                self.ctrl.classify_and_advance, text, "typed", chk, self.opening_ideas
-            )
+            try:
+                plan = await asyncio.wait_for(
+                    asyncio.to_thread(self.ctrl.classify_and_advance, text, "typed", None, self.opening_ideas),
+                    timeout=4.5,
+                )
+            except asyncio.TimeoutError:
+                chk_fb = blackboard.local_check_writing(text)
+                plan = await asyncio.to_thread(self.ctrl.classify_and_advance, text, "typed", chk_fb, self.opening_ideas)
+
+            chk_used = ((self.ctrl.coach_session.get("last_request") or {}).get("chk")) or blackboard.local_check_writing(text)
+            check_note = self._record_check_stats(text, "typed", secs, chk_used)
             self.log.add("ctrl_plan", how="typed", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
             self._log_coach()
-            await self.apply_controller_ui(plan["ui"])
+            await self.apply_controller_ui(plan["ui"], epoch=plan.get("epoch"))
             render_note = ""
-            if plan.get("spine_draw") and self.ctrl.project:
+            if plan.get("redraw_art"):
+                render_note = await self._run_redraw_art(plan["redraw_art"])
+            elif plan.get("spine_draw") and self.ctrl.project:
                 sd = plan["spine_draw"]
                 self.spawn(self._draw_spine_beat(self.ctrl.project, sd["beat"], sd["text"]))
                 render_note = " (Story Spine / Cover illustration is already rendering on the right—do NOT call draw.)"
@@ -594,6 +677,7 @@ class TutorSession:
             await self.from_kid(
                 f'[{self.name} typed ({secs}s, {bs} backspaces): "{text}"]{check_note}',
                 plan["directive"] + render_note,
+                spoken_fallback=plan.get("spoken_fallback", ""),
             )
 
         elif kind == "pen":
@@ -619,9 +703,11 @@ class TutorSession:
             )
             self.log.add("ctrl_plan", how="pen", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
             self._log_coach()
-            await self.apply_controller_ui(plan["ui"])
+            await self.apply_controller_ui(plan["ui"], epoch=plan.get("epoch"))
             render_note = ""
-            if plan.get("spine_draw") and self.ctrl.project:
+            if plan.get("redraw_art"):
+                render_note = await self._run_redraw_art(plan["redraw_art"])
+            elif plan.get("spine_draw") and self.ctrl.project:
                 sd = plan["spine_draw"]
                 self.spawn(self._draw_spine_beat(self.ctrl.project, sd["beat"], sd["text"]))
                 render_note = " (Story Spine / Cover illustration is already rendering on the right—do NOT call draw.)"
@@ -636,6 +722,7 @@ class TutorSession:
                 f'[{self.name} handwrote: "{text}" (legible: {res.get("legible")}).]{check_note}',
                 plan["directive"] + render_note,
                 png,
+                spoken_fallback=plan.get("spoken_fallback", ""),
             )
 
         elif kind == "set_style":
@@ -695,6 +782,40 @@ class TutorSession:
                 "Invite typing the first complete sentence inside the reopened game in 1 short sentence.",
             )
 
+        elif kind == "art_feedback":
+            if not self.ctrl.project:
+                return
+            art_target = str(m.get("target") or "").strip()
+            if not art_target:
+                return
+            self.kid_events += 1
+            if m.get("remove"):
+                removed = projects.remove_art_beat(self.ctrl.project, art_target, sandbox=self.test_mode)
+                await self.ui({"type": "item", "item": projects.project_ui_payload(self.ctrl.project)})
+                if removed:
+                    await self.from_kid(
+                        f'[{self.name} removed beat {art_target}: "{removed[:80]}"]',
+                        "Confirm in 1 short sentence that you removed that beat cleanly and ask what happens instead.",
+                        spoken_fallback="Got it—I removed that part cleanly! What happens next instead?",
+                    )
+                return
+            if m.get("ok"):
+                projects.mark_art_verified(self.ctrl.project, art_target, sandbox=self.test_mode)
+                if self.ctrl.phase == "AWAITING_ART_CHECK" and self.ctrl.pending_art_target == art_target:
+                    plan = self.ctrl._continue_after_art_approved([])
+                    await self.apply_controller_ui(plan["ui"], epoch=self.ctrl.blackboard.bump_epoch())
+                    await self.from_kid(f'[{self.name} approved picture {art_target}]', plan["directive"])
+                else:
+                    await self.ui({"type": "item", "item": projects.project_ui_payload(self.ctrl.project)})
+                return
+            plan = self.ctrl.start_fix_art_prompt(art_target)
+            await self.apply_controller_ui(plan["ui"], epoch=plan.get("epoch"))
+            await self.from_kid(
+                f'[{self.name} asked to fix picture {art_target}]',
+                plan["directive"],
+                spoken_fallback=plan.get("spoken_fallback", ""),
+            )
+
         elif kind == "tap":
             val = str(m.get("value") or "").strip()
             if not val:
@@ -705,8 +826,15 @@ class TutorSession:
                 self.ctrl.classify_and_advance, val, "tap", None, self.opening_ideas
             )
             self.log.add("ctrl_plan", how="tap", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
-            await self.apply_controller_ui(plan["ui"])
-            await self.from_kid(f'[{self.name} tapped choice: "{val}"]', plan["directive"])
+            await self.apply_controller_ui(plan["ui"], epoch=plan.get("epoch"))
+            render_note = ""
+            if plan.get("redraw_art"):
+                render_note = await self._run_redraw_art(plan["redraw_art"])
+            await self.from_kid(
+                f'[{self.name} tapped choice: "{val}"]',
+                plan["directive"] + render_note,
+                spoken_fallback=plan.get("spoken_fallback", ""),
+            )
 
         elif kind == "activity_event":
             data = m.get("data")
@@ -758,12 +886,7 @@ class TutorSession:
 
     # ---------- writing check + observers ----------
 
-    async def check(self, text: str, how: str, seconds: float = 0.0) -> tuple[dict[str, Any], str]:
-        """Precise syntactic & orthographic check of what he wrote."""
-        try:
-            chk = await asyncio.wait_for(asyncio.to_thread(thinking.check_writing, text), timeout=8)
-        except Exception:
-            chk = {}
+    def _record_check_stats(self, text: str, how: str, seconds: float, chk: dict[str, Any]) -> str:
         words = set(re.findall(r"[a-z']+", text.lower()))
         prev = self.last_flawed_words
         first_try = not (prev and words and len(words & prev) / max(1, len(prev)) >= 0.5)
@@ -784,7 +907,15 @@ class TutorSession:
             LIVE.setdefault(self.id, {})["stats"] = self.stats.as_dict()
         summary = thinking.summarize_check(chk)
         self.last_check_note = summary
-        return chk, (f" [check: {summary}]" if summary else "")
+        return f" [check: {summary}]" if summary else ""
+
+    async def check(self, text: str, how: str, seconds: float = 0.0) -> tuple[dict[str, Any], str]:
+        """Precise syntactic & orthographic check of what he wrote."""
+        try:
+            chk = await asyncio.wait_for(asyncio.to_thread(thinking.check_writing, text), timeout=3.8)
+        except Exception:
+            chk = blackboard.local_check_writing(text)
+        return chk, self._record_check_stats(text, how, seconds, chk)
 
     def mechanic_desc(self) -> str:
         bits = [f"Goal: {self.ctrl.goal_badge()} | Rung: {self.ctrl.rung} | Phase: {self.ctrl.phase}"]
@@ -830,6 +961,8 @@ class TutorSession:
             await asyncio.sleep(25)
 
     async def observe_once(self) -> None:
+        if not blackboard.QUOTA.allow_background():
+            return
         window = self.recent_window()
         if not window:
             return
