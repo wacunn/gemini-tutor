@@ -10,6 +10,7 @@ Supports multiple independent books per format plus an isolated Parent Sandbox s
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import re
 from typing import Any
@@ -22,6 +23,9 @@ SANDBOX_PROJECTS: dict[str, dict[str, Any]] = {}
 
 KIND_BADGES: dict[str, str] = {
     "epic_graphic_novel": "Graphic Novel",
+    "story_jam_novel": "Story Jam Comic",
+    "how_to_tutorial": "How-To Tutorial",
+    "minecraft_diary": "Minecraft Diary",
     "epic_codex": "Fact Codex",
     "medium_pitch": "Persuasive Pitch",
     "quick_strip": "3-Panel Strip",
@@ -34,6 +38,27 @@ PROJECT_MENU: list[dict[str, str]] = [
         "scale": "epic",
         "time_est": "Save anytime · up to 100 panels",
         "summary": "Sketch your Beginning, Big Finale, and all the wild twists in the middle—then draw chapter by chapter.",
+    },
+    {
+        "key": "story_jam_novel",
+        "label": "100-Page Story Jam (Talk It Out First → Comic)",
+        "scale": "epic",
+        "time_est": "Verbal back-and-forth → up to 100 panels",
+        "summary": "Build a giant story out loud back-and-forth first (what happens, then what happens next?), then write & draw panel by panel.",
+    },
+    {
+        "key": "how_to_tutorial",
+        "label": "Illustrated How-To Tutorial (e.g. How to Play Minecraft)",
+        "scale": "epic",
+        "time_est": "Step-by-step illustrated guide · PDF",
+        "summary": "Write and illustrate an official step-by-step survival or strategy guide for beginners.",
+    },
+    {
+        "key": "minecraft_diary",
+        "label": "What I Did in Minecraft Today (Illustrated Diary)",
+        "scale": "epic",
+        "time_est": "Ongoing illustrated journal · PDF",
+        "summary": "Turn what you built, mined, or survived in Minecraft today into an illustrated gamer diary.",
     },
     {
         "key": "epic_codex",
@@ -284,8 +309,10 @@ def middle_beats_list(sp: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def is_project_nonempty(proj: dict[str, Any]) -> bool:
-    """True once a project has a custom title, at least 1 Story Spine beat, or at least 1 panel/entry."""
+    """True once a project has a custom title, Story Spine/Jam beats, tutorial topic, or at least 1 panel/entry."""
     if total_panels(proj) > 0:
+        return True
+    if proj.get("jam_beats") or proj.get("tutorial_topic"):
         return True
     sp = proj.get("spine") or {}
     if sp.get("beginning") or sp.get("end") or sp.get("middle") or middle_beats_list(sp):
@@ -301,6 +328,15 @@ def project_progress_label(proj: dict[str, Any]) -> str:
     pcount = total_panels(proj)
     stage = proj.get("stage", "")
     sp = proj.get("spine") or {}
+    if kind == "story_jam_novel":
+        n_jam = len(proj.get("jam_beats") or [])
+        if stage == "verbal_jam" and pcount == 0:
+            return f"{badge} · {n_jam} spoken beat{'s' if n_jam != 1 else ''}"
+        return f"{badge} · {pcount} panel{'s' if pcount != 1 else ''} ({n_jam} beats)"
+    if kind == "how_to_tutorial":
+        return f"{badge} · {pcount} step{'s' if pcount != 1 else ''}"
+    if kind == "minecraft_diary":
+        return f"{badge} · {pcount} log panel{'s' if pcount != 1 else ''}"
     if kind == "epic_graphic_novel" and stage.startswith("spine_") and pcount == 0:
         n_mid = len(middle_beats_list(sp))
         step = {
@@ -317,38 +353,82 @@ def project_progress_label(proj: dict[str, Any]) -> str:
     return f"{badge} · Ch.{n_ch} · {pcount} panel{'s' if pcount != 1 else ''}"
 
 
+def _today_short() -> str:
+    return datetime.now().strftime("%b %d")
+
+
 def create_project(
     kind: str,
     author: str,
     audience: str = "Dad",
     title: str = "",
-    style_key: str = DEFAULT_STYLE_KEY,
+    style_key: str = "",
     persist: bool = False,
     sandbox: bool = False,
 ) -> dict[str, Any]:
     ensure_dirs()
     pid = new_id("sbox_proj" if sandbox else "proj")
+    today_lbl = _today_short()
     default_titles = {
         "epic_graphic_novel": "Untitled Graphic Novel",
+        "story_jam_novel": "Untitled 100-Page Story",
+        "how_to_tutorial": "How to Play Minecraft: Official Guide",
+        "minecraft_diary": f"{author}'s Minecraft Diary" if author else "Minecraft Adventure Diary",
         "epic_codex": f"{author}'s Fact & Invention Codex" if author else "Fact & Invention Codex",
         "medium_pitch": f"Pitch for {audience}" if audience else "The Official Pitch",
         "quick_strip": "3-Panel Comic Strip",
     }
     clean_title = (title or "").strip()
-    skey = style_key if style_key in STYLE_BY_KEY else DEFAULT_STYLE_KEY
+    if style_key and style_key in STYLE_BY_KEY:
+        skey = style_key
+    elif kind in ("how_to_tutorial", "minecraft_diary"):
+        skey = "blocky_voxel"
+    else:
+        skey = DEFAULT_STYLE_KEY
     needs_spine = kind == "epic_graphic_novel"
+    if needs_spine:
+        init_stage = "spine_beginning"
+    elif kind == "story_jam_novel":
+        init_stage = "verbal_jam"
+    elif kind == "how_to_tutorial" and not clean_title:
+        init_stage = "tutorial_topic"
+    else:
+        init_stage = "drafting_panels"
+
+    if needs_spine or kind == "story_jam_novel":
+        ch1_title = "Chapter 1: The Kickoff"
+    elif kind == "how_to_tutorial":
+        ch1_title = "Step-by-Step Survival & Strategy Guide"
+    elif kind == "minecraft_diary":
+        ch1_title = f"Minecraft Log · {today_lbl}"
+    elif kind == "epic_codex":
+        ch1_title = "Entries"
+    else:
+        ch1_title = "Part 1"
+
+    target_map = {
+        "epic_graphic_novel": 100,
+        "story_jam_novel": 100,
+        "how_to_tutorial": 8,
+        "minecraft_diary": 24,
+        "epic_codex": 12,
+        "medium_pitch": 4,
+        "quick_strip": 3,
+    }
     proj: dict[str, Any] = {
         "id": pid,
         "kind": kind,
-        "scale": "epic" if kind.startswith("epic_") else ("medium" if kind.startswith("medium_") else "quick"),
+        "scale": "epic" if kind in ("epic_graphic_novel", "story_jam_novel", "how_to_tutorial", "minecraft_diary", "epic_codex") else ("medium" if kind.startswith("medium_") else "quick"),
         "title": clean_title or default_titles.get(kind, "Untitled Project"),
         "custom_titled": bool(clean_title),
+        "tutorial_topic": clean_title if kind == "how_to_tutorial" and clean_title else "",
+        "jam_beats": [],
         "author": author or "Author",
         "audience": audience or "Family",
         "style_key": skey,
         "style": resolve_style_prompt(skey),
         "characters": "",
-        "stage": "spine_beginning" if needs_spine else "drafting_panels",
+        "stage": init_stage,
         "spine": {
             "beginning": "",
             "end": "",
@@ -360,12 +440,13 @@ def create_project(
         "chapters": [
             {
                 "number": 1,
-                "title": "Chapter 1: The Kickoff" if needs_spine else ("Entries" if kind == "epic_codex" else "Part 1"),
+                "title": ch1_title,
+                "date_key": today_lbl if kind == "minecraft_diary" else "",
                 "act": "Beginning",
                 "panels": [],
             }
         ],
-        "target_panels": 100 if kind == "epic_graphic_novel" else (12 if kind == "epic_codex" else (4 if kind == "medium_pitch" else 3)),
+        "target_panels": target_map.get(kind, 6),
         "sandbox": sandbox,
         "created": now_iso(),
         "updated": now_iso(),
@@ -485,18 +566,64 @@ def all_panels(proj: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def add_jam_beat(
+    proj: dict[str, Any],
+    note: str,
+    title_hint: str = "",
+    sandbox: bool | None = None,
+) -> dict[str, Any]:
+    """Appends one spoken/brainstormed story beat to `proj['jam_beats']` during Verbal Story Jam."""
+    jlist = proj.setdefault("jam_beats", [])
+    entry = {
+        "id": new_id("jb"),
+        "note": (note or "").strip()[:240],
+        "written": False,
+    }
+    jlist.append(entry)
+    if title_hint and not proj.get("custom_titled") and proj.get("title", "").startswith("Untitled"):
+        proj["title"] = title_hint.strip()[:64]
+    save_project(proj, sandbox=sandbox)
+    return entry
+
+
+def remove_jam_beat(proj: dict[str, Any], beat_id: str, sandbox: bool | None = None) -> bool:
+    jlist = proj.get("jam_beats") or []
+    before = len(jlist)
+    proj["jam_beats"] = [b for b in jlist if b.get("id") != beat_id]
+    if len(proj["jam_beats"]) != before:
+        save_project(proj, sandbox=sandbox)
+        return True
+    return False
+
+
+def next_unwritten_jam_beat(proj: dict[str, Any]) -> tuple[int, dict[str, Any] | None]:
+    """Returns (1-based beat_index, beat_dict) for the next spoken Story Jam beat not yet turned into a panel."""
+    for idx, b in enumerate(proj.get("jam_beats") or [], 1):
+        if not b.get("written"):
+            return idx, b
+    return 0, None
+
+
 def current_chapter(proj: dict[str, Any]) -> dict[str, Any]:
     chapters = proj.setdefault("chapters", [{"number": 1, "title": "Chapter 1: The Kickoff", "act": "Beginning", "panels": []}])
     ch = chapters[-1]
-    if proj.get("kind") == "epic_graphic_novel" and len(ch.get("panels") or []) >= 5:
+    kind = proj.get("kind", "")
+    if kind == "minecraft_diary":
+        today_lbl = _today_short()
+        if ch.get("date_key") and ch.get("date_key") != today_lbl and (ch.get("panels") or []):
+            n = len(chapters) + 1
+            ch = {"number": n, "title": f"Minecraft Log · {today_lbl}", "date_key": today_lbl, "act": today_lbl, "panels": []}
+            chapters.append(ch)
+        return ch
+    if kind in ("epic_graphic_novel", "story_jam_novel") and len(ch.get("panels") or []) >= 5:
         n = len(chapters) + 1
         mbeats = middle_beats_list(proj.get("spine") or {})
-        if n - 1 <= len(mbeats):
+        if mbeats and n - 1 <= len(mbeats):
             act = f"Middle Twist {n - 1}"
             title = f"Chapter {n}: Twist {n - 1}"
         else:
-            act = "The Big Finale"
-            title = f"Chapter {n}: The Big Finale"
+            act = f"Chapter {n}"
+            title = f"Chapter {n}"
         ch = {"number": n, "title": title, "act": act, "panels": []}
         chapters.append(ch)
     return ch
@@ -513,8 +640,22 @@ def add_panel_to_project(
     ch = current_chapter(proj)
     caption, bubbles = extract_dialogue(sentence)
     pnum = total_panels(proj) + 1
+    kind = proj.get("kind", "")
+    if kind == "how_to_tutorial":
+        badge = f"STEP {pnum}"
+    elif kind == "minecraft_diary":
+        badge = f"{_today_short().upper()} · #{pnum}"
+    else:
+        badge = ""
+    # Mark next unwritten Story Jam beat as written when turning spoken outline into panels
+    for jb in proj.get("jam_beats") or []:
+        if not jb.get("written"):
+            jb["written"] = True
+            jb["panel_number"] = pnum
+            break
     panel = {
         "number": pnum,
+        "badge": badge,
         "caption": caption,
         "dialogue": bubbles,
         "scene": scene or sentence,
@@ -540,6 +681,8 @@ def update_panel_media(proj: dict[str, Any], panel_number: int, media_id: str | 
                     p["image"] = media_id
                     p["src"] = f"/media/{media_id}.jpg"
                     p["verified"] = False
+                    if not proj.get("cover_image"):
+                        proj["cover_image"] = media_id
                 save_project(proj, sandbox=sandbox)
                 return
 
@@ -973,6 +1116,8 @@ def project_ui_payload(proj: dict[str, Any]) -> dict[str, Any]:
         "art_styles": ART_STYLES,
         "stage": proj.get("stage", "drafting_panels"),
         "spine": sp,
+        "jam_beats": proj.get("jam_beats") or [],
+        "tutorial_topic": proj.get("tutorial_topic") or "",
         "cover_src": f"/media/{proj['cover_image']}.jpg" if proj.get("cover_image") else None,
         "codex_sketch_src": proj.get("codex_sketch_src"),
         "codex_sketch_status": proj.get("codex_sketch_status"),

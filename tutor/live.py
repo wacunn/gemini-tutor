@@ -881,6 +881,27 @@ class TutorSession:
                 spoken_fallback=plan.get("spoken_fallback", ""),
             )
 
+        elif kind == "story_jam_mode":
+            if not self.ctrl.project:
+                return
+            j_act = str(m.get("action") or "").strip()
+            if j_act == "delete_beat":
+                bid = str(m.get("beat_id") or "").strip()
+                if bid and projects.remove_jam_beat(self.ctrl.project, bid, sandbox=self.test_mode):
+                    await self.ui({"type": "item", "item": projects.project_ui_payload(self.ctrl.project)})
+                return
+            self.kid_events += 1
+            if j_act == "start_writing":
+                ui_acts, dir_w = await asyncio.to_thread(self.ctrl.exit_verbal_story_jam_to_panels, [])
+                await self.apply_controller_ui(ui_acts, epoch=self.ctrl.blackboard.bump_epoch())
+                await self.from_kid(f"[{self.name} switched from Story Jam to writing comic panels]", dir_w)
+                return
+            if j_act == "start_jam":
+                ui_j, dir_j = await asyncio.to_thread(self.ctrl.enter_verbal_story_jam, [], True)
+                await self.apply_controller_ui(ui_j, epoch=self.ctrl.blackboard.bump_epoch())
+                await self.from_kid(f"[{self.name} opened Verbal Story Jam to talk out more of the story]", dir_j)
+                return
+
         elif kind == "request_dialogue_mic":
             target_m = str(m.get("target") or "").strip()
             if not target_m:

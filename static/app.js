@@ -181,6 +181,9 @@ function renderHeroStarters(savedProjects) {
     : "";
   box.innerHTML = `${contPill}
     <button type="button" class="hero-pill" data-new-kind="epic_graphic_novel">Comic book</button>
+    <button type="button" class="hero-pill" data-new-kind="story_jam_novel">Story jam (talk → comic)</button>
+    <button type="button" class="hero-pill" data-new-kind="how_to_tutorial">How-to tutorial (Minecraft…)</button>
+    <button type="button" class="hero-pill" data-new-kind="minecraft_diary">Minecraft diary</button>
     <button type="button" class="hero-pill" data-new-kind="epic_codex">Fact codex</button>
     <button type="button" class="hero-pill" data-new-kind="medium_pitch">Persuasive pitch</button>
     <button type="button" class="hero-pill" data-new-kind="quick_game">Mini-game</button>`;
@@ -472,7 +475,7 @@ async function startCenterMicRecording() {
   $("centerMicStatus").textContent = "● Mic is ON — speak now!";
   $("centerMicDone").hidden = false;
 
-  const silenceCutoff = centerMic.purpose === "word" ? 24 : 36; // ~0.96s after a word, ~1.44s after a sentence
+  const silenceCutoff = centerMic.purpose === "word" ? 24 : centerMic.purpose === "story_jam" ? 50 : 36;
   centerMic.node.port.onmessage = (e) => {
     if (!centerMic.recording) return;
     const pcmCopy = new Int16Array(e.data.pcm);
@@ -502,7 +505,7 @@ async function startCenterMicRecording() {
   clearTimeout(centerMic.maxTimer);
   centerMic.maxTimer = setTimeout(() => {
     if (centerMic.open) stopCenterMic(centerMic.speechFrames >= 2);
-  }, 12000);
+  }, centerMic.purpose === "story_jam" ? 28000 : 12000);
 }
 
 function showCenterMic(cfg) {
@@ -1481,6 +1484,25 @@ function wireBookPane(pane, it) {
       send({ type: "art_feedback", target: btn.dataset.artDel, remove: true });
     };
   });
+  pane.querySelectorAll("[data-jam-start]").forEach((btn) => {
+    btn.onclick = () => {
+      begin();
+      addKid("🎙️ Talk out more of the story");
+      send({ type: "story_jam_mode", action: "start_jam" });
+    };
+  });
+  pane.querySelectorAll("[data-jam-write]").forEach((btn) => {
+    btn.onclick = () => {
+      begin();
+      addKid("✍️ Ready — start writing panels!");
+      send({ type: "story_jam_mode", action: "start_writing" });
+    };
+  });
+  pane.querySelectorAll("[data-jam-del]").forEach((btn) => {
+    btn.onclick = () => {
+      send({ type: "story_jam_mode", action: "delete_beat", beat_id: btn.dataset.jamDel });
+    };
+  });
 }
 
 function renderBookProject(b) {
@@ -1568,9 +1590,44 @@ function renderBookProject(b) {
         </div>`
       : "";
 
+  const jamBeats = Array.isArray(b.jam_beats) ? b.jam_beats : [];
+  const showJamBoard = b.proj_kind === "story_jam_novel" || b.stage === "verbal_jam" || jamBeats.length > 0;
+  let foundNextJam = false;
+  const jamRowsHtml = jamBeats
+    .map((jb, idx) => {
+      const isDone = !!jb.written;
+      const isNext = !isDone && !foundNextJam && b.stage !== "verbal_jam";
+      if (isNext) foundNextJam = true;
+      const cls = isDone ? "jam-row done" : isNext ? "jam-row next-up" : "jam-row";
+      const tag = isDone ? `✓ Panel ${jb.panel_number || idx + 1}` : isNext ? "▶ Writing now" : `#${idx + 1}`;
+      return `<div class="${cls}">
+        <span class="jam-num">${esc(tag)}</span>
+        <span style="flex:1">${esc(jb.note || "")}</span>
+        <button type="button" class="text-btn" style="padding:2px 6px;font-size:.76rem" data-jam-del="${esc(jb.id || "")}" title="Remove beat">✕</button>
+      </div>`;
+    })
+    .join("");
+
+  const jamHtml = showJamBoard
+    ? `<div class="jam-board ${b.stage === "verbal_jam" ? "active-jam" : ""}">
+        <div class="jam-head">
+          <div>
+            <strong style="color:#8ab4f8">🎙️ 100-Page Story Jam Outline</strong>
+            <div class="muted" style="font-size:.8rem">Talk out what happens &amp; what happens next—then write panel by panel!</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            ${b.stage === "verbal_jam"
+              ? (jamBeats.length ? `<button type="button" class="let-save-btn" data-jam-write="1">✍️ Write Panels Now</button>` : "")
+              : `<button type="button" class="comic-act-btn primary-let" data-jam-start="1">🎙️ Talk Out More Story</button>`}
+          </div>
+        </div>
+        ${jamRowsHtml ? `<div class="jam-list">${jamRowsHtml}</div>` : `<div class="muted" style="font-size:.86rem">Speak into the green mic—every story beat you decide appears right here!</div>`}
+      </div>`
+    : "";
+
   const stepsDone =
-    (sp.beginning ? 1 : 0) + mbeats.length + (sp.end ? 1 : 0) + (b.panel_count || 0);
-  const stepsGoal = b.proj_kind === "epic_graphic_novel" ? Math.max(5, stepsDone + 1) : (b.target_panels || 4);
+    (sp.beginning ? 1 : 0) + mbeats.length + (sp.end ? 1 : 0) + jamBeats.length + (b.panel_count || 0);
+  const stepsGoal = (b.proj_kind === "epic_graphic_novel" || b.proj_kind === "story_jam_novel") ? Math.max(5, stepsDone + 1) : (b.target_panels || 4);
   const pct = Math.min(100, Math.round((stepsDone / Math.max(1, stepsGoal)) * 100));
   const progHtml = `<div class="book-prog"><div class="book-prog-fill" style="width:${pct}%"></div></div>`;
 
@@ -1603,7 +1660,7 @@ function renderBookProject(b) {
         .map((p) =>
           renderComicPanelUnit({
             target: `panel:${p.number}`,
-            badge: `PANEL ${p.number || ""}`,
+            badge: p.badge || `PANEL ${p.number || ""}`,
             src: p.src,
             status: p.status,
             caption: p.caption ?? "",
@@ -1626,6 +1683,9 @@ function renderBookProject(b) {
         <div class="muted" style="font-size:.86rem">${esc(b.progress_label || `${b.panel_count || 0} panel(s)`)} · Style: ${esc(b.style_label || "Notebook Ink Doodle")}${b.sandbox ? " (Sandbox)" : ""}</div>
       </div>
       <div class="book-actions">
+        ${(b.proj_kind === "epic_graphic_novel" || b.proj_kind === "story_jam_novel") && b.stage !== "verbal_jam"
+          ? `<button type="button" class="pill-btn" data-jam-start="1" title="Talk out the story verbally before writing panels">🎙️ Story Jam</button>`
+          : ""}
         <button type="button" class="pill-btn" data-toggle-styles="1">Art Style</button>
         <button type="button" class="pill-btn" data-switch-book="1">Switch / New</button>
         <a class="text-btn" href="${esc(b.web_url)}" target="_blank">Web view</a>
@@ -1634,6 +1694,7 @@ function renderBookProject(b) {
     </div>
     ${progHtml}
     ${stylesHtml}
+    ${jamHtml}
     ${spineHtml}
     ${codexLiveHtml}
     ${chHtml || '<div class="muted" style="padding:8px 2px">Tip: Click <b>💬 + Speech Bubble</b> or <b>✎ Caption</b> under any panel to add comic dialogue, shout bubbles, or edit captions!</div>'}`;

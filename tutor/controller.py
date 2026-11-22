@@ -146,6 +146,76 @@ def ai_direct_next_beat(
     }
 
 
+STORY_JAM_SYSTEM = """You are a sharp, conversational story-sparring collaborator helping an 8-year-old author build a giant 100-page comic book OUT LOUD before writing the panels.
+Right now we are in VERBAL STORY JAM mode (pure back-and-forth spoken plotting—zero spelling or punctuation talk!).
+CRITICAL RULES:
+1. ZERO PLOT SUGGESTING: NEVER invent characters, items, twists, or either/or plot choices ("Does he find a sword or a portal?"). Every idea must come 100% from him!
+2. CAPTURE THE BEAT (`beat_note`): Write 1 crisp, factual sentence summarizing ONLY what he just decided happens in this beat.
+3. BACK-AND-FORTH CHALLENGE OR "WHAT NEXT?" (`spoken_reply`):
+   - Speak in 1–2 short, natural sentences (plain, grounded voice—zero hype or baby talk).
+   - Alternate naturally between:
+     a) Challenging/probing a concrete story detail to make HIS idea sharper ("Wait—if he fell into that cavern with nothing, how does he survive the first minute?", "Hold on, why is the boss after him in the first place?", "Where is everyone else while that's happening?"), AND
+     b) Driving the chain forward ("Got that on your board—what happens right after that?").
+4. `book_title`: 2–4 punchy words using ONLY concepts he already named.
+Return STRICT JSON:
+{"beat_note": "1 concise sentence capturing what just happened in his words.",
+ "book_title": "Short Title From His Words",
+ "spoken_reply": "1-2 short natural sentences reacting + challenging a detail OR asking what happens next."}"""
+
+
+def run_story_jam_turn(rec: dict[str, Any], existing_beats: list[dict[str, Any]], kid_utterance: str) -> dict[str, str]:
+    """Fast (~0.8s) verbal story-jam sparring turn with 0ms deterministic fallback."""
+    raw = (kid_utterance or "").strip()
+    clean_note = raw[:1].upper() + raw[1:] if raw else "Story beat added."
+    if clean_note and not re.search(r"[.!?]$", clean_note):
+        clean_note += "."
+    beats_txt = "\n".join(f"{i}. {b.get('note', '')}" for i, b in enumerate(existing_beats[-10:], 1)) or "(First beat!)"
+    prompt = (
+        f"STUDENT: {rec.get('name') or 'Author'} (Grade {rec.get('grade', 3)}).\n"
+        f"STORY JAM OUTLINE SO FAR:\n{beats_txt}\n\n"
+        f"WHAT THE STUDENT JUST SAID HAPPENS:\n{raw}"
+    )
+    if blackboard.QUOTA.allow_background() and raw:
+        try:
+            client = genai_client(timeout_ms=10000)
+            for model in (PLANNER_MODEL, FAST_MODEL):
+                try:
+                    resp = client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=STORY_JAM_SYSTEM,
+                            temperature=0.45,
+                            response_mime_type="application/json",
+                            thinking_config=types.ThinkingConfig(thinking_budget=0),
+                        ),
+                    )
+                    out = thinking._json(resp.text)
+                    if isinstance(out, dict) and out.get("beat_note") and out.get("spoken_reply"):
+                        return {
+                            "beat_note": str(out["beat_note"]).strip()[:220],
+                            "book_title": str(out.get("book_title") or "").strip()[:56],
+                            "spoken_reply": str(out["spoken_reply"]).strip()[:280],
+                        }
+                except Exception as e:
+                    blackboard.QUOTA.note_error("story_jam", e)
+                    if not blackboard.QUOTA.allow_background():
+                        break
+        except Exception:
+            pass
+
+    beat_n = len(existing_beats) + 1
+    if beat_n % 2 == 1:
+        reply = f"Got Beat #{beat_n} on your Story Jam board! Wait—how does that actually happen, or what detail makes it tricky?"
+    else:
+        reply = f"Added Beat #{beat_n} to your outline. What happens right after that?"
+    return {
+        "beat_note": clean_note[:220],
+        "book_title": _infer_book_title(raw),
+        "spoken_reply": reply,
+    }
+
+
 def generate_combine_scaffold(
     rec: dict[str, Any],
     active_story: list[str],
@@ -332,6 +402,16 @@ class SessionController:
             return ""
         sp = self.project.get("spine") or {}
         bits = []
+        if self.project.get("tutorial_topic"):
+            bits.append(f"Illustrated Tutorial Topic: {self.project['tutorial_topic']}")
+        if self.project.get("kind") == "minecraft_diary":
+            bits.append(f"Illustrated Minecraft Diary ({self.project.get('title', 'Minecraft Diary')})")
+        jbeats = self.project.get("jam_beats") or []
+        if jbeats:
+            bits.append("Spoken Story Jam Outline:")
+            for idx_j, jb in enumerate(jbeats, 1):
+                mark = "✓ drawn" if jb.get("written") else "▶ next to write"
+                bits.append(f"  Beat #{idx_j} ({mark}): {jb.get('note', '')}")
         if sp.get("beginning"):
             bits.append(f"1. Beginning (START): {sp['beginning']}")
         mbeats = projects.middle_beats_list(sp)
@@ -355,6 +435,15 @@ class SessionController:
             kind = self.project.get("kind", "")
             stage = self.project.get("stage", "")
             pcount = projects.total_panels(self.project)
+            if stage == "verbal_jam":
+                n_jb = len(self.project.get("jam_beats") or [])
+                return f"Story Jam (Talk First): {n_jb} beat{'s' if n_jb != 1 else ''}"
+            if kind == "how_to_tutorial":
+                if stage == "tutorial_topic":
+                    return "Tutorial: Pick Topic"
+                return f"Tutorial: Step {pcount + 1} · {pcount} drawn"
+            if kind == "minecraft_diary":
+                return f"Minecraft Diary: {pcount} log panel{'s' if pcount != 1 else ''}"
             if stage.startswith("spine_"):
                 sp = self.project.get("spine") or {}
                 n_mid = len(projects.middle_beats_list(sp))
@@ -430,6 +519,15 @@ class SessionController:
             self.session_panels_target = 4
             self.tree_step = min(3, projects.total_panels(proj))
             return self._prompt_pitch_step(ui)
+        if proj.get("stage") == "verbal_jam":
+            self.session_panels_target = 4
+            return self.enter_verbal_story_jam(ui, resumed=True)
+        if pkind == "how_to_tutorial":
+            self.session_panels_target = 4
+            return self._prompt_tutorial_step(ui, resumed=True)
+        if pkind == "minecraft_diary":
+            self.session_panels_target = 4
+            return self._prompt_diary_step(ui, resumed=True)
         if proj.get("stage", "").startswith("spine_"):
             return self._prompt_spine_step(ui, resumed=True)
         self.session_panels_target = 3 if pkind == "quick_strip" else 4
@@ -458,6 +556,14 @@ class SessionController:
                 "and put a 2-kernel Sentence Combining warm-up card on screen while it builds."
             )
 
+        # For Minecraft Diary, if he already has an ongoing diary on disk (and didn't request a custom title), resume it so all days live in one journal!
+        if kind == "minecraft_diary" and not clean_t:
+            existing_diary = next((p for p in projects.list_projects(sandbox=self.test_mode) if p.get("kind") == "minecraft_diary"), None)
+            if existing_diary:
+                loaded_d = projects.load_project(existing_diary["id"])
+                if loaded_d:
+                    return self.resume_loaded_project(loaded_d)
+
         self.project = projects.create_project(
             kind,
             self.name,
@@ -469,6 +575,15 @@ class SessionController:
         ui.append({"type": "item", "item": projects.project_ui_payload(self.project)})
         ui.append({"type": "goal", "text": self.goal_badge()})
 
+        if kind == "story_jam_novel":
+            self.session_panels_target = 4
+            return self.enter_verbal_story_jam(ui, resumed=False)
+        if kind == "how_to_tutorial":
+            self.session_panels_target = 4
+            return self._prompt_tutorial_step(ui, resumed=False)
+        if kind == "minecraft_diary":
+            self.session_panels_target = 4
+            return self._prompt_diary_step(ui, resumed=False)
         if kind == "epic_graphic_novel":
             self.phase = "STORY_SPINE"
             self.session_panels_target = 2
@@ -492,6 +607,15 @@ class SessionController:
             saved = projects.list_projects(sandbox=self.test_mode)
             if saved:
                 return self.resume_loaded_project(saved[0])
+
+        if "story jam" in low or "talk first" in low or "talk it out" in low and "100" in low:
+            return self.create_or_switch_project("story_jam_novel")
+
+        if "tutorial" in low or "how-to" in low or "how to play" in low:
+            return self.create_or_switch_project("how_to_tutorial")
+
+        if "diary" in low or "minecraft today" in low or "did in minecraft" in low:
+            return self.create_or_switch_project("minecraft_diary")
 
         if "full comic book" in low or "graphic novel" in low or "another comic" in low or "new comic" in low:
             return self.create_or_switch_project("epic_graphic_novel")
@@ -556,6 +680,254 @@ class SessionController:
             f"Ask concisely for {step_instr}"
         )
 
+    def enter_verbal_story_jam(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
+        """Opens back-and-forth Verbal Story Jam mode: green mic turns ON so he can plot a giant 100-page story out loud before writing panels!"""
+        assert self.project is not None
+        self.project["stage"] = "verbal_jam"
+        self.phase = "VERBAL_STORY_JAM"
+        self.active_mic_request = {"purpose": "story_jam", "sentence": ""}
+        projects.save_project(self.project, sandbox=self.test_mode)
+        jbeats = self.project.get("jam_beats") or []
+        ui.append({"type": "remove", "id": "starters"})
+        ui.append({"type": "remove", "id": "art_check_choices"})
+        ui.append({"type": "item", "item": projects.project_ui_payload(self.project)})
+        if jbeats:
+            last_note = jbeats[-1].get("note", "")
+            ui.append(
+                {
+                    "type": "item",
+                    "item": {
+                        "id": "jam_choices",
+                        "kind": "choices",
+                        "prompt": f"{len(jbeats)} story beat{'s' if len(jbeats) != 1 else ''} on your Story Jam Board:",
+                        "options": ["✍️ Ready — Start Writing Panel 1!", "🎤 Keep Talking Out the Story"],
+                    },
+                }
+            )
+            spoken = (
+                f"{'Back in' if resumed else 'In'} Story Jam—last beat was \"{last_note}\". "
+                "Tell me into the green mic what happens next (or tap Ready when you want to start writing panels)!"
+            )
+            mic_prompt = "Speak into the green mic: what happens next in your story?"
+        else:
+            spoken = (
+                "Story Jam is open—let's talk out your giant story back and forth before writing a single panel. "
+                "Speak into the green mic: who is in this story, and what kicks things off?"
+            )
+            mic_prompt = "Speak into the green mic: who is in your story, and what happens first?"
+
+        ui.append(
+            {
+                "type": "tutor_mic",
+                "action": "on",
+                "purpose": "story_jam",
+                "target_word": "",
+                "sentence": "",
+                "prompt": mic_prompt,
+            }
+        )
+        ui.append(
+            {
+                "type": "input",
+                "mode": "type",
+                "prompt": "Green mic is ON—talk out your story (or type here, or tap 'Ready — Start Writing Panel 1!' anytime):",
+                "prefill": "",
+            }
+        )
+        self.ui_locked_this_turn.update({"show_choices", "ask_input"})
+        return ui, f'Say plainly in 1-2 short sentences (the green mic turns on right after you speak): "{spoken}"'
+
+    def exit_verbal_story_jam_to_panels(self, ui: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
+        """Switches from Verbal Story Jam to panel-by-panel comic writing guided by his spoken `jam_beats`!"""
+        assert self.project is not None
+        self.project["stage"] = "drafting_panels"
+        self.active_mic_request = None
+        projects.save_project(self.project, sandbox=self.test_mode)
+        ui.append({"type": "tutor_mic", "action": "off"})
+        ui.append({"type": "remove", "id": "jam_choices"})
+        ui.append({"type": "reward", "label": "✍️ Story Jam Locked · Now Writing Panel by Panel!"})
+        ui.append({"type": "item", "item": projects.project_ui_payload(self.project)})
+        ui.append({"type": "goal", "text": self.goal_badge()})
+        return self._prompt_next_book_panel(ui, resumed=False)
+
+    def _handle_story_jam_utterance(self, raw: str, epoch: int) -> dict[str, Any]:
+        """Processes one spoken (or typed) brainstorming turn during `VERBAL_STORY_JAM`—adds beat + asks/challenges back-and-forth!"""
+        assert self.project is not None
+        low = raw.lower().strip()
+        if re.search(
+            r"\b(ready\s*(?:—|-)?\s*start\s+writing|start\s+writing|ready\s+to\s+write|write\s+panel|draw\s+the\s+panels|let'?s\s+write)\b",
+            low,
+        ):
+            ui_go, dir_go = self.exit_verbal_story_jam_to_panels([])
+            return {"epoch": epoch, "kind": "JAM_TO_PANELS", "ui": ui_go, "directive": dir_go}
+
+        if "keep talking out the story" in low:
+            ui_k, dir_k = self.enter_verbal_story_jam([], resumed=True)
+            return {"epoch": epoch, "kind": "STORY_JAM_CONTINUE", "ui": ui_k, "directive": dir_k}
+
+        existing = list(self.project.get("jam_beats") or [])
+        jam_out = run_story_jam_turn(self.rec, existing, raw)
+        projects.add_jam_beat(
+            self.project,
+            jam_out["beat_note"],
+            title_hint=jam_out.get("book_title", ""),
+            sandbox=self.test_mode,
+        )
+        n_beats = len(self.project.get("jam_beats") or [])
+        self.last_kid_kind = "STORY_JAM_BEAT"
+        self.active_mic_request = {"purpose": "story_jam", "sentence": ""}
+        spoken = jam_out["spoken_reply"]
+        ui_j: list[dict[str, Any]] = [
+            {"type": "remove", "id": "jam_choices"},
+            {"type": "reward", "label": f"🎙️ Story Jam Beat #{n_beats} Added!"},
+            {"type": "item", "item": projects.project_ui_payload(self.project)},
+            {
+                "type": "item",
+                "item": {
+                    "id": "jam_choices",
+                    "kind": "choices",
+                    "prompt": f"{n_beats} beat{'s' if n_beats != 1 else ''} mapped out! Keep talking, or ready to write Panel 1?",
+                    "options": ["✍️ Ready — Start Writing Panel 1!", "🎤 Keep Talking Out the Story"],
+                },
+            },
+            {
+                "type": "tutor_mic",
+                "action": "on",
+                "purpose": "story_jam",
+                "target_word": "",
+                "sentence": "",
+                "prompt": "Green mic is ON — answer or say what happens next!",
+            },
+            {
+                "type": "input",
+                "mode": "type",
+                "prompt": f"Beat #{n_beats} saved! Speak into the green mic (or tap '✍️ Ready — Start Writing Panel 1!' anytime):",
+                "prefill": "",
+            },
+        ]
+        self.ui_locked_this_turn.update({"show_choices", "ask_input"})
+        return {
+            "epoch": epoch,
+            "kind": self.last_kid_kind,
+            "spoken_fallback": spoken,
+            "ui": ui_j,
+            "directive": f'Deliver this conversational Story Jam reply in 1-2 short natural sentences (do NOT suggest plot ideas; the green mic turns back on automatically right after you finish speaking): "{spoken}"',
+        }
+
+    def _prompt_tutorial_step(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
+        """Drives Illustrated Step-by-Step How-To Tutorial (e.g. 'How to Play Minecraft')."""
+        assert self.project is not None
+        self.phase = "BUILDING"
+        ui.append({"type": "remove", "id": "starters"})
+        ui.append({"type": "goal", "text": self.goal_badge()})
+
+        if self.project.get("stage") == "tutorial_topic":
+            opts = [
+                "How to Play Minecraft (Beginner Survival)",
+                "How to Survive Your First Night in Minecraft",
+                "How to Find Diamonds Without Dying in Lava",
+                "How to Build a Redstone Trap",
+            ]
+            ui.append(
+                {
+                    "type": "item",
+                    "item": {
+                        "id": "tutorial_topics",
+                        "kind": "choices",
+                        "prompt": "Pick your Illustrated Tutorial topic (or type your own below):",
+                        "options": opts,
+                    },
+                }
+            )
+            ui.append(
+                {
+                    "type": "input",
+                    "mode": "type",
+                    "prompt": "Tap a Minecraft tutorial above—or type any How-To tutorial title you want to write & illustrate:",
+                    "prefill": "",
+                }
+            )
+            self.ui_locked_this_turn.update({"show_choices", "ask_input"})
+            spoken = "Let's make an Illustrated How-To Guide! Pick one of the Minecraft tutorials on screen, or type whatever topic you want to teach."
+            return ui, f'Say plainly in 1-2 short sentences: "{spoken}"'
+
+        pcount = projects.total_panels(self.project)
+        next_step = pcount + 1
+        topic = self.project.get("tutorial_topic") or self.project.get("title") or "How to Play Minecraft"
+        if next_step == 1:
+            spoken = (
+                f"{'Welcome back to' if resumed else 'Starting'} \"{topic}\"! "
+                "Imagine a brand-new player just spawned in with zero gear and no idea what to do. "
+                "For Step 1, write one complete sentence telling them the very first thing to do and why!"
+            )
+            ui.append(
+                {
+                    "type": "input",
+                    "mode": "type",
+                    "prompt": f"Step 1 of “{topic}”: What is the very first thing a beginner must do (and why)?",
+                    "prefill": "",
+                }
+            )
+            self.ui_locked_this_turn.update({"ask_input"})
+            return ui, f'Say plainly in 1-2 short sentences: "{spoken}"'
+
+        goal_desc = (
+            f"We are writing Step {next_step} of the illustrated beginner tutorial '{topic}'. "
+            "Act like an interested rookie following the student's guide step-by-step: briefly reference Step "
+            f"{next_step - 1}, and ask one concrete question for Step {next_step} (what the player must craft, build, watch out for, or do next, using words like 'Next', 'After', 'If', or 'because')."
+        )
+        beat = self._pop_or_direct_beat(goal_desc, "because | if | when | so")
+        self._beat_input(ui, beat)
+        self.ui_locked_this_turn.update({"show_card", "ask_input"})
+        return ui, f"Deliver this tutorial Step {next_step} prompt naturally in 1–2 short sentences: {beat['spoken_prompt']}"
+
+    def _prompt_diary_step(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
+        """Drives Illustrated 'What I Did in Minecraft Today' Personal Recount Diary."""
+        assert self.project is not None
+        self.phase = "BUILDING"
+        ui.append({"type": "remove", "id": "starters"})
+        ui.append({"type": "goal", "text": self.goal_badge()})
+        ch = projects.current_chapter(self.project)
+        today_count = len(ch.get("panels") or [])
+        next_entry = projects.total_panels(self.project) + 1
+
+        if today_count == 0:
+            ui.append(
+                {
+                    "type": "item",
+                    "item": {
+                        "id": "diary_mic_opt",
+                        "kind": "choices",
+                        "prompt": "Want to talk it out first or type right in?",
+                        "options": ["🎤 Tell me what happened in Minecraft today"],
+                    },
+                }
+            )
+            spoken = (
+                "Opening today's page in your Illustrated Minecraft Diary! "
+                "What did you build, mine, fight, or discover in Minecraft today? Write one complete sentence to draw Scene 1 of today's log!"
+            )
+            ui.append(
+                {
+                    "type": "input",
+                    "mode": "type",
+                    "prompt": "Minecraft Diary — Scene 1 today: What did you do, build, mine, or survive in Minecraft today?",
+                    "prefill": "",
+                }
+            )
+            self.ui_locked_this_turn.update({"show_choices", "ask_input"})
+            return ui, f'Say plainly in 1-2 short sentences: "{spoken}"'
+
+        goal_desc = (
+            f"We are on Entry #{next_entry} of today's Illustrated Minecraft Diary. "
+            "Briefly reference what just happened in their previous Minecraft diary panel, and ask one curious, specific question "
+            "about what happened right after that, how they built/survived it, or what went wrong/right next in their world today!"
+        )
+        beat = self._pop_or_direct_beat(goal_desc, "when | because | so | but")
+        self._beat_input(ui, beat)
+        self.ui_locked_this_turn.update({"show_card", "ask_input"})
+        return ui, f"Ask this curious Minecraft diary follow-up in 1–2 short sentences: {beat['spoken_prompt']}"
+
     def _prompt_pitch_step(self, ui: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
         """Drives SRSD POW+TREE 4-Page Persuasive Book using live AI follow-up questions—zero clutter boxes."""
         assert self.project is not None
@@ -598,6 +970,14 @@ class SessionController:
             return "Ask what happens next in the story."
         kind = self.project.get("kind")
         st = self.project.get("stage", "")
+        if kind == "how_to_tutorial":
+            return f"Ask for Step {projects.total_panels(self.project) + 2} of their '{self.project.get('title')}' tutorial."
+        if kind == "minecraft_diary":
+            return f"Ask what happened next in Minecraft today for Diary Panel {projects.total_panels(self.project) + 2}."
+        if kind == "story_jam_novel":
+            jb_idx, jb = projects.next_unwritten_jam_beat(self.project)
+            if jb:
+                return f'Invite writing Panel {projects.total_panels(self.project) + 2} for Story Jam Beat #{jb_idx}: "{jb.get("note", "")}".'
         if kind == "epic_graphic_novel":
             if st == "spine_beginning":
                 return "Jump to the Big Finale: how does this whole crazy story finally end up?"
@@ -833,6 +1213,12 @@ class SessionController:
             if self.project.get("stage", "").startswith("spine_"):
                 ui_actions, directive = self._prompt_spine_step(ui_actions, resumed=False)
                 return {"kind": "ART_APPROVED", "ui": ui_actions, "directive": directive}
+            if pkind == "how_to_tutorial":
+                ui_actions, directive = self._prompt_tutorial_step(ui_actions, resumed=False)
+                return {"kind": "ART_APPROVED", "ui": ui_actions, "directive": directive}
+            if pkind == "minecraft_diary":
+                ui_actions, directive = self._prompt_diary_step(ui_actions, resumed=False)
+                return {"kind": "ART_APPROVED", "ui": ui_actions, "directive": directive}
             if pkind == "epic_codex":
                 ui_actions, directive = self._prompt_codex_step(ui_actions, new_entry=False)
                 return {"kind": "ART_APPROVED", "ui": ui_actions, "directive": directive}
@@ -1046,6 +1432,11 @@ class SessionController:
 
     def _prompt_next_book_panel(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
         assert self.project is not None
+        pkind = self.project.get("kind", "")
+        if pkind == "how_to_tutorial":
+            return self._prompt_tutorial_step(ui, resumed=resumed)
+        if pkind == "minecraft_diary":
+            return self._prompt_diary_step(ui, resumed=resumed)
         self.phase = "BUILDING"
         self.tier_nudged_this_item = False
         pcount = projects.total_panels(self.project)
@@ -1054,6 +1445,25 @@ class SessionController:
         tier = self.current_tier()
         sp = self.project.get("spine") or {}
         mbeats = projects.middle_beats_list(sp)
+
+        # If this book has spoken Story Jam beats (`story_jam_novel` or a graphic novel using Story Jam), guide directly from the next unwritten beat!
+        jb_idx, jb_next = projects.next_unwritten_jam_beat(self.project)
+        if jb_next:
+            bnote = jb_next.get("note", "")
+            spoken_jb = (
+                f'Panel {next_pnum} comes from your Story Jam Beat #{jb_idx}: "{bnote}" '
+                "Write one complete sentence for this panel (and put quotes if someone yells something for a speech bubble)!"
+            )
+            ui.append(
+                {
+                    "type": "input",
+                    "mode": "type",
+                    "prompt": f"Panel {next_pnum} (Story Jam Beat #{jb_idx}: “{bnote[:75]}”): Write 1 complete sentence!",
+                    "prefill": "",
+                }
+            )
+            self.ui_locked_this_turn.update({"show_card", "ask_input"})
+            return ui, f'Say plainly in 1-2 short sentences: "{spoken_jb}"'
 
         if ch_num == 1:
             act_name = "Chapter 1 (The Kickoff)"
@@ -1370,6 +1780,9 @@ class SessionController:
                 ],
                 "directive": f'Say in 1 short plain sentence: "{spoken}"',
             }
+
+        if eff_purpose == "story_jam" and transcript:
+            return self._handle_story_jam_utterance(transcript, epoch)
 
         if eff_purpose == "picture" and transcript:
             if req.get("target"):
@@ -1999,6 +2412,48 @@ class SessionController:
         idx = self.turn_index
         self.turn_index += 1
         self.last_kid_text = raw
+
+        # ---------------- 00-JAM. VERBAL 100-PAGE STORY JAM & HOW-TO TUTORIAL TOPIC SELECTION ----------------
+        if self.project and (self.phase == "VERBAL_STORY_JAM" or self.project.get("stage") == "verbal_jam") and raw:
+            return self._handle_story_jam_utterance(raw, epoch)
+
+        if self.project and self.project.get("kind") == "how_to_tutorial" and self.project.get("stage") == "tutorial_topic" and raw:
+            clean_top = raw.strip().rstrip(".!?")
+            if not re.match(r"^how\s+to\b", clean_top, re.I) and len(_words(clean_top)) <= 8:
+                clean_top = f"How to {clean_top[:1].upper() + clean_top[1:]}"
+            else:
+                clean_top = clean_top[:1].upper() + clean_top[1:]
+            self.project["title"] = clean_top[:72]
+            self.project["tutorial_topic"] = clean_top[:72]
+            self.project["custom_titled"] = True
+            self.project["stage"] = "drafting_panels"
+            if "minecraft" not in clean_top.lower() and self.project.get("style_key") == "blocky_voxel":
+                projects.set_project_style(self.project, "notebook_doodle", sandbox=self.test_mode)
+            projects.save_project(self.project, sandbox=self.test_mode)
+            self.last_kid_kind = "PROJECT_PICK"
+            ui_tut: list[dict[str, Any]] = [
+                {"type": "remove", "id": "tutorial_topics"},
+                {"type": "reward", "label": f"📘 Tutorial Started · “{self.project['title']}”"},
+                {"type": "item", "item": projects.project_ui_payload(self.project)},
+            ]
+            ui_tut, dir_tut = self._prompt_tutorial_step(ui_tut, resumed=False)
+            return {"epoch": epoch, "kind": self.last_kid_kind, "ui": ui_tut, "directive": dir_tut}
+
+        if how == "tap" and "tell me what happened in minecraft today" in norm:
+            self.last_kid_kind = "VOICE_OFFER"
+            self.active_mic_request = {"purpose": "story", "sentence": ""}
+            sp_mc = "Green mic is on—tell me what happened in Minecraft today, and I'll drop your words in the box!"
+            return {
+                "epoch": epoch,
+                "kind": self.last_kid_kind,
+                "spoken_fallback": sp_mc,
+                "ui": [
+                    {"type": "remove", "id": "diary_mic_opt"},
+                    {"type": "tutor_mic", "action": "on", "purpose": "story", "target_word": "", "sentence": "", "prompt": "Tell me what you did in Minecraft today!"},
+                    {"type": "input", "mode": "type", "prompt": "Green mic is ON—say what happened in Minecraft today!"},
+                ],
+                "directive": f'Say in 1 short sentence: "{sp_mc}"',
+            }
 
         # ---------------- 00-PRE. WRONG STORY SLOT / UNDO STEP ("that wasn't the end. you asked what happened next.") ----------------
         if self.project and self.phase not in ("INLINE_WORD_HELP", "WORD_STUDY"):

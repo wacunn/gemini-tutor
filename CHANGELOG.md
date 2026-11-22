@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0
+- **Three New Studio Modes: 100-Page Verbal Story Jam, Illustrated How-To Tutorials, & Minecraft Today Diary (`tutor/projects.py`, `tutor/controller.py`, `tutor/live.py`, `tutor/pdf_book.py`, `static/index.html`, `static/app.js`, `static/style.css`):**
+  - **100-Page Story Jam (`Talk First → Write Panels`)**: New option in the Start Screen & Sidebar (plus a **`🎙️ Story Jam`** button inside any Graphic Novel). Opens back-and-forth verbal brainstorming via the Center Green Mic—asking *"what happens next?"* and challenging/probing story details with zero spelling interruptions—while building a live **Story Jam Outline** on the right. Tapping **`✍️ Ready — Start Writing Panel 1!`** switches to panel-by-panel comic writing guided beat-by-beat from his spoken outline.
+  - **Illustrated How-To Tutorial (*e.g. How to Play Minecraft*)**: Step-by-step procedural guide builder (defaulting to **Blocky Voxel World** art for Minecraft) where the tutor acts like a beginner following his instructions (`STEP 1`, `STEP 2`, `STEP 3`…), illustrating every step with speech/tip bubbles and exporting an **Official Illustrated How-To Guide PDF**.
+  - **What I Did in Minecraft Today (*Illustrated Diary*)**: Ongoing dated illustrated adventure log (`Minecraft Log · Nov 21`) turning what he built, mined, or survived in Minecraft today into comic/journal panels and a printable **Illustrated Minecraft Diary PDF**.
+
 ## 1.3.1
 - **Clean, Neutral Parent Page & Prompt Copy (`static/parent.html`, `tutor/guardian.py`, `tutor/prompt.py`, `tutor/blackboard.py`, `tutor/controller.py`, `tutor/media.py`, `tutor/doodle_fallback.py`, `tutor/builder.py`, `tutor/research_packs.py`):**
   - Replaced Editorial/filter-tuning blurbs on `/parent` and in system prompts with clean, neutral copy (*"Summarizes session topics and pauses only for genuine child-safety concerns"*), keeping the background distinction between thoughtful/philosophical curiosity and actual child-safety danger completely understated.

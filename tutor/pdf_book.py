@@ -97,14 +97,19 @@ def _render_cover(proj: dict[str, Any], panels: list[dict[str, Any]]) -> Image.I
 
     # Top edition banner
     f_badge = _font(22, bold=True)
+    pkind = proj.get("kind", "")
     kind_label = {
         "epic_graphic_novel": "GRAPHIC NOVEL EDITION",
+        "story_jam_novel": "100-PAGE STORY JAM GRAPHIC NOVEL",
+        "how_to_tutorial": "OFFICIAL ILLUSTRATED HOW-TO GUIDE",
+        "minecraft_diary": "ILLUSTRATED MINECRAFT & ADVENTURE DIARY",
         "epic_codex": "ILLUSTRATED FIELD CODEX",
         "medium_pitch": "ILLUSTRATED PITCH EDITION",
-    }.get(proj.get("kind", ""), "ORIGINAL COMIC EDITION")
+    }.get(pkind, "ORIGINAL COMIC EDITION")
     n_panels = len(panels)
     n_ch = len(proj.get("chapters") or [1])
-    banner = f"{kind_label}  ·  {n_ch} CHAPTER{'S' if n_ch != 1 else ''}  ·  {n_panels} PANEL{'S' if n_panels != 1 else ''}"
+    unit_lbl = "STEP" if pkind == "how_to_tutorial" else ("LOG PANEL" if pkind == "minecraft_diary" else "PANEL")
+    banner = f"{kind_label}  ·  {n_panels} {unit_lbl}{'S' if n_panels != 1 else ''}" if pkind in ("how_to_tutorial", "minecraft_diary") else f"{kind_label}  ·  {n_ch} CHAPTER{'S' if n_ch != 1 else ''}  ·  {n_panels} PANEL{'S' if n_panels != 1 else ''}"
     d.text((MARGIN + 16, 86), banner, fill=(168, 199, 250), font=f_badge)
 
     # Title
@@ -394,11 +399,47 @@ def _render_panel_pages(proj: dict[str, Any], panels: list[dict[str, Any]]) -> l
     return pages
 
 
+def _render_jam_outline_page(proj: dict[str, Any]) -> list[Image.Image]:
+    jbeats = proj.get("jam_beats") or []
+    if not jbeats:
+        return []
+    f_head = _font(40, bold=True)
+    f_sub = _font(23, bold=False)
+    f_item = _font(24, bold=False)
+    pages: list[Image.Image] = []
+
+    def _new_pg(first: bool) -> tuple[Image.Image, ImageDraw.ImageDraw, int]:
+        pg = Image.new("RGB", (PAGE_W, PAGE_H), (249, 247, 242))
+        dr = ImageDraw.Draw(pg)
+        dr.text((MARGIN, 80), "STORY JAM OUTLINE" if first else "STORY JAM OUTLINE (CONT.)", fill=(24, 26, 30), font=f_head)
+        dr.text((MARGIN, 134), "Spoken story beats mapped out before drawing panels", fill=(100, 104, 112), font=f_sub)
+        return pg, dr, 200
+
+    pg, d, y = _new_pg(True)
+    for idx, jb in enumerate(jbeats, 1):
+        txt = f"{idx}. {jb.get('note', '')}" + ("  [Panel drawn]" if jb.get("written") else "")
+        lines = _wrap(d, txt, f_item, PAGE_W - 2 * MARGIN - 48)
+        bh = 34 + len(lines) * 34
+        if y + bh > PAGE_H - 90:
+            pages.append(pg)
+            pg, d, y = _new_pg(False)
+        d.rounded_rectangle([MARGIN, y, PAGE_W - MARGIN, y + bh], radius=14, fill=(255, 255, 255), outline=(28, 30, 34), width=3)
+        ty = y + 16
+        for ln in lines:
+            d.text((MARGIN + 24, ty), ln, fill=(24, 26, 30), font=f_item)
+            ty += 34
+        y += bh + 16
+    pages.append(pg)
+    return pages
+
+
 def build_project_pdf(proj: dict[str, Any]) -> bytes:
-    """Renders a complete multi-page Comic Book PDF byte stream for any project (even mid-progress drafts)."""
+    """Renders a complete multi-page Comic Book / Tutorial / Diary PDF byte stream for any project."""
     panels = all_panels(proj)
     spine_panels = _spine_as_comic_panels(proj)
     all_pages: list[Image.Image] = [_render_cover(proj, panels or spine_panels)]
+    if proj.get("jam_beats"):
+        all_pages.extend(_render_jam_outline_page(proj))
     if spine_panels:
         all_pages.extend(_render_panel_pages(proj, spine_panels))
     if panels:
