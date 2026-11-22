@@ -815,71 +815,50 @@ class SessionController:
         }
 
     def _prompt_tutorial_step(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
-        """Drives Illustrated Step-by-Step How-To Tutorial (e.g. 'How to Play Minecraft')."""
+        """Drives Illustrated Step-by-Step How-To Guide — 100% open to HIS topic and HIS steps with zero topic/step suggesting!"""
         assert self.project is not None
         self.phase = "BUILDING"
         ui.append({"type": "remove", "id": "starters"})
         ui.append({"type": "goal", "text": self.goal_badge()})
 
         if self.project.get("stage") == "tutorial_topic":
-            opts = [
-                "How to Play Minecraft (Beginner Survival)",
-                "How to Survive Your First Night in Minecraft",
-                "How to Find Diamonds Without Dying in Lava",
-                "How to Build a Redstone Trap",
-            ]
-            ui.append(
-                {
-                    "type": "item",
-                    "item": {
-                        "id": "tutorial_topics",
-                        "kind": "choices",
-                        "prompt": "Pick your Illustrated Tutorial topic (or type your own below):",
-                        "options": opts,
-                    },
-                }
-            )
             ui.append(
                 {
                     "type": "input",
                     "mode": "type",
-                    "prompt": "Tap a Minecraft tutorial above—or type any How-To tutorial title you want to write & illustrate:",
+                    "prompt": "What is your How-To Guide about? Type your guide's title or topic:",
                     "prefill": "",
                 }
             )
             self.ui_locked_this_turn.update({"show_choices", "ask_input"})
-            spoken = "Let's make an Illustrated How-To Guide! Pick one of the Minecraft tutorials on screen, or type whatever topic you want to teach."
-            return ui, f'Say plainly in 1-2 short sentences: "{spoken}"'
+            spoken = "Starting a new Illustrated How-To Guide. What is your guide going to be about?"
+            return ui, f'Say ONLY this exact open question plainly (do NOT suggest any topics!): "{spoken}"'
 
         pcount = projects.total_panels(self.project)
         next_step = pcount + 1
-        topic = self.project.get("tutorial_topic") or self.project.get("title") or "How to Play Minecraft"
+        topic = self.project.get("tutorial_topic") or self.project.get("title") or "How-To Guide"
         if next_step == 1:
-            spoken = (
-                f"{'Welcome back to' if resumed else 'Starting'} \"{topic}\"! "
-                "Imagine a brand-new player just spawned in with zero gear and no idea what to do. "
-                "For Step 1, write one complete sentence telling them the very first thing to do and why!"
-            )
+            spoken = f"{'Welcome back to' if resumed else 'Got it—'} \"{topic}\". What is Step 1 in your guide? Write one complete sentence to draw Step 1."
             ui.append(
                 {
                     "type": "input",
                     "mode": "type",
-                    "prompt": f"Step 1 of “{topic}”: What is the very first thing a beginner must do (and why)?",
+                    "prompt": f"Step 1 of “{topic}”: Write 1 complete sentence for Step 1:",
                     "prefill": "",
                 }
             )
             self.ui_locked_this_turn.update({"ask_input"})
-            return ui, f'Say plainly in 1-2 short sentences: "{spoken}"'
+            return ui, f'Say ONLY this exact prompt plainly (do NOT assume or suggest what Step 1 should be!): "{spoken}"'
 
         goal_desc = (
-            f"We are writing Step {next_step} of the illustrated beginner tutorial '{topic}'. "
-            "Act like an interested rookie following the student's guide step-by-step: briefly reference Step "
-            f"{next_step - 1}, and ask one concrete question for Step {next_step} (what the player must craft, build, watch out for, or do next, using words like 'Next', 'After', 'If', or 'because')."
+            f"We are on Step {next_step} of the student's illustrated guide '{topic}'. "
+            f"DO NOT suggest, guess, or hint at what Step {next_step} should be—the student already has their own ideas! "
+            f"Briefly reference ONLY what they just wrote in Step {next_step - 1}, and ask plainly and openly what Step {next_step} is next."
         )
         beat = self._pop_or_direct_beat(goal_desc, "because | if | when | so")
         self._beat_input(ui, beat)
         self.ui_locked_this_turn.update({"show_card", "ask_input"})
-        return ui, f"Deliver this tutorial Step {next_step} prompt naturally in 1–2 short sentences: {beat['spoken_prompt']}"
+        return ui, f"Deliver this open Step {next_step} prompt naturally in 1–2 short sentences (zero suggestions!): {beat['spoken_prompt']}"
 
     def _prompt_diary_step(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
         """Drives Illustrated 'What I Did in Minecraft Today' Personal Recount Diary."""
@@ -2419,21 +2398,18 @@ class SessionController:
 
         if self.project and self.project.get("kind") == "how_to_tutorial" and self.project.get("stage") == "tutorial_topic" and raw:
             clean_top = raw.strip().rstrip(".!?")
-            if not re.match(r"^how\s+to\b", clean_top, re.I) and len(_words(clean_top)) <= 8:
-                clean_top = f"How to {clean_top[:1].upper() + clean_top[1:]}"
-            else:
-                clean_top = clean_top[:1].upper() + clean_top[1:]
+            clean_top = clean_top[:1].upper() + clean_top[1:] if clean_top else "How-To Guide"
             self.project["title"] = clean_top[:72]
             self.project["tutorial_topic"] = clean_top[:72]
             self.project["custom_titled"] = True
             self.project["stage"] = "drafting_panels"
-            if "minecraft" not in clean_top.lower() and self.project.get("style_key") == "blocky_voxel":
-                projects.set_project_style(self.project, "notebook_doodle", sandbox=self.test_mode)
+            if re.search(r"\b(minecraft|creeper|redstone|nether|ender|pickaxe|diamond|villager|wither)\b", clean_top, re.I):
+                projects.set_project_style(self.project, "blocky_voxel", sandbox=self.test_mode)
             projects.save_project(self.project, sandbox=self.test_mode)
             self.last_kid_kind = "PROJECT_PICK"
             ui_tut: list[dict[str, Any]] = [
                 {"type": "remove", "id": "tutorial_topics"},
-                {"type": "reward", "label": f"📘 Tutorial Started · “{self.project['title']}”"},
+                {"type": "reward", "label": f"📘 Guide Started · “{self.project['title']}”"},
                 {"type": "item", "item": projects.project_ui_payload(self.project)},
             ]
             ui_tut, dir_tut = self._prompt_tutorial_step(ui_tut, resumed=False)

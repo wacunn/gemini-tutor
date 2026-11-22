@@ -182,7 +182,7 @@ function renderHeroStarters(savedProjects) {
   box.innerHTML = `${contPill}
     <button type="button" class="hero-pill" data-new-kind="epic_graphic_novel">Comic book</button>
     <button type="button" class="hero-pill" data-new-kind="story_jam_novel">Story jam (talk → comic)</button>
-    <button type="button" class="hero-pill" data-new-kind="how_to_tutorial">How-to tutorial (Minecraft…)</button>
+    <button type="button" class="hero-pill" data-new-kind="how_to_tutorial">How-to guide</button>
     <button type="button" class="hero-pill" data-new-kind="minecraft_diary">Minecraft diary</button>
     <button type="button" class="hero-pill" data-new-kind="epic_codex">Fact codex</button>
     <button type="button" class="hero-pill" data-new-kind="medium_pitch">Persuasive pitch</button>

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.1
+- **100% Student-Led How-To Guide Topics & Steps (`tutor/controller.py`, `tutor/projects.py`, `static/index.html`, `static/app.js`):**
+  - Removed pre-suggested tutorial topics and step assumptions from **How-to guide** (`how_to_tutorial`)—asks openly what his guide is about, keeps his exact title, and asks openly for Step 1, Step 2, Step 3… without suggesting what the steps should be.
+
 ## 1.4.0
 - **Three New Studio Modes: 100-Page Verbal Story Jam, Illustrated How-To Tutorials, & Minecraft Today Diary (`tutor/projects.py`, `tutor/controller.py`, `tutor/live.py`, `tutor/pdf_book.py`, `static/index.html`, `static/app.js`, `static/style.css`):**
   - **100-Page Story Jam (`Talk First → Write Panels`)**: New option in the Start Screen & Sidebar (plus a **`🎙️ Story Jam`** button inside any Graphic Novel). Opens back-and-forth verbal brainstorming via the Center Green Mic—asking *"what happens next?"* and challenging/probing story details with zero spelling interruptions—while building a live **Story Jam Outline** on the right. Tapping **`✍️ Ready — Start Writing Panel 1!`** switches to panel-by-panel comic writing guided beat-by-beat from his spoken outline.

@@ -48,10 +48,10 @@ PROJECT_MENU: list[dict[str, str]] = [
     },
     {
         "key": "how_to_tutorial",
-        "label": "Illustrated How-To Tutorial (e.g. How to Play Minecraft)",
+        "label": "Illustrated How-To Guide / Tutorial (PDF)",
         "scale": "epic",
         "time_est": "Step-by-step illustrated guide · PDF",
-        "summary": "Write and illustrate an official step-by-step survival or strategy guide for beginners.",
+        "summary": "Write and illustrate your own step-by-step how-to guide on any topic you choose.",
     },
     {
         "key": "minecraft_diary",
@@ -372,7 +372,7 @@ def create_project(
     default_titles = {
         "epic_graphic_novel": "Untitled Graphic Novel",
         "story_jam_novel": "Untitled 100-Page Story",
-        "how_to_tutorial": "How to Play Minecraft: Official Guide",
+        "how_to_tutorial": "Untitled How-To Guide",
         "minecraft_diary": f"{author}'s Minecraft Diary" if author else "Minecraft Adventure Diary",
         "epic_codex": f"{author}'s Fact & Invention Codex" if author else "Fact & Invention Codex",
         "medium_pitch": f"Pitch for {audience}" if audience else "The Official Pitch",
@@ -381,7 +381,7 @@ def create_project(
     clean_title = (title or "").strip()
     if style_key and style_key in STYLE_BY_KEY:
         skey = style_key
-    elif kind in ("how_to_tutorial", "minecraft_diary"):
+    elif kind == "minecraft_diary" or (kind == "how_to_tutorial" and re.search(r"\b(minecraft|creeper|redstone|nether|ender|pickaxe)\b", clean_title, re.I)):
         skey = "blocky_voxel"
     else:
         skey = DEFAULT_STYLE_KEY
@@ -398,7 +398,7 @@ def create_project(
     if needs_spine or kind == "story_jam_novel":
         ch1_title = "Chapter 1: The Kickoff"
     elif kind == "how_to_tutorial":
-        ch1_title = "Step-by-Step Survival & Strategy Guide"
+        ch1_title = "Step-by-Step Guide"
     elif kind == "minecraft_diary":
         ch1_title = f"Minecraft Log · {today_lbl}"
     elif kind == "epic_codex":
