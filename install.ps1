@@ -1,4 +1,4 @@
-# Gemini Tutor installer for Windows PC (PowerShell)
+﻿# Gemini Tutor installer for Windows PC (PowerShell)
 #   irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/install.ps1 | iex
 # Safe to run again: updates the code while keeping your child's data and API key.
 
@@ -25,6 +25,10 @@ if (-not $Uv) {
 
 # 2) Download Gemini Tutor (preserving data/ and .env if updating)
 Write-Host "Step 2 of 4: Downloading Gemini Tutor..." -ForegroundColor White
+try {
+    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8787/api/quit" -TimeoutSec 2 | Out-Null
+    Start-Sleep -Milliseconds 700
+} catch {}
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
 $Tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("gt_" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $Tmp | Out-Null
@@ -54,6 +58,7 @@ if (-not (Test-Path $VenvPy)) {
 Write-Host "Step 4 of 4: Adding the Gemini Tutor shortcut..." -ForegroundColor White
 if (-not $env:TUTOR_NO_SHORTCUT) {
     $Wsh = New-Object -ComObject WScript.Shell
+    $IconFile = Join-Path $Dir "static\icon.ico"
     $Locations = @(
         [Environment]::GetFolderPath("Desktop"),
         (Join-Path ([Environment]::GetFolderPath("StartMenu")) "Programs")
@@ -65,6 +70,7 @@ if (-not $env:TUTOR_NO_SHORTCUT) {
             $Lnk.Arguments = "`"" + (Join-Path $Dir "launch.py") + "`""
             $Lnk.WorkingDirectory = $Dir
             $Lnk.Description = "Gemini Tutor"
+            if (Test-Path $IconFile) { $Lnk.IconLocation = $IconFile }
             $Lnk.Save()
         }
     }

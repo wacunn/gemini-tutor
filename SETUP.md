@@ -91,17 +91,21 @@ Whenever an update is pushed to GitHub, you do **not** need Terminal or PowerShe
 
 ---
 
-## Optional: Earn Video Game Time (Fists of Doom &amp; Chromebook Minecraft)
+## Optional: Earn Video Game Time (Fists of Doom &amp; Minecraft on Windows / Chromebook)
 
 If **Fists of Doom** and/or **Minecraft** is installed locally on the same computer, your child can earn video game points from **active, verified writing** (15 min solid writing = 1 point, saved across sessions; 2 points = 15 min of game time by default, customizable on the **Parent page**):
 
-- **Install Fists of Doom (Mac / Chromebook):**
-  ```bash
-  curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash
-  ```
 - **Install Fists of Doom (Windows PowerShell):**
   ```powershell
   irm https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.ps1 | iex
+  ```
+- **Set Up &amp; Time-Gate Minecraft on Windows 11/10 (PowerShell):**
+  ```powershell
+  irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex
+  ```
+- **Install Fists of Doom (Mac / Chromebook):**
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash
   ```
 - **Set Up &amp; Time-Gate Minecraft on a Chromebook (Prism Launcher):**
   See **[MINECRAFT_SETUP.md](MINECRAFT_SETUP.md)**, or run this one line in your Chromebook's Linux Terminal:

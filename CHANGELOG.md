@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.2
+- **Native Windows 11/10 Minecraft Setup, Login Watchdog & Toast Notifications (`tutor/arcade.py`, `setup_minecraft_windows.ps1`, `bin/minecraft-gated-launch.py`, `launch.py`, `install.ps1`, `static/parent.html`, `static/icon.ico`):**
+  - Added one-line automatic Windows PowerShell setup (`setup_minecraft_windows.ps1`) that installs/updates Gemini Tutor, installs Prism Launcher + Eclipse Temurin Java 21 via `winget`, configures a silent Windows `Startup` background watchdog (`pythonw.exe launch.py --no-open`), and creates a gated Desktop shortcut (`bin/minecraft-gated-launch.py`).
+  - Added windowless (`CREATE_NO_WINDOW`) Windows process detection & graceful shutdown supporting Prism Launcher (`prismlauncher.exe`), Official Mojang/Xbox Minecraft Launcher, Java Edition (`javaw.exe`/`java.exe` filtered strictly by Minecraft `CommandLine` markers), and Minecraft for Windows Bedrock (`Minecraft.Windows.exe`), plus native Windows 11 WinRT Toast notifications + 1-minute save chime.
+  - Added multi-resolution `static/icon.ico` for crisp Windows Desktop/Start Menu shortcuts and clean `/api/quit` shutdown before file replacement in `install.ps1`.
+
 ## 1.7.1
 - **360° Chromebook / Googlebook USI 2.0 Pen Telemetry & Native Host-Chrome Bridge (`launch.py`, `static/app.js`, `tutor/live.py`):**
   - Prioritized ChromeOS's native `garcon-url-handler` bridge before `xdg-open` in `launch.py` so `http://localhost:8787` always opens in host ChromeOS Chrome rather than Crostini XWayland, preserving raw USI 2.0 stylus `PointerEvent` hardware telemetry.

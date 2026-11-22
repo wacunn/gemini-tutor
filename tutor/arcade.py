@@ -1,9 +1,11 @@
-"""Local Video Game Rewards engine (Fists of Doom + Chromebook Minecraft / Prism Launcher).
+"""Local Video Game Rewards engine (Fists of Doom + Windows / Chromebook / Mac Minecraft).
 
 Active IF AND ONLY IF at least one supported game is installed locally on this computer:
-  1. Fists of Doom: Toronto (`$HOME/FistsOfDoom` or `$FOD_DIR` — Mac, Chromebook, Windows PC)
-  2. Minecraft via Prism Launcher (`org.prismlauncher.PrismLauncher` `--user` Flatpak on Chromebook/Linux,
-     or native PrismLauncher install)
+  1. Fists of Doom: Toronto (`$HOME/FistsOfDoom` or `$FOD_DIR` — Windows PC, Mac, Chromebook)
+  2. Minecraft:
+     - Windows 11/10: Native Prism Launcher (`prismlauncher.exe`), Official Mojang/Xbox Launcher, or Minecraft Bedrock (`Minecraft.Windows.exe`)
+     - Chromebook/Linux: Prism Launcher (`org.prismlauncher.PrismLauncher` `--user` Flatpak)
+     - macOS: `/Applications/Prism Launcher.app`
 
 How Writing Quality & Points Work
 ---------------------------------
@@ -22,19 +24,19 @@ How Game Time Enforcement Works
 -------------------------------
 * Fists of Doom: Runs embedded inside Gemini Tutor (`http://localhost:8788/?embedded=tutor`) with 5s heartbeats
   and auto-closes when banked time hits `0:00` (plus optional standalone app lock).
-* Minecraft (Chromebook Crostini `org.prismlauncher.PrismLauncher` Flatpak):
-  - Launched with `QT_QPA_PLATFORM=xcb` via `flatpak run org.prismlauncher.PrismLauncher [--launch <INSTANCE>]`.
-  - Monitored every 3s by a server-side background watchdog inspecting `/proc` (`prismlauncher` and `java`
-    with `org.prismlauncher` / `net.minecraft.client.main.Main`).
-  - Sends a 1-minute desktop warning (`notify-send`) so the child can save their world, and terminates the
-    entire Flatpak `bwrap` sandbox cleanly at `0:00` via `flatpak kill org.prismlauncher.PrismLauncher`.
-  - Syncs the ChromeOS `.desktop` launcher wrapper (`bin/prism-gated-launch.sh`) so clicking Prism Launcher
-    on the ChromeOS shelf is also gated by earned Gemini Tutor time (with a 1-click Parent Setup bypass on `/parent`).
+* Minecraft (Windows Native & Chromebook Crostini):
+  - Windows: Monitored every 3s via windowless `tasklist` + verified `Win32_Process` Java `CommandLine` filtering
+    (`javaw.exe`/`java.exe` + `Minecraft.Windows.exe`), fires native Windows 11 WinRT Toast notifications + chime
+    with 1 minute remaining, gracefully closes & terminates Minecraft at `0:00`, and syncs a silent Windows
+    `Startup` watchdog + gated Desktop shortcut (`bin/minecraft-gated-launch.py`).
+  - Chromebook: Launched with `QT_QPA_PLATFORM=xcb` via `flatpak run org.prismlauncher.PrismLauncher`, monitored
+    via `/proc`, warns via `notify-send`, and closes cleanly via `flatpak kill`.
 """
 
 from __future__ import annotations
 
 import copy
+import csv
 import json
 import os
 import re
@@ -52,6 +54,7 @@ from .record import load_learner, now_iso, save_learner
 
 FOD_PORT = int(os.environ.get("FOD_PORT", "8788"))
 PRISM_APP_ID = "org.prismlauncher.PrismLauncher"
+_WIN_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if os.name == "nt" else 0
 
 DEFAULT_ARCADE: dict[str, Any] = {
     "enabled": True,
@@ -101,11 +104,108 @@ def is_fod_installed() -> bool:
     return d.is_dir() and (d / "server_multiplayer.py").is_file() and (d / "index.html").is_file()
 
 
+def _is_win() -> bool:
+    return os.name == "nt"
+
+
+def _win_prism_exe() -> Path | None:
+    """Locates native Windows `prismlauncher.exe` across standard Winget, installer, and Scoop paths."""
+    if not _is_win():
+        return None
+    override = (os.environ.get("PRISM_EXE") or "").strip()
+    if override and Path(override).is_file():
+        return Path(override)
+    home = Path.home()
+    local_app = Path(os.environ.get("LOCALAPPDATA") or (home / "AppData" / "Local"))
+    prog = Path(os.environ.get("ProgramFiles") or r"C:\Program Files")
+    prog_x86 = Path(os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)")
+    candidates = [
+        local_app / "Programs" / "PrismLauncher" / "prismlauncher.exe",
+        prog / "PrismLauncher" / "prismlauncher.exe",
+        prog_x86 / "PrismLauncher" / "prismlauncher.exe",
+        home / "scoop" / "apps" / "prismlauncher" / "current" / "prismlauncher.exe",
+    ]
+    which_p = shutil.which("prismlauncher.exe") or shutil.which("prismlauncher")
+    if which_p:
+        candidates.append(Path(which_p))
+    for p in candidates:
+        try:
+            if p.is_file():
+                return p
+        except OSError:
+            continue
+    return None
+
+
+def _win_official_minecraft_info() -> dict[str, Any]:
+    """Detects Official Mojang / Xbox App Minecraft Launcher or Minecraft for Windows (Bedrock) on Windows."""
+    if not _is_win():
+        return {"installed": False, "exe": None, "has_store_launcher": False, "has_bedrock": False}
+    home = Path.home()
+    appdata = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming"))
+    local_app = Path(os.environ.get("LOCALAPPDATA") or (home / "AppData" / "Local"))
+    prog = Path(os.environ.get("ProgramFiles") or r"C:\Program Files")
+    prog_x86 = Path(os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)")
+    sys_drive = os.environ.get("SystemDrive") or "C:\\"
+    if len(sys_drive) == 2 and sys_drive[1] == ":":
+        sys_drive = sys_drive + "\\"
+
+    exe_candidates = [
+        Path(sys_drive) / "XboxGames" / "Minecraft Launcher" / "Content" / "Minecraft.exe",
+        prog_x86 / "Minecraft Launcher" / "MinecraftLauncher.exe",
+        prog / "Minecraft Launcher" / "MinecraftLauncher.exe",
+    ]
+    found_exe: str | None = None
+    for p in exe_candidates:
+        try:
+            if p.is_file():
+                found_exe = str(p)
+                break
+        except OSError:
+            continue
+
+    pkgs_dir = local_app / "Packages"
+    has_store_launcher = False
+    has_bedrock = False
+    try:
+        if pkgs_dir.is_dir():
+            for child in pkgs_dir.iterdir():
+                nm = child.name
+                if nm.startswith("Microsoft.4297127D64EC6_"):
+                    has_store_launcher = True
+                elif nm.startswith("Microsoft.MinecraftUWP_") or nm.startswith("Microsoft.MinecraftWindowsBeta_"):
+                    has_bedrock = True
+    except OSError:
+        pass
+
+    dot_mc = appdata / ".minecraft"
+    has_dot_mc = False
+    try:
+        has_dot_mc = dot_mc.is_dir() and (
+            (dot_mc / "launcher_profiles.json").is_file() or (dot_mc / "versions").is_dir()
+        )
+    except OSError:
+        pass
+
+    installed = bool(found_exe or has_store_launcher or has_bedrock or has_dot_mc)
+    return {
+        "installed": installed,
+        "exe": found_exe,
+        "has_store_launcher": has_store_launcher,
+        "has_bedrock": has_bedrock,
+    }
+
+
 def prism_data_dir() -> Path:
     override = (os.environ.get("PRISM_DATA_DIR") or "").strip()
     if override:
         return Path(override).expanduser().resolve()
     home = Path.home()
+    if _is_win():
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "PrismLauncher"
+        return home / "AppData" / "Roaming" / "PrismLauncher"
     flatpak_data = home / ".var" / "app" / PRISM_APP_ID / "data" / "PrismLauncher"
     if flatpak_data.exists() or (home / ".local" / "share" / "flatpak" / "app" / PRISM_APP_ID).exists():
         return flatpak_data
@@ -113,27 +213,37 @@ def prism_data_dir() -> Path:
         mac_dir = home / "Library" / "Application Support" / "PrismLauncher"
         if mac_dir.exists():
             return mac_dir
-    if os.name == "nt":
-        appdata = os.environ.get("APPDATA")
-        if appdata and (Path(appdata) / "PrismLauncher").exists():
-            return Path(appdata) / "PrismLauncher"
     return flatpak_data
 
 
-def is_minecraft_installed() -> bool:
-    """True IF AND ONLY IF Prism Launcher (user Flatpak on Chromebook/Linux or native) is installed locally."""
+def minecraft_flavor() -> str:
+    """Returns `'prism'`, `'official'`, or `''` if Minecraft is not installed on this machine."""
     if (os.environ.get("PRISM_FORCE_INSTALLED") or "").strip() == "1":
-        return True
+        return "prism"
     home = Path.home()
+    if _is_win():
+        if _win_prism_exe() is not None:
+            return "prism"
+        pdir = prism_data_dir()
+        if (pdir / "prismlauncher.cfg").is_file() or (pdir / "instances").is_dir():
+            return "prism"
+        if _win_official_minecraft_info()["installed"]:
+            return "official"
+        return ""
     if (home / ".local" / "share" / "flatpak" / "app" / PRISM_APP_ID).exists():
-        return True
+        return "prism"
     if (home / ".local" / "share" / "flatpak" / "exports" / "share" / "applications" / f"{PRISM_APP_ID}.desktop").exists():
-        return True
+        return "prism"
     if sys.platform == "darwin" and (
         Path("/Applications/Prism Launcher.app").exists() or (home / "Applications/Prism Launcher.app").exists()
     ):
-        return True
-    return False
+        return "prism"
+    return ""
+
+
+def is_minecraft_installed() -> bool:
+    """True IF AND ONLY IF a supported local Minecraft install (Prism or Official/Bedrock) exists."""
+    return bool(minecraft_flavor())
 
 
 def is_any_game_installed() -> bool:
@@ -181,10 +291,75 @@ def list_minecraft_instances() -> dict[str, Any]:
 # ------------------------------------------------------------------ Minecraft Process Control & Shelf Gating
 
 
+_MC_JAVA_MARKERS = (
+    "org.prismlauncher",
+    "prismlauncher",
+    "net.minecraft",
+    ".minecraft",
+    "cpw.mods",
+    "net.fabricmc",
+    "mojang",
+)
+
+
+def _is_minecraft_java_cmdline(cmdline: str) -> bool:
+    low = (cmdline or "").lower()
+    return any(tok in low for tok in _MC_JAVA_MARKERS)
+
+
 def minecraft_process_state() -> dict[str, bool]:
-    """Inspects running processes to detect Prism Launcher (`prismlauncher`) and active Minecraft JVM (`java`)."""
+    """Inspects running processes across Windows, Linux/Chromebook, and macOS without console flashes."""
     launcher = False
     game_jvm = False
+
+    # 1. Native Windows 11/10 (`tasklist` + conditional `Win32_Process` Java CommandLine check)
+    if _is_win():
+        has_java_proc = False
+        try:
+            out = subprocess.check_output(
+                ["tasklist", "/FO", "CSV", "/NH"],
+                text=True,
+                timeout=2.0,
+                creationflags=_WIN_NO_WINDOW,
+            )
+            for row in csv.reader(out.splitlines()):
+                if not row:
+                    continue
+                img = row[0].strip().lower()
+                if img in ("prismlauncher.exe", "minecraftlauncher.exe", "minecraft.exe"):
+                    launcher = True
+                elif img == "minecraft.windows.exe":
+                    game_jvm = True
+                elif img in ("javaw.exe", "java.exe"):
+                    has_java_proc = True
+        except Exception:
+            pass
+
+        if has_java_proc and not game_jvm:
+            ps = shutil.which("powershell.exe") or "powershell"
+            try:
+                cmd_out = subprocess.check_output(
+                    [
+                        ps,
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        "Get-CimInstance Win32_Process -Filter \"Name='javaw.exe' OR Name='java.exe'\" | Select-Object -ExpandProperty CommandLine",
+                    ],
+                    text=True,
+                    timeout=3.0,
+                    creationflags=_WIN_NO_WINDOW,
+                )
+                for line in cmd_out.splitlines():
+                    if _is_minecraft_java_cmdline(line):
+                        game_jvm = True
+                        break
+            except Exception:
+                pass
+
+        return {"launcher": launcher, "game_jvm": game_jvm, "any": launcher or game_jvm}
+
+    # 2. Linux / Chromebook Crostini (`/proc`)
     proc_root = Path("/proc")
     if proc_root.is_dir():
         for entry in proc_root.iterdir():
@@ -198,31 +373,27 @@ def minecraft_process_state() -> dict[str, bool]:
                 if not parts:
                     continue
                 joined = " ".join(parts)
-                if "prism-gated-launch.sh" in joined:
+                if "prism-gated-launch.sh" in joined or "minecraft-gated-launch.py" in joined:
                     continue
                 exe_name = Path(parts[0]).name.lower()
                 if "prismlauncher" in exe_name:
                     launcher = True
-                elif exe_name.startswith("java") and (
-                    "org.prismlauncher" in joined
-                    or "PrismLauncher" in joined
-                    or "net.minecraft.client.main.Main" in joined
-                    or "cpw.mods" in joined
-                    or "net.fabricmc" in joined
-                ):
+                elif exe_name.startswith("java") and _is_minecraft_java_cmdline(joined):
                     game_jvm = True
             except OSError:
                 continue
         return {"launcher": launcher, "game_jvm": game_jvm, "any": launcher or game_jvm}
 
-    # macOS / fallback check
+    # 3. macOS fallback
     if sys.platform == "darwin":
         try:
             out = subprocess.check_output(["ps", "-axo", "command"], text=True, timeout=1.5)
             for line in out.splitlines():
+                if "minecraft-gated-launch.py" in line:
+                    continue
                 if "Prism Launcher.app" in line or "prismlauncher" in line.lower():
                     launcher = True
-                if "java" in line and ("PrismLauncher" in line or "net.minecraft.client.main.Main" in line):
+                if "java" in line and _is_minecraft_java_cmdline(line):
                     game_jvm = True
         except Exception:
             pass
@@ -230,6 +401,55 @@ def minecraft_process_state() -> dict[str, bool]:
 
 
 def _desktop_notify(title: str, body: str, urgent: bool = False) -> None:
+    """Shows a native OS notification (Windows 11 WinRT Toast + chime, Linux `notify-send`, macOS `osascript`)."""
+    if _is_win():
+        ps = shutil.which("powershell.exe") or "powershell"
+        env = dict(os.environ)
+        env["GT_TOAST_TITLE"] = title
+        env["GT_TOAST_BODY"] = body
+        env["GT_TOAST_URGENT"] = "1" if urgent else "0"
+        ps_script = (
+            "if ($env:GT_TOAST_URGENT -eq '1') { try { [console]::beep(880,160); [console]::beep(1046,200) } catch {} }; "
+            "try { "
+            "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; "
+            "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null; "
+            "$t = [System.Security.SecurityElement]::Escape($env:GT_TOAST_TITLE); "
+            "$b = [System.Security.SecurityElement]::Escape($env:GT_TOAST_BODY); "
+            "$sc = if ($env:GT_TOAST_URGENT -eq '1') { ' scenario=\"reminder\"' } else { '' }; "
+            "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument; "
+            "$xml.LoadXml(\"<toast$sc><visual><binding template='ToastGeneric'><text>$t</text><text>$b</text></binding></visual></toast>\"); "
+            "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml); "
+            "$appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'; "
+            "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast) "
+            "} catch {}"
+        )
+        try:
+            subprocess.Popen(
+                [ps, "-NoProfile", "-NonInteractive", "-Command", ps_script],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=_WIN_NO_WINDOW,
+            )
+        except Exception:
+            pass
+        return
+
+    if sys.platform == "darwin":
+        osa = shutil.which("osascript")
+        if osa:
+            safe_t = title.replace('"', '\\"')
+            safe_b = body.replace('"', '\\"')
+            try:
+                subprocess.Popen(
+                    [osa, "-e", f'display notification "{safe_b}" with title "{safe_t}"'],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                pass
+        return
+
     ns = shutil.which("notify-send")
     if not ns:
         return
@@ -244,7 +464,32 @@ def _desktop_notify(title: str, body: str, urgent: bool = False) -> None:
 
 
 def stop_minecraft() -> None:
-    """Cleanly terminates the entire Prism Launcher Flatpak sandbox (both launcher and Minecraft JVM)."""
+    """Cleanly closes Minecraft & its launcher (Windows Java/Bedrock/Prism, Linux Flatpak, macOS)."""
+    if _is_win():
+        ps = shutil.which("powershell.exe") or "powershell"
+        ps_kill = (
+            "$mcJava = Get-CimInstance Win32_Process -Filter \"Name='javaw.exe' OR Name='java.exe'\" | "
+            "Where-Object { $_.CommandLine -match 'prismlauncher|net\\.minecraft|\\.minecraft|cpw\\.mods|net\\.fabricmc|mojang' }; "
+            "$mcApps = Get-Process -Name 'Minecraft.Windows','prismlauncher','MinecraftLauncher' -ErrorAction SilentlyContinue; "
+            "foreach ($p in $mcApps) { try { $null = $p.CloseMainWindow() } catch {} }; "
+            "foreach ($j in $mcJava) { try { $gp = Get-Process -Id $j.ProcessId -ErrorAction SilentlyContinue; if ($gp) { $null = $gp.CloseMainWindow() } } catch {} }; "
+            "Start-Sleep -Milliseconds 1200; "
+            "Stop-Process -Name 'Minecraft.Windows','prismlauncher','MinecraftLauncher' -Force -ErrorAction SilentlyContinue; "
+            "foreach ($j in $mcJava) { Stop-Process -Id $j.ProcessId -Force -ErrorAction SilentlyContinue }"
+        )
+        try:
+            subprocess.run(
+                [ps, "-NoProfile", "-NonInteractive", "-Command", ps_kill],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=8.0,
+                check=False,
+                creationflags=_WIN_NO_WINDOW,
+            )
+        except Exception:
+            pass
+        return
+
     fp = shutil.which("flatpak")
     if fp:
         subprocess.run([fp, "kill", PRISM_APP_ID], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
@@ -253,10 +498,11 @@ def stop_minecraft() -> None:
 
 
 def launch_minecraft(*, instance_override: str | None = None, parent_setup: bool = False) -> dict[str, Any]:
-    """Launches Prism Launcher (directly into an instance when available, or GUI for parent setup)."""
+    """Launches Prism Launcher (or Official Windows Minecraft) directly into an instance or Parent Setup mode."""
     global _MC_LAUNCHED_AT, _MC_WARNED_ONE_MIN, _PARENT_SETUP_UNTIL
-    if not is_minecraft_installed():
-        raise RuntimeError("Minecraft (Prism Launcher) is not installed on this computer.")
+    flavor = minecraft_flavor()
+    if not flavor:
+        raise RuntimeError("Minecraft is not installed on this computer.")
 
     if parent_setup:
         _PARENT_SETUP_UNTIL = time.time() + 1800.0
@@ -264,16 +510,43 @@ def launch_minecraft(*, instance_override: str | None = None, parent_setup: bool
         _MC_LAUNCHED_AT = time.time()
         _MC_WARNED_ONE_MIN = False
 
-    inst_info = list_minecraft_instances()
-    valid_ids = {i["id"] for i in inst_info["instances"]}
     chosen = ""
-    if not parent_setup:
-        req = (instance_override or "").strip()
-        if req and req in valid_ids:
-            chosen = req
-        elif inst_info["default_id"]:
-            chosen = inst_info["default_id"]
+    if flavor == "prism":
+        inst_info = list_minecraft_instances()
+        valid_ids = {i["id"] for i in inst_info["instances"]}
+        if not parent_setup:
+            req = (instance_override or "").strip()
+            if req and req in valid_ids:
+                chosen = req
+            elif inst_info["default_id"]:
+                chosen = inst_info["default_id"]
 
+    # 1. Native Windows 11/10
+    if _is_win():
+        prism_exe = _win_prism_exe()
+        if prism_exe is not None:
+            cmd = [str(prism_exe)]
+            if chosen:
+                cmd.extend(["--launch", chosen])
+            subprocess.Popen(cmd, cwd=str(prism_exe.parent))
+            return {"ok": True, "instance": chosen or None, "parent_setup": parent_setup, "flavor": "prism"}
+
+        off = _win_official_minecraft_info()
+        if off["exe"]:
+            subprocess.Popen([off["exe"]])
+            return {"ok": True, "instance": None, "parent_setup": parent_setup, "flavor": "official"}
+        if off["has_store_launcher"]:
+            subprocess.Popen(
+                ["explorer.exe", r"shell:AppsFolder\Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft"],
+                creationflags=_WIN_NO_WINDOW,
+            )
+            return {"ok": True, "instance": None, "parent_setup": parent_setup, "flavor": "official"}
+        if off["has_bedrock"] or off["installed"]:
+            subprocess.Popen(["explorer.exe", "minecraft://"], creationflags=_WIN_NO_WINDOW)
+            return {"ok": True, "instance": None, "parent_setup": parent_setup, "flavor": "official"}
+        raise RuntimeError("Could not locate Prism Launcher or Minecraft Launcher executable on Windows.")
+
+    # 2. Chromebook / Linux (`flatpak`)
     env = dict(os.environ)
     env["QT_QPA_PLATFORM"] = "xcb"
 
@@ -296,8 +569,9 @@ def launch_minecraft(*, instance_override: str | None = None, parent_setup: bool
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        return {"ok": True, "instance": chosen or None, "parent_setup": parent_setup}
+        return {"ok": True, "instance": chosen or None, "parent_setup": parent_setup, "flavor": "prism"}
 
+    # 3. macOS
     if sys.platform == "darwin":
         app_p = Path("/Applications/Prism Launcher.app")
         if not app_p.exists():
@@ -306,15 +580,89 @@ def launch_minecraft(*, instance_override: str | None = None, parent_setup: bool
         if chosen:
             cmd.extend(["--args", "--launch", chosen])
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return {"ok": True, "instance": chosen or None, "parent_setup": parent_setup}
+        return {"ok": True, "instance": chosen or None, "parent_setup": parent_setup, "flavor": "prism"}
 
-    raise RuntimeError("Could not find `flatpak` binary to start Prism Launcher.")
+    raise RuntimeError("Could not find Prism Launcher binary on this system.")
 
 
 def sync_minecraft_desktop_gate(gate_enabled: bool) -> None:
-    """Installs or restores the ChromeOS `.desktop` Exec= wrapper so shelf clicks respect earned time."""
-    if os.name == "nt" or sys.platform == "darwin":
+    """Syncs OS-level Minecraft gating (Windows Startup watchdog + Desktop shortcut, or ChromeOS `.desktop`)."""
+    if sys.platform == "darwin":
         return
+
+    if _is_win():
+        ps = shutil.which("powershell.exe") or "powershell"
+        pyw = ROOT / ".venv" / "Scripts" / "pythonw.exe"
+        if not pyw.is_file():
+            cand = Path(sys.executable).with_name("pythonw.exe")
+            pyw = cand if cand.is_file() else Path(sys.executable)
+        launch_py = ROOT / "launch.py"
+        gated_py = ROOT / "bin" / "minecraft-gated-launch.py"
+        prism_exe = _win_prism_exe()
+
+        env = dict(os.environ)
+        env["GT_GATE_ON"] = "1" if gate_enabled else "0"
+        env["GT_PYW"] = str(pyw)
+        env["GT_ROOT"] = str(ROOT)
+        env["GT_LAUNCH"] = str(launch_py)
+        env["GT_GATED_PY"] = str(gated_py)
+        env["GT_PRISM_EXE"] = str(prism_exe) if prism_exe else ""
+
+        ps_sync = (
+            "$wsh = New-Object -ComObject WScript.Shell; "
+            "$startup = [Environment]::GetFolderPath('Startup'); "
+            "$desktop = [Environment]::GetFolderPath('Desktop'); "
+            "$wdLnk = Join-Path $startup 'Gemini Tutor Watchdog.lnk'; "
+            "if ($env:GT_GATE_ON -eq '1') { "
+            "  if ($startup -and (Test-Path $startup)) { "
+            "    $s = $wsh.CreateShortcut($wdLnk); "
+            "    $s.TargetPath = $env:GT_PYW; "
+            "    $s.Arguments = '\"' + $env:GT_LAUNCH + '\" --no-open'; "
+            "    $s.WorkingDirectory = $env:GT_ROOT; "
+            "    $s.Description = 'Gemini Tutor Background Minecraft Time-Gating Watchdog'; "
+            "    $s.Save(); "
+            "  }; "
+            "  if ($desktop -and (Test-Path $desktop) -and (Test-Path $env:GT_GATED_PY)) { "
+            "    $prismLnk = Join-Path $desktop 'Prism Launcher.lnk'; "
+            "    if ((Test-Path $prismLnk) -or $env:GT_PRISM_EXE) { "
+            "      $m = $wsh.CreateShortcut($prismLnk); "
+            "      $m.TargetPath = $env:GT_PYW; "
+            "      $m.Arguments = '\"' + $env:GT_GATED_PY + '\"'; "
+            "      $m.WorkingDirectory = $env:GT_ROOT; "
+            "      $m.Description = 'Prism Launcher (Earned Time via Gemini Tutor)'; "
+            "      if ($env:GT_PRISM_EXE -and (Test-Path $env:GT_PRISM_EXE)) { $m.IconLocation = $env:GT_PRISM_EXE + ',0' }; "
+            "      $m.Save(); "
+            "    } "
+            "  } "
+            "} else { "
+            "  if (Test-Path $wdLnk) { Remove-Item $wdLnk -Force -ErrorAction SilentlyContinue }; "
+            "  $prismLnk = Join-Path $desktop 'Prism Launcher.lnk'; "
+            "  if ((Test-Path $prismLnk) -and $env:GT_PRISM_EXE -and (Test-Path $env:GT_PRISM_EXE)) { "
+            "    $m = $wsh.CreateShortcut($prismLnk); "
+            "    if ($m.Arguments -like '*minecraft-gated-launch.py*') { "
+            "      $m.TargetPath = $env:GT_PRISM_EXE; "
+            "      $m.Arguments = ''; "
+            "      $m.WorkingDirectory = Split-Path $env:GT_PRISM_EXE; "
+            "      $m.IconLocation = $env:GT_PRISM_EXE + ',0'; "
+            "      $m.Save(); "
+            "    } "
+            "  } "
+            "}"
+        )
+        try:
+            subprocess.run(
+                [ps, "-NoProfile", "-NonInteractive", "-Command", ps_sync],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=6.0,
+                check=False,
+                creationflags=_WIN_NO_WINDOW,
+            )
+        except Exception:
+            pass
+        return
+
     home = Path.home()
     export_desktop = home / ".local" / "share" / "flatpak" / "exports" / "share" / "applications" / f"{PRISM_APP_ID}.desktop"
     local_desktop = home / ".local" / "share" / "applications" / f"{PRISM_APP_ID}.desktop"
@@ -416,13 +764,17 @@ def _apply_thresholds(arc: dict[str, Any]) -> dict[str, Any]:
 
 def client_status(rec: dict[str, Any] | None = None, *, sandbox: bool = False, pending_seconds: float = 0.0) -> dict[str, Any]:
     fod_ok = is_fod_installed()
-    mc_ok = is_minecraft_installed()
+    mc_flavor = minecraft_flavor()
+    mc_ok = bool(mc_flavor)
+    plat = "windows" if _is_win() else ("mac" if sys.platform == "darwin" else "chromebook")
     installed = fod_ok or mc_ok
     if not installed:
         return {
             "installed": False,
+            "platform": plat,
             "fod_installed": False,
             "minecraft_installed": False,
+            "minecraft_flavor": "",
             "enabled": False,
             "visible": False,
         }
@@ -446,12 +798,16 @@ def client_status(rec: dict[str, Any] | None = None, *, sandbox: bool = False, p
     total_done_sec = pts * chunk_sec + committed
 
     mc_proc = minecraft_process_state() if mc_ok else {"launcher": False, "game_jvm": False, "any": False}
-    mc_inst = list_minecraft_instances() if mc_ok else {"instances": [], "selected": "", "default_id": ""}
+    mc_inst = list_minecraft_instances() if mc_flavor == "prism" else {"instances": [], "selected": "", "default_id": ""}
+    mc_label = "Prism Launcher" if mc_flavor == "prism" else ("Minecraft Launcher" if mc_flavor == "official" else "Minecraft")
 
     return {
         "installed": True,
+        "platform": plat,
         "fod_installed": fod_ok,
         "minecraft_installed": mc_ok,
+        "minecraft_flavor": mc_flavor,
+        "minecraft_label": mc_label,
         "enabled": enabled,
         "visible": enabled,
         "fod_port": FOD_PORT,

@@ -588,11 +588,12 @@
           box.innerHTML = `<div class="card">
             <h3>No Local Video Games Installed on This Computer</h3>
             <div class="muted" style="line-height:1.5">
-              Your child sees <b>zero</b> video game UI or points unless <b>Fists of Doom</b> or <b>Minecraft (Prism Launcher)</b> is installed locally on this computer:
+              Your child sees <b>zero</b> video game UI or points unless <b>Fists of Doom</b> or <b>Minecraft</b> is installed locally on this computer:
               <ul>
-                <li><b>Fists of Doom (Mac / Chromebook / Linux):</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash</code></li>
                 <li><b>Fists of Doom (Windows PowerShell):</b> <code>irm https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.ps1 | iex</code></li>
-                <li><b>Minecraft on Chromebook (Linux):</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_chromebook.sh | bash</code></li>
+                <li><b>Minecraft + Time-Gating (Windows PowerShell):</b> <code>irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex</code></li>
+                <li><b>Fists of Doom (Mac / Chromebook):</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash</code></li>
+                <li><b>Minecraft + Time-Gating (Chromebook Linux):</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_chromebook.sh | bash</code></li>
               </ul>
             </div>
           </div>`;
@@ -602,10 +603,12 @@
         const mpp = Number(A.minutes_per_point) || 15;
         const ptu = Number(A.points_to_unlock) || 2;
         const rgm = Number(A.reward_game_minutes) || 15;
+        const mcLabel = A.minecraft_label || "Prism Launcher";
+        const isWin = A.platform === "windows";
         const chunkDoneMin = Math.round(((Number(A.committed_work_seconds) || 0) / 60) * 10) / 10;
         const gameTags = [
           A.fod_installed ? `<span class="pill ok">🥊 Fists of Doom Installed</span>` : `<span class="pill muted">Fists of Doom not installed</span>`,
-          A.minecraft_installed ? `<span class="pill ok">⛏️ Minecraft (Prism Launcher) Installed</span>` : `<span class="pill muted">Minecraft not installed</span>`,
+          A.minecraft_installed ? `<span class="pill ok">⛏️ Minecraft (${esc(mcLabel)}) Installed</span>` : `<span class="pill muted">Minecraft not installed</span>`,
         ].join(" ");
 
         const instOpts = (A.minecraft_instances || []).map(i =>
@@ -636,7 +639,7 @@
               <div class="row" style="margin-top:12px;flex-wrap:wrap">
                 <button type="button" class="ghost" id="arcGrant15Btn">+ Grant 15m bonus</button>
                 <button type="button" class="ghost" id="arcResetBankBtn">Reset bank to 0:00</button>
-                ${A.minecraft_installed ? `<button type="button" class="ghost" id="arcMcParentBtn">🔧 Open Prism Launcher (Parent Setup)</button>` : ""}
+                ${A.minecraft_installed ? `<button type="button" class="ghost" id="arcMcParentBtn">🔧 Open ${esc(mcLabel)} (Parent Setup)</button>` : ""}
               </div>
               ${histHtml ? `<ul class="muted" style="margin-top:10px;font-size:.84rem">${histHtml}</ul>` : ""}
             </div>
@@ -662,15 +665,16 @@
                 Every <b>${mpp} min</b> of active solid writing earns <b>1 point</b> (saved across sessions). Reaching <b>${ptu} point(s) (${mpp * ptu} min total)</b> unlocks <b>${rgm} min</b> of game time.
               </div>
               ${A.minecraft_installed ? `
+                ${A.minecraft_flavor !== "official" ? `
                 <label style="display:block;margin-bottom:10px">Minecraft Instance (Prism Launcher)
                   <select id="arcMcInst">
                     <option value="">Auto (${esc(A.minecraft_default_instance || "Launcher selection")})</option>
                     ${instOpts}
                   </select>
-                </label>
+                </label>` : ""}
                 <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
                   <input type="checkbox" id="arcGateMc" style="width:auto" ${A.gate_minecraft ? "checked" : ""} />
-                  <span>Gate Chromebook Minecraft shelf icon &amp; close automatically at 0:00</span>
+                  <span>${isWin ? "Gate Minecraft on Windows (silent login watchdog, Desktop shortcut &amp; auto-close at 0:00)" : "Gate Chromebook Minecraft shelf icon &amp; close automatically at 0:00"}</span>
                 </label>
               ` : ""}
               ${A.fod_installed ? `
@@ -734,8 +738,8 @@
           $("arcMcParentBtn").onclick = async () => {
             const r = await fetch("/api/arcade/minecraft-parent-setup", { method: "POST" });
             $("arcMsg").textContent = r.ok
-              ? "Opened Prism Launcher in Parent Setup mode (unlocked until you close it)."
-              : "Couldn't open Prism Launcher: " + (await r.text());
+              ? `Opened ${mcLabel} in Parent Setup mode (unlocked until you close it).`
+              : `Couldn't open ${mcLabel}: ` + (await r.text());
           };
         }
       }

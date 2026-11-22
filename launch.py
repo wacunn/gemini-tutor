@@ -83,8 +83,11 @@ def main() -> None:
         supervise()
         return
 
+    no_open = ("--no-open" in sys.argv) or (os.environ.get("TUTOR_NO_OPEN") == "1")
+
     if is_up():
-        open_app()
+        if not no_open:
+            open_app()
         return
 
     py = sys.executable
@@ -107,7 +110,8 @@ def main() -> None:
         if is_up():
             break
         time.sleep(0.5)
-    open_app()
+    if not no_open:
+        open_app()
 
 
 if __name__ == "__main__":

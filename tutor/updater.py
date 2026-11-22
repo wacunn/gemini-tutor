@@ -112,19 +112,20 @@ def apply() -> dict:
             else:
                 shutil.copy2(item, dest)
     if os.name != "nt":
-        for script in ("start.sh", "install.sh", "setup_minecraft_chromebook.sh", "bin/prism-gated-launch.sh"):
+        for script in ("start.sh", "install.sh", "setup_minecraft_chromebook.sh", "bin/prism-gated-launch.sh", "bin/minecraft-gated-launch.py"):
             p = ROOT / script
             if p.exists():
                 try:
                     p.chmod(0o755)
                 except OSError:
                     pass
+    run_kw = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)} if os.name == "nt" else {}
     uv = _uv()
     venv_py = _venv_python()
     if uv and venv_py:
-        subprocess.run([uv, "pip", "install", "--python", str(venv_py), "-q", "-r", str(ROOT / "requirements.txt")], check=False)
+        subprocess.run([uv, "pip", "install", "--python", str(venv_py), "-q", "-r", str(ROOT / "requirements.txt")], check=False, **run_kw)
     elif venv_py:
-        subprocess.run([str(venv_py), "-m", "pip", "install", "-q", "-r", str(ROOT / "requirements.txt")], check=False)
+        subprocess.run([str(venv_py), "-m", "pip", "install", "-q", "-r", str(ROOT / "requirements.txt")], check=False, **run_kw)
     return {"ok": True, "version": local_version()}
 
 
