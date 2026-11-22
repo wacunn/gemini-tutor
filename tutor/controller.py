@@ -146,49 +146,223 @@ def ai_direct_next_beat(
     }
 
 
-LATENT_INTAKE_SYSTEM = """You are conducting a SHORT, BOUNDED UPFRONT ORAL STORY INTAKE (3–4 turns max) with an 8-year-old author BEFORE Panel 1 of their 100-page comic book.
-PEDAGOGICAL PURPOSE:
-- The student is telling you their giant story out loud ONLY so YOU (the AI tutor) can hold their full latent story structure in memory and ask sharp, story-aware questions while they do 100% of the rigorous sentence, grammar, and spelling writing panel by panel.
-- Nothing you write in `premise`, `scenes`, or `ending` is shown on the student's screen—it is strictly your private internal memory map.
-CRITICAL RULES:
-1. ZERO PLOT SUGGESTING: NEVER invent characters, powers, items, twists, or either/or plot choices ("Does he find a sword or a portal?"). Every single story element must come 100% from what the student said!
-2. MERGE & EXPAND LATENT STRUCTURE: Combine `EXISTING LATENT PLAN` with `WHAT THE STUDENT JUST SAID` (never erase earlier facts unless the student changed their mind):
-   - `book_title`: 2–5 words built ONLY from concepts the student named.
-   - `premise`: 1–2 sentences summarizing the core story setup and conflict.
-   - `characters`: list of character names + brief roles/traits they mentioned.
-   - `world_rules`: setting, stakes, or special rules of their story world.
-   - `scenes`: chronological list of 5–16 story beats covering their arc so far, each as:
-     `{"beat_summary": "what happens in this part", "socratic_angle": "open why/how/when/reaction question to ask when they reach this part in writing", "target_connector": "because|when|but|although|so"}`
-   - `ending`: how the big story eventually resolves/ends (empty string `""` if they haven't explained the ending yet).
-3. DECIDE `ready`:
-   - Set `ready: true` if `TURN NUMBER >= MAX TURNS`, OR if `TURN NUMBER >= 3` AND you already know the beginning setup, middle escalation/twists, and where the story is heading at the end.
-   - Otherwise set `ready: false`.
-4. `spoken_question` (used ONLY when `ready` is false):
-   - 1–2 short, plain, matter-of-fact sentences (zero hype, zero baby talk).
-   - Probe the biggest missing piece in THEIR latent plot:
-     * If they gave the opening setup, challenge a causal detail or ask what goes wrong / happens next ("Wait—why are they after him in the first place, and what happens next?").
-     * If they gave middle events but no ending yet (especially by Turn 3), ask where this whole giant story is heading at the very end ("And how is this whole story going to end when they finally get there?").
+_SYCOPHANCY_LEAD_RE = re.compile(
+    r"^(?:(?:oh\s+)?(?:wow|whoa|haha|bahaha|awesome|amazing|epic|brilliant|genius|hilarious|fantastic|cool|nice|sweet|yes|heck\s+yeah|love\s+it|i\s+love\s+(?:it|that)|that(?:'s|\s+is)\s+(?:so\s+)?(?:gold|comic\s+gold|pure\s+gold|hilarious|awesome|amazing|great|funny|genius|cool))[!.,\s—-]*)+",
+    re.I,
+)
+
+_ORAL_CAUSAL_MARKERS = re.compile(
+    r"\b(because|becuase|becuz|cuz|since|so\s+that|so\s+(?:he|she|it|they|the|a|an|his|her|its|my|our|[a-z]+)|"
+    r"therefore|that'?s\s+why|which\s+(?:made|makes|caused|blasted|launched|sent|got|put|broke|trapped|forced)|"
+    r"made\s+(?:him|her|it|them)\b|blasted\s+(?:him|her|it|them)\b|launched\s+(?:him|her|it|them)\b|"
+    r"but|however|except|until|when|after|to\s+try\s+to|wanted\s+to|wants\s+to|needed\s+to|needs\s+to|had\s+to|has\s+to)\b",
+    re.I,
+)
+
+_ORAL_PROBLEM_MARKERS = re.compile(
+    r"\b(problem|trouble|stuck|trapped|lost|broke|broken|mad|angry|chased|attacked|locked|stole|stolen|"
+    r"wants?|wanted|needs?|needed|has\s+to|had\s+to|can'?t|couldn'?t|save|escape|stop|ruined|danger|losing|counting\s+down|out\s+of)\b",
+    re.I,
+)
+
+_HIGH_SCALE_JUMP_NOUNS = re.compile(
+    r"\b(rocket|spaceship|space|mars|moon|jupiter|alien|aliens|portal|dimension|time\s+machine|"
+    r"nuke|nuclear|volcano|galaxy|universe|laser\s+tank|jetpack)\b",
+    re.I,
+)
+
+_DEUS_EX_ENDINGS = re.compile(
+    r"\b(everyone\s+(?:died|exploded|blew\s+up)|everybody\s+(?:died|exploded|blew\s+up)|"
+    r"everything\s+(?:exploded|blew\s+up)|blew\s+up\s+the\s+(?:world|earth|universe)|"
+    r"meteor\s+(?:fell|hit|killed)|all\s+a\s+dream|woke\s+up\s+and|randomly\s+(?:died|exploded|won))\b",
+    re.I,
+)
+
+
+def _strip_sycophancy(text: str) -> str:
+    s = _SYCOPHANCY_LEAD_RE.sub("", (text or "").strip()).strip()
+    if s and s[0].islower():
+        s = s[0].upper() + s[1:]
+    return s
+
+
+def _split_oral_clauses(raw: str) -> list[str]:
+    parts = re.split(
+        r"[.!?;]+|\band\s+then\b|\bthen\b|,\s*(?=(?:the|a|an|he|she|it|they|te|dylan|max|bob)\s+[a-z])",
+        raw or "",
+        flags=re.I,
+    )
+    return [p.strip(" ,") for p in parts if len(_words(p)) >= 2]
+
+
+def _diagnose_oral_causality_local(raw: str, latent_plan: dict[str, Any]) -> dict[str, Any] | None:
+    """Deterministic Trabasso/Stein-Glenn story-logic check: catches associative heaps ('cat pooped, farted, jumped on a rocket'),
+    teleported props, stakes-free gags, and random wipeout endings in 0ms before/after any LLM call."""
+    words = _words(raw)
+    norm = _norm(raw)
+    pend = latent_plan.get("pending_repair") if isinstance(latent_plan.get("pending_repair"), dict) else None
+    prev_attempts = int((pend or {}).get("attempts") or 0)
+    prior_corpus = " ".join(latent_plan.get("raw_log") or []).lower()
+
+    if len(words) < 4 or norm in AVOIDANCE_WORDS:
+        q = (
+            "That's just a couple of words, not a story beat yet. Who is your main character, and what problem starts the story?"
+            if not latent_plan.get("scenes")
+            else "Give me the actual event and WHY it happens—how does the last part cause what happens next?"
+        )
+        return {
+            "diagnosis": "too_vague",
+            "accepted_beat": False,
+            "unlinked_elements": [raw[:20]],
+            "spoken_question": q,
+        }
+
+    if _DEUS_EX_ENDINGS.search(raw) and not _ORAL_CAUSAL_MARKERS.search(raw):
+        return {
+            "diagnosis": "deus_ex_machina_ending",
+            "accepted_beat": False,
+            "unlinked_elements": ["problem", "random ending"],
+            "spoken_question": (
+                "Hold on—having everything randomly blow up or reset skips solving the problem you set up. "
+                "What does your character actually do to solve or survive that trouble?"
+            ),
+        }
+
+    clauses = _split_oral_clauses(raw)
+    has_causal = bool(_ORAL_CAUSAL_MARKERS.search(raw))
+    has_problem = bool(_ORAL_PROBLEM_MARKERS.search(raw))
+
+    # Associative heap ("the cat pooped. the cat farted, te cat jumped on a rocket") or unbridged teleport jump
+    jump_match = _HIGH_SCALE_JUMP_NOUNS.search(raw)
+    first_clause_low = clauses[0].lower() if clauses else ""
+    jump_noun = jump_match.group(1).lower() if jump_match else ""
+    unbridged_jump = bool(
+        jump_noun
+        and not has_causal
+        and jump_noun not in prior_corpus
+        and (len(clauses) >= 2 and jump_noun not in first_clause_low or (bool(prior_corpus) and len(words) <= 12))
+    )
+
+    if (len(clauses) >= 3 and not has_causal) or unbridged_jump:
+        piece_a = projects.sanitize_short_tag(clauses[0] if clauses else raw[:24]) or "start"
+        piece_b = jump_noun or projects.sanitize_short_tag(clauses[-1] if clauses else "") or "next jump"
+        diag = "causal_jump" if jump_noun else "and_then_list"
+        if prev_attempts >= 1:
+            q = (
+                f"Look at just two pieces you named: {piece_a} and {piece_b}. "
+                f"Either explain what actually connects {piece_a} to {piece_b}, or drop {piece_b} and tell me the main problem right at the start."
+            )
+        elif jump_noun:
+            q = (
+                f"Hold on—right now those are just separate random things in a row, and a {jump_noun} appears out of nowhere. "
+                f"Where did a {jump_noun} come from, or what problem did the first part actually cause?"
+            )
+        else:
+            q = (
+                "Hold on—right now that's just a list of separate things happening in a row, not one thing causing the next. "
+                "Which part starts the main problem, and what happens BECAUSE of it?"
+            )
+        return {
+            "diagnosis": diag,
+            "accepted_beat": False,
+            "unlinked_elements": [piece_a, piece_b],
+            "spoken_question": q,
+        }
+
+    # Turn 1 with zero problem/goal/causal stakes (e.g. "The cat pooped on the floor and farted.")
+    if not latent_plan.get("scenes") and not has_causal and not has_problem:
+        subj = projects.sanitize_short_tag(raw) or "your character"
+        q = (
+            f"Right now that's just an action, not a story problem yet. "
+            f"Who gets mad, or what big trouble does that put {subj} in?"
+        )
+        return {
+            "diagnosis": "missing_motive_or_goal",
+            "accepted_beat": False,
+            "unlinked_elements": [subj, "what problem?"],
+            "spoken_question": q,
+        }
+
+    return None
+
+
+LATENT_INTAKE_SYSTEM = """You are a sharp, deadpan-respectful Comic Story Editor conducting upfront ORAL STORY CONSTRUCTION with an 8-year-old author (Grade 3–4, ADHD) BEFORE Panel 1 unlocks.
+CORE PEDAGOGICAL PRINCIPLE (CONSERVATION OF LEARNING FRICTION):
+- Right now there is NO typing or spelling friction—so ALL of the learning friction moves into CAUSAL STORYTELLING & CRITICAL THINKING (Trabasso causal chains + "Because / Therefore / But" story logic).
+- You are a CAUSAL GATEKEEPER, NEVER a passive stenographer and NEVER a cheerleader!
+- Potty humor, gross-out gags, and wild premises (Dog Man / Captain Underpants style) are completely fine ONLY when they obey CAUSE AND EFFECT. Random unconnected lists ("the cat pooped, the cat farted, the cat jumped on a rocket") are NOT good storytelling and MUST be rejected (`accepted_beat: false`)!
+
+STRICT DIAGNOSTIC RULES:
+1. TEST WITH "BECAUSE / THEREFORE / BUT":
+   - Reject (`accepted_beat: false`) and keep `scenes` UNCHANGED if ANY of these flaws occur:
+     * `and_then_list`: 2+ unconnected events listed in a row with no cause-and-effect glue.
+     * `causal_jump`: a sudden rocket, portal, alien, weapon, or new location teleports in with zero setup or physical/logical bridge from what came right before.
+     * `missing_motive_or_goal`: gross or silly actions happen, but nobody has a real problem, goal, or stakes yet.
+     * `missing_obstacle`: the character gets what they want way too easily with zero trouble or pushback ("But...").
+     * `deus_ex_machina_ending`: "everyone randomly explodes / a meteor kills the boss / it was a dream" instead of the character solving the problem they started with.
+     * `too_vague`: vague filler with no concrete who + problem.
+   - Accept (`accepted_beat: true`) ONLY when the beat establishes a real Character + Problem/Goal (Pillar 1) OR connects causally (`because` / `so` / `but`) to the existing story! Never invent causal glue on the student's behalf to fix a broken leap!
+2. ZERO SYCOPHANCY, ZERO SCOLDING, ZERO PLOT SUGGESTING (`spoken_question`):
+   - HARD BAN on fake hype/praise: NEVER say "That is GOLD!", "Wow!", "Yes!", "Love it!", "Hilarious!", "Awesome!", or "Great idea!".
+   - HARD BAN on moralizing: NEVER scold `poop`, `fart`, `barf`, or cartoon chaos—critique ONLY the story logic ("Pooping and farting don't magically put a rocket in the room. Where did a house cat get a rocket, and why does it need to launch?").
+   - HARD BAN on plot-suggesting: NEVER invent bridges or either/or plot options ("Did he build it or steal it from NASA?"). Use ONLY nouns the student already named!
+   - If `PENDING REPAIR ATTEMPTS >= 1` (they struggled on the last pushback), narrow your question to just their two unlinked pieces `[Piece A]` and `[Piece B]`, or ask them to pick ONE thread and drop the random jump.
+3. TRACK THE 4 STORY PILLARS (`pillars` + `pillar_tags` of max 2 words each from their own words):
+   - `protagonist_and_problem`: Who + clear starting problem or goal.
+   - `causal_escalation`: What happens next *because* of that problem (`because` / `so`).
+   - `obstacle_or_stakes`: Complication or obstacle making it hard (`but`).
+   - `earned_resolution`: How the character's own action resolves the core problem at the end.
+   - Set `ready: true` ONLY when `accepted_beat: true` AND ALL 4 `pillars` are `true`!
+   - When `accepted_beat: true` and `ready: false`, briefly acknowledge the causal link in 5–8 dry, plain words ("Okay, eating space-beans explains the blast.") and ask ONE sharp question targeting the next missing pillar!
+
 Return STRICT JSON:
-{"book_title": "Short Title From Their Words",
- "premise": "...",
- "characters": ["..."],
- "world_rules": "...",
- "scenes": [{"beat_summary": "...", "socratic_angle": "...", "target_connector": "because"}],
+{"diagnosis": "solid_beat | and_then_list | causal_jump | missing_motive_or_goal | missing_obstacle | deus_ex_machina_ending | too_vague",
+ "accepted_beat": false,
+ "unlinked_elements": ["cat at home", "rocket"],
+ "pillars": {"protagonist_and_problem": false, "causal_escalation": false, "obstacle_or_stakes": false, "earned_resolution": false},
+ "pillar_tags": {"protagonist_and_problem": "", "causal_escalation": "", "obstacle_or_stakes": "", "earned_resolution": ""},
+ "book_title": "Short Title From Their Words",
+ "premise": "",
+ "characters": [],
+ "world_rules": "",
+ "scenes": [{"beat_summary": "...", "oral_causal_bridge": "exact cause/effect link student gave", "socratic_angle": "why/how question for panel writing", "target_connector": "because"}],
  "ending": "",
  "ready": false,
- "spoken_question": "1-2 short plain sentences probing what happens next, why, or how the whole story ends."}"""
+ "spoken_question": "1-2 plain, zero-hype editor sentences pushing back on the exact gap OR probing the next missing story pillar."}"""
 
 
 def run_latent_story_intake(
     rec: dict[str, Any],
     latent_plan: dict[str, Any],
     kid_utterance: str,
-    turn_num: int,
-    max_turns: int = 4,
 ) -> dict[str, Any]:
-    """Extracts/updates the hidden tutor-only `latent_plan` during bounded upfront oral story intake."""
+    """Evaluates one oral story-building turn with deterministic + LLM causal gatekeeping (zero rubber-stamping, zero hype)."""
     raw = (kid_utterance or "").strip()
+    corpus = " ".join((latent_plan.get("raw_log") or []) + ([raw] if raw else []))
+
+    # 1. Hard deterministic causal gate first: obvious associative heaps / teleport jumps NEVER get rubber-stamped!
+    local_fail = _diagnose_oral_causality_local(raw, latent_plan)
+    if local_fail is not None:
+        return {
+            "diagnosis": local_fail["diagnosis"],
+            "accepted_beat": False,
+            "unlinked_elements": local_fail.get("unlinked_elements") or [],
+            "pillars": dict(latent_plan.get("pillars") or {}),
+            "pillar_tags": dict(latent_plan.get("pillar_tags") or {}),
+            "book_title": "",
+            "premise": latent_plan.get("premise") or "",
+            "characters": latent_plan.get("characters") or [],
+            "world_rules": latent_plan.get("world_rules") or "",
+            "scenes": list(latent_plan.get("scenes") or []),
+            "ending": latent_plan.get("ending") or "",
+            "ready": False,
+            "spoken_question": _strip_sycophancy(local_fail["spoken_question"]),
+        }
+
+    pend = latent_plan.get("pending_repair") if isinstance(latent_plan.get("pending_repair"), dict) else None
     existing_json = {
+        "pillars": latent_plan.get("pillars") or {},
+        "pending_repair": pend,
         "premise": latent_plan.get("premise", ""),
         "characters": latent_plan.get("characters", []),
         "world_rules": latent_plan.get("world_rules", ""),
@@ -197,7 +371,7 @@ def run_latent_story_intake(
     }
     prompt = (
         f"STUDENT: {rec.get('name') or 'Author'} (Grade {rec.get('grade', 3)}).\n"
-        f"TURN NUMBER: {turn_num} of {max_turns} (MUST set ready=true if TURN NUMBER >= {max_turns}).\n"
+        f"PENDING REPAIR ATTEMPTS SO FAR: {int((pend or {}).get('attempts') or 0)}\n"
         f"EXISTING LATENT PLAN:\n{existing_json}\n\n"
         f"WHAT THE STUDENT JUST SAID:\n{raw}"
     )
@@ -211,28 +385,43 @@ def run_latent_story_intake(
                         contents=prompt,
                         config=types.GenerateContentConfig(
                             system_instruction=LATENT_INTAKE_SYSTEM,
-                            temperature=0.35,
+                            temperature=0.3,
                             response_mime_type="application/json",
                             thinking_config=types.ThinkingConfig(thinking_budget=0),
                         ),
                     )
                     out = thinking._json(resp.text)
-                    if isinstance(out, dict) and (out.get("scenes") or out.get("premise")):
-                        is_ready = bool(out.get("ready")) or turn_num >= max_turns
-                        q = str(out.get("spoken_question") or "").strip()[:260]
+                    if isinstance(out, dict) and "accepted_beat" in out:
+                        accepted = bool(out.get("accepted_beat"))
+                        pillars_out = out.get("pillars") if isinstance(out.get("pillars"), dict) else {}
+                        merged_pillars = {
+                            k: bool((latent_plan.get("pillars") or {}).get(k) or (accepted and pillars_out.get(k)))
+                            for k in ("protagonist_and_problem", "causal_escalation", "obstacle_or_stakes", "earned_resolution")
+                        }
+                        all_four = all(merged_pillars.values())
+                        is_ready = bool(accepted and all_four and out.get("ready"))
+                        q = _strip_sycophancy(str(out.get("spoken_question") or ""))[:280]
                         if not q and not is_ready:
-                            q = (
-                                "And where is this whole big story heading at the very end?"
-                                if turn_num >= max_turns - 1
-                                else "Got it—what goes wrong or escalates right after that, and why?"
-                            )
+                            if not merged_pillars["protagonist_and_problem"]:
+                                q = "Who is the main character, and what problem starts this story?"
+                            elif not merged_pillars["causal_escalation"]:
+                                q = "Okay—what goes wrong next BECAUSE of that problem?"
+                            elif not merged_pillars["obstacle_or_stakes"]:
+                                q = "What big obstacle blocks them or makes solving that hard?"
+                            else:
+                                q = "And how does your character actually solve that problem at the end without just getting lucky?"
                         return {
-                            "book_title": _infer_book_title(" ".join((latent_plan.get("raw_log") or []) + [raw]), str(out.get("book_title") or "")),
-                            "premise": str(out.get("premise") or latent_plan.get("premise") or raw[:240]).strip()[:320],
+                            "diagnosis": str(out.get("diagnosis") or ("solid_beat" if accepted else "causal_jump")),
+                            "accepted_beat": accepted,
+                            "unlinked_elements": out.get("unlinked_elements") if isinstance(out.get("unlinked_elements"), list) else [],
+                            "pillars": merged_pillars,
+                            "pillar_tags": out.get("pillar_tags") if isinstance(out.get("pillar_tags"), dict) else {},
+                            "book_title": _infer_book_title(corpus, str(out.get("book_title") or "")) if accepted else "",
+                            "premise": str(out.get("premise") or latent_plan.get("premise") or (raw[:240] if accepted else "")).strip()[:320],
                             "characters": out.get("characters") if isinstance(out.get("characters"), list) else (latent_plan.get("characters") or []),
                             "world_rules": str(out.get("world_rules") or latent_plan.get("world_rules") or "").strip()[:280],
-                            "scenes": out.get("scenes") if isinstance(out.get("scenes"), list) else (latent_plan.get("scenes") or []),
-                            "ending": str(out.get("ending") or latent_plan.get("ending") or "").strip()[:260],
+                            "scenes": (out.get("scenes") if (accepted and isinstance(out.get("scenes"), list) and out.get("scenes")) else list(latent_plan.get("scenes") or [])),
+                            "ending": str(out.get("ending") or latent_plan.get("ending") or "").strip()[:260] if accepted else (latent_plan.get("ending") or ""),
                             "ready": is_ready,
                             "spoken_question": q,
                         }
@@ -243,34 +432,93 @@ def run_latent_story_intake(
         except Exception:
             pass
 
-    # Deterministic 0ms fallback so intake ALWAYS works offline/under 429 and strictly bounds at max_turns!
+    # Deterministic 0ms causal progression fallback (only reached after `_diagnose_oral_causality_local` verified causal/problem markers!)
+    cur_pillars = dict(
+        latent_plan.get("pillars")
+        or {
+            "protagonist_and_problem": False,
+            "causal_escalation": False,
+            "obstacle_or_stakes": False,
+            "earned_resolution": False,
+        }
+    )
+    cur_tags = dict(latent_plan.get("pillar_tags") or {})
     prev_scenes = list(latent_plan.get("scenes") or [])
-    if raw:
-        prev_scenes.append(
-            {
-                "beat_summary": raw[:180],
-                "socratic_angle": "Ask what happens in this exact moment and why.",
-                "target_connector": "because" if len(prev_scenes) % 2 == 1 else "when",
+    has_but = bool(re.search(r"\b(but|however|except|trapped|locked|stuck|blocked|can'?t|couldn'?t)\b", raw, re.I))
+    has_so_bec = bool(re.search(r"\b(because|since|so|therefore|blasted|made|caused|forced)\b", raw, re.I))
+    short_tg = projects.sanitize_short_tag(raw, corpus)
+
+    if not cur_pillars.get("protagonist_and_problem"):
+        cur_pillars["protagonist_and_problem"] = True
+        cur_tags["protagonist_and_problem"] = short_tg
+        if has_so_bec and len(_split_oral_clauses(raw)) >= 2:
+            cur_pillars["causal_escalation"] = True
+            cur_tags["causal_escalation"] = short_tg
+        if has_but and cur_pillars.get("causal_escalation"):
+            cur_pillars["obstacle_or_stakes"] = True
+            cur_tags["obstacle_or_stakes"] = short_tg
+    elif not cur_pillars.get("causal_escalation"):
+        cur_pillars["causal_escalation"] = True
+        cur_tags["causal_escalation"] = short_tg
+        if has_but:
+            cur_pillars["obstacle_or_stakes"] = True
+            cur_tags["obstacle_or_stakes"] = short_tg
+    elif not cur_pillars.get("obstacle_or_stakes"):
+        if not has_but and not _ORAL_PROBLEM_MARKERS.search(raw):
+            return {
+                "diagnosis": "missing_obstacle",
+                "accepted_beat": False,
+                "unlinked_elements": [short_tg or "goal", "too easy"],
+                "pillars": cur_pillars,
+                "pillar_tags": cur_tags,
+                "book_title": "",
+                "premise": latent_plan.get("premise") or "",
+                "characters": latent_plan.get("characters") or [],
+                "world_rules": latent_plan.get("world_rules") or "",
+                "scenes": prev_scenes,
+                "ending": latent_plan.get("ending") or "",
+                "ready": False,
+                "spoken_question": "Hang on—if that works right away with zero trouble, there's no real tension. What blocks them or goes wrong when they try that?",
             }
-        )
-    is_ready_fb = turn_num >= max_turns
-    if turn_num == 1:
-        fb_q = "Got that setup. What goes wrong or escalates next in the middle, and why?"
-    elif turn_num == 2:
-        fb_q = "Wait—how do they deal with that problem, and what happens right after?"
-    elif turn_num == 3 and not latent_plan.get("ending"):
-        fb_q = "And how does this whole giant story finally end when it all pays off?"
+        cur_pillars["obstacle_or_stakes"] = True
+        cur_tags["obstacle_or_stakes"] = short_tg
     else:
-        is_ready_fb = True
+        cur_pillars["earned_resolution"] = True
+        cur_tags["earned_resolution"] = short_tg
+
+    conn_pick = "but" if has_but and not has_so_bec else ("because" if "because" in raw.lower() else "so")
+    prev_scenes.append(
+        {
+            "beat_summary": raw[:180],
+            "oral_causal_bridge": raw[:160] if (prev_scenes or has_so_bec or has_but) else "",
+            "socratic_angle": f"Ask how or why this happens so they connect it with '{conn_pick}'.",
+            "target_connector": conn_pick,
+        }
+    )
+
+    all_done = all(cur_pillars.values())
+    if not cur_pillars["causal_escalation"]:
+        fb_q = "Okay, that sets up the starting problem. What happens next BECAUSE of that trouble?"
+    elif not cur_pillars["obstacle_or_stakes"]:
+        fb_q = "Right, that connects. Now what big obstacle gets in their way or makes fixing it hard?"
+    elif not cur_pillars["earned_resolution"]:
+        fb_q = "Okay, we have the problem and the obstacle. How does your character actually solve it at the end without just getting lucky?"
+    else:
         fb_q = ""
+
     return {
-        "book_title": _infer_book_title(" ".join((latent_plan.get("raw_log") or []) + [raw])),
+        "diagnosis": "solid_beat",
+        "accepted_beat": True,
+        "unlinked_elements": [],
+        "pillars": cur_pillars,
+        "pillar_tags": cur_tags,
+        "book_title": _infer_book_title(corpus),
         "premise": latent_plan.get("premise") or raw[:240],
         "characters": latent_plan.get("characters") or [],
         "world_rules": latent_plan.get("world_rules") or "",
         "scenes": prev_scenes[:20],
-        "ending": raw[:240] if (turn_num >= 3 and not latent_plan.get("ending")) else (latent_plan.get("ending") or ""),
-        "ready": is_ready_fb,
+        "ending": raw[:240] if all_done else (latent_plan.get("ending") or ""),
+        "ready": all_done,
         "spoken_question": fb_q,
     }
 
@@ -411,6 +659,7 @@ class SessionController:
         self.turn_index: int = 0
         self.hint_step: int = 0
         self.tier_nudged_this_item: bool = False
+        self.causal_nudged_this_item: bool = False
         self.avoidance_streak: int = 0
         self.refusal_streak: int = 0
         self.had_revision: bool = False
@@ -466,7 +715,7 @@ class SessionController:
         if self.project.get("kind") == "minecraft_diary":
             bits.append(f"Illustrated Minecraft Diary ({self.project.get('title', 'Minecraft Diary')})")
         lp = self.project.get("latent_plan") or {}
-        if lp.get("turns") or lp.get("premise") or lp.get("scenes"):
+        if lp.get("turns") or lp.get("raw_turns") or lp.get("premise") or lp.get("scenes"):
             bits.append(
                 "Latent Story Structure (PRIVATE TUTOR MEMORY FROM ORAL INTAKE — NEVER quote or display complete sentences for the student to copy; "
                 "use ONLY to ask pinpoint open WHY/HOW/WHEN/DIALOGUE questions about THEIR story as they write panel by panel!):"
@@ -479,12 +728,19 @@ class SessionController:
                 bits.append(f"  World/Setting Rules: {lp['world_rules']}")
             for idx_s, sc in enumerate(lp.get("scenes") or [], 1):
                 if isinstance(sc, dict) and sc.get("beat_summary"):
+                    brg = (
+                        f" [Oral causal link: {sc['oral_causal_bridge']} -> require '{sc.get('target_connector', 'because')}']"
+                        if sc.get("oral_causal_bridge")
+                        else ""
+                    )
                     ang = f" [Socratic angle: {sc['socratic_angle']}]" if sc.get("socratic_angle") else ""
-                    bits.append(f"  Arc Beat #{idx_s}: {sc['beat_summary']}{ang}")
+                    bits.append(f"  Arc Beat #{idx_s}: {sc['beat_summary']}{brg}{ang}")
             if lp.get("ending"):
                 bits.append(
                     f"  FUTURE Ending / Destination at Very End of Book (NOT HAPPENED YET — build toward this gradually!): {lp['ending']}"
                 )
+            if lp.get("incomplete_arc"):
+                bits.append("  NOTE: Oral arc exited early—demand explicit cause-and-effect ('because'/'so'/'but') between every panel!")
             bits.append(f"  Panels Written So Far: {projects.total_panels(self.project)}")
         if sp.get("beginning"):
             bits.append(f"1. Beginning (START): {sp['beginning']}")
@@ -511,9 +767,8 @@ class SessionController:
             pcount = projects.total_panels(self.project)
             if stage in ("oral_intake", "verbal_jam"):
                 lp = self.project.get("latent_plan") or {}
-                t_cur = min(int(lp.get("turns") or 0) + 1, int(lp.get("max_turns") or 4))
-                t_max = int(lp.get("max_turns") or 4)
-                return f"Plot Intake: {t_cur}/{t_max} → Panel 1"
+                score = int(lp.get("causal_chain_score") or 0)
+                return f"Story Logic: {score}/4 pillars → Panel 1"
             if kind == "how_to_tutorial":
                 if stage == "tutorial_topic":
                     return "How-To Guide: Pick Topic"
@@ -564,6 +819,7 @@ class SessionController:
         self.engaged_draft = ""
         self.hint_step = 0
         self.tier_nudged_this_item = False
+        self.causal_nudged_this_item = False
         self.pending_spell_sentence = ""
         self.pending_spell_targets = []
         self.inline_word_help_tries = 0
@@ -756,9 +1012,24 @@ class SessionController:
             f"Ask concisely for {step_instr}"
         )
 
+    def _missing_oral_pillar_question(self, lp: dict[str, Any]) -> str:
+        pillars = lp.get("pillars") or {}
+        pend = lp.get("pending_repair") if isinstance(lp.get("pending_repair"), dict) else None
+        if pend and pend.get("unlinked_elements"):
+            els = [e for e in pend["unlinked_elements"] if e]
+            if len(els) >= 2:
+                return f"What actually connects {els[0]} to {els[1]}?"
+        if not pillars.get("protagonist_and_problem"):
+            return "Who is your main character, and what real problem starts this story?"
+        if not pillars.get("causal_escalation"):
+            return "What goes wrong next BECAUSE of that starting problem?"
+        if not pillars.get("obstacle_or_stakes"):
+            return "What big obstacle blocks your character or makes solving that hard?"
+        return "How does your character actually solve that problem at the end without just getting lucky?"
+
     def start_oral_story_intake(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
-        """Bounded upfront oral plot intake (3–4 turns max, zero panels drawn, zero rewards, zero AI sentences displayed):
-        extracts the student's latent story structure for the AI's private memory before locking into full panel writing."""
+        """Causal Oral Story Intake (zero spelling/typing friction -> high causal-story & critical-thinking friction):
+        requires 4 Story-Logic Pillars (Who+Problem -> Causal Escalation -> Obstacle -> Earned Ending) before Panel 1 unlocks."""
         assert self.project is not None
         self.project["stage"] = "oral_intake"
         self.phase = "ORAL_STORY_INTAKE"
@@ -766,13 +1037,14 @@ class SessionController:
         if resumed:
             projects.save_project(self.project, sandbox=self.test_mode)
         lp = self.project.get("latent_plan") or {}
-        turns_done = int(lp.get("turns") or 0)
+        score = int(lp.get("causal_chain_score") or 0)
+        can_start = bool(score >= 3 and lp.get("pending_repair") is None)
         ui.append({"type": "remove", "id": "starters"})
         ui.append({"type": "remove", "id": "art_check_choices"})
         ui.append({"type": "remove", "id": "intake_choices"})
         ui.append({"type": "item", "item": projects.project_ui_payload(self.project)})
         ui.append({"type": "goal", "text": self.goal_badge()})
-        if turns_done >= 1:
+        if can_start:
             ui.append(
                 {
                     "type": "item",
@@ -784,17 +1056,16 @@ class SessionController:
                     },
                 }
             )
-            spoken = (
-                "Picking up your plot setup before Panel 1. "
-                "Tell me into the green mic how the rest of the story plays out (or tap Start writing Panel 1 if you're ready)."
-            )
-            mic_prompt = "Tell me how the rest of your story plays out"
+        if score >= 1 or lp.get("raw_turns"):
+            missing_q = self._missing_oral_pillar_question(lp)
+            spoken = f"Picking up your story plot before Panel 1. {missing_q}"
+            mic_prompt = missing_q
         else:
             spoken = (
-                "Before we write Panel 1 of your 100-page comic, tell me your whole big story idea out loud—who is in it, "
-                "what happens, and where it's heading."
+                "Before Panel 1 unlocks, let's build a real story arc that connects—not just random things in a row. "
+                "Who is your main character, and what problem starts the whole story?"
             )
-            mic_prompt = "Tell me your big story idea out loud (who's in it & what happens)"
+            mic_prompt = "Who is your main character, and what problem starts the story?"
 
         ui.append(
             {
@@ -810,12 +1081,15 @@ class SessionController:
             {
                 "type": "input",
                 "mode": "type",
-                "prompt": "Green mic is ON—tell Gemini your story plot first (or type it here):",
+                "prompt": "Green mic is ON—build your story logic out loud (or type here):",
                 "prefill": "",
             }
         )
         self.ui_locked_this_turn.update({"show_choices", "ask_input"})
-        return ui, f'Say plainly in 1-2 short sentences (do NOT suggest plot ideas; the green mic turns on right after you speak): "{spoken}"'
+        return (
+            ui,
+            f'Say ONLY this exact prompt in a calm, matter-of-fact voice (ZERO hype, ZERO plot suggestions; the green mic turns on after you speak): "{spoken}"',
+        )
 
     def finish_oral_intake_to_panels(self, ui: list[dict[str, Any]], lead_in: str = "") -> tuple[list[dict[str, Any]], str]:
         """Locks oral intake permanently and enters full rigorous panel-by-panel writing tutoring."""
@@ -823,7 +1097,9 @@ class SessionController:
         self.project["stage"] = "drafting_panels"
         lp = self.project.setdefault("latent_plan", {})
         lp["ready"] = True
+        lp["pending_repair"] = None
         self.active_mic_request = None
+        self._cached_beat = None
         projects.save_project(self.project, sandbox=self.test_mode)
         ui.append({"type": "tutor_mic", "action": "off"})
         ui.append({"type": "remove", "id": "intake_choices"})
@@ -831,73 +1107,151 @@ class SessionController:
         ui.append({"type": "goal", "text": self.goal_badge()})
         ui, dir_p1 = self._prompt_next_book_panel(ui, resumed=False)
         if lead_in:
-            dir_p1 = f'Start with a brief 1-clause confirmation ("{lead_in}"), then immediately: {dir_p1}'
+            dir_p1 = f'Start with this exact plain statement ("{lead_in}"), then immediately: {dir_p1}'
         return ui, dir_p1
 
-    def _handle_oral_intake_turn(self, raw: str, epoch: int) -> dict[str, Any]:
-        """Processes one upfront oral plot-intake turn: updates tutor-only `latent_plan`, asks at most 3 follow-up probes,
-        then automatically locks into full Panel 1 writing tutoring with zero rewards or drawings during talking."""
+    def try_finish_oral_intake_to_panels(self, epoch: int | None = None) -> dict[str, Any]:
+        """Gates 'Start writing Panel 1' (both UI button and spoken/typed skip) so impulsive taps cannot bypass causal story building!"""
         assert self.project is not None
-        low = raw.lower().strip()
-        if re.search(
-            r"\b(start\s+writing|ready\s+to\s+write|write\s+panel\s*1|let'?s\s+write|skip\s+to\s+panel)\b",
-            low,
-        ):
-            ui_go, dir_go = self.finish_oral_intake_to_panels([], lead_in="Got your plot—let's start writing Panel 1.")
-            return {"epoch": epoch, "kind": "ORAL_INTAKE_COMPLETE", "ui": ui_go, "directive": dir_go}
+        ep = epoch if epoch is not None else self.blackboard.bump_epoch()
+        lp = self.project.setdefault("latent_plan", projects.default_latent_plan())
+        score = int(lp.get("causal_chain_score") or 0)
+        max_raw = int(lp.get("max_raw_turns") or 6)
+        raw_t = int(lp.get("raw_turns") or 0)
+        pend = lp.get("pending_repair")
 
-        lp = dict(self.project.get("latent_plan") or {})
-        max_turns = int(lp.get("max_turns") or 4)
-        turn_num = int(lp.get("turns") or 0) + 1
-        extracted = run_latent_story_intake(self.rec, lp, raw, turn_num=turn_num, max_turns=max_turns)
-        lp = projects.update_latent_plan(self.project, raw, extracted, sandbox=self.test_mode)
-
-        if lp.get("ready") or turn_num >= max_turns:
-            ui_go, dir_go = self.finish_oral_intake_to_panels(
-                [],
-                lead_in="Got your whole story plot in my head—now let's write Panel 1.",
+        if (score >= 3 and pend is None) or raw_t >= max_raw - 1:
+            if score < 3 or pend is not None:
+                lp["incomplete_arc"] = True
+            lead = (
+                "Your story arc connects—now let's write Panel 1."
+                if not lp.get("incomplete_arc")
+                else "Let's start on the ground in Panel 1 and build each cause-and-effect link sentence by sentence."
             )
-            return {"epoch": epoch, "kind": "ORAL_INTAKE_COMPLETE", "ui": ui_go, "directive": dir_go}
+            ui_go, dir_go = self.finish_oral_intake_to_panels([], lead_in=lead)
+            return {"epoch": ep, "kind": "ORAL_INTAKE_COMPLETE", "ui": ui_go, "directive": dir_go}
 
-        self.last_kid_kind = "ORAL_INTAKE_TURN"
+        # Block premature escape! Increment raw_turns so repeated insistence eventually hits the safety valve cleanly.
+        lp["raw_turns"] = raw_t + 1
+        projects.save_project(self.project, sandbox=self.test_mode)
+        missing_q = self._missing_oral_pillar_question(lp)
+        spoken = f"Hold up—we don't have a connected story arc yet, so Panel 1 isn't unlocked. {missing_q}"
+        self.last_kid_kind = "ORAL_INTAKE_PUSHBACK"
         self.draw_unlocked = False
         self.active_mic_request = {"purpose": "oral_intake", "sentence": ""}
-        spoken = extracted["spoken_question"]
-        ui_in: list[dict[str, Any]] = [
+        ui_blk: list[dict[str, Any]] = [
             {"type": "remove", "id": "intake_choices"},
             {"type": "item", "item": projects.project_ui_payload(self.project)},
             {"type": "goal", "text": self.goal_badge()},
-            {
-                "type": "item",
-                "item": {
-                    "id": "intake_choices",
-                    "kind": "choices",
-                    "prompt": "",
-                    "options": ["Start writing Panel 1 →"],
-                },
-            },
             {
                 "type": "tutor_mic",
                 "action": "on",
                 "purpose": "oral_intake",
                 "target_word": "",
                 "sentence": "",
-                "prompt": "Answer out loud into the green mic",
+                "prompt": missing_q,
             },
             {
                 "type": "input",
                 "mode": "type",
-                "prompt": f"Plot intake ({turn_num}/{max_turns}): answer via the green mic (or tap 'Start writing Panel 1 →' if that's the whole plot):",
+                "prompt": f"Story Logic ({score}/4): {missing_q}",
                 "prefill": "",
             },
         ]
+        self.ui_locked_this_turn.update({"show_choices", "ask_input"})
+        return {
+            "epoch": ep,
+            "kind": self.last_kid_kind,
+            "spoken_fallback": spoken,
+            "ui": ui_blk,
+            "directive": (
+                f'CRITICAL EDITOR PUSHBACK — Say ONLY this exact response in a calm, matter-of-fact adult voice '
+                f'(ZERO praise, ZERO hype, ZERO plot suggestions): "{spoken}"'
+            ),
+        }
+
+    def _handle_oral_intake_turn(self, raw: str, epoch: int) -> dict[str, Any]:
+        """Evaluates one oral story-building turn: rejects unconnected associative chains ('cat pooped, farted, jumped on a rocket')
+        with Socratic causal pushback, enforces a 3-rung scaffold + 6-turn ceiling, and unlocks Panel 1 once the arc connects."""
+        assert self.project is not None
+        low = raw.lower().strip()
+        if re.search(
+            r"\b(start\s+writing|ready\s+to\s+write|write\s+panel\s*1|let'?s\s+write|skip\s+to\s+panel|just\s+write)\b",
+            low,
+        ):
+            return self.try_finish_oral_intake_to_panels(epoch=epoch)
+
+        lp_before = dict(self.project.get("latent_plan") or projects.default_latent_plan())
+        extracted = run_latent_story_intake(self.rec, lp_before, raw)
+        lp = projects.update_latent_plan(self.project, raw, extracted, sandbox=self.test_mode)
+
+        pend = lp.get("pending_repair") if isinstance(lp.get("pending_repair"), dict) else None
+        gap_attempts = int((pend or {}).get("attempts") or 0)
+
+        # Rung 3 / Safety Ceiling: 3 failed tries on the same causal gap OR 6 raw oral turns -> scope down cleanly & lock into Panel 1!
+        if lp.get("ready") or gap_attempts >= 3:
+            if gap_attempts >= 3 or lp.get("incomplete_arc"):
+                lp["incomplete_arc"] = True
+                lead = "We still haven't connected that jump, so let's start at the beginning in Panel 1 and build how one event causes the next sentence by sentence."
+            else:
+                lead = "Okay, your whole story arc connects from start to payoff—now let's write Panel 1."
+            ui_go, dir_go = self.finish_oral_intake_to_panels([], lead_in=lead)
+            return {"epoch": epoch, "kind": "ORAL_INTAKE_COMPLETE", "ui": ui_go, "directive": dir_go}
+
+        accepted = bool(extracted.get("accepted_beat"))
+        self.last_kid_kind = "ORAL_INTAKE_TURN" if accepted else "ORAL_INTAKE_PUSHBACK"
+        self.draw_unlocked = False
+        self.active_mic_request = {"purpose": "oral_intake", "sentence": ""}
+        spoken = _strip_sycophancy(extracted["spoken_question"])
+        score = int(lp.get("causal_chain_score") or 0)
+        can_start = bool(score >= 3 and pend is None)
+
+        ui_in: list[dict[str, Any]] = [
+            {"type": "remove", "id": "intake_choices"},
+            {"type": "item", "item": projects.project_ui_payload(self.project)},
+            {"type": "goal", "text": self.goal_badge()},
+        ]
+        if can_start:
+            ui_in.append(
+                {
+                    "type": "item",
+                    "item": {
+                        "id": "intake_choices",
+                        "kind": "choices",
+                        "prompt": "",
+                        "options": ["Start writing Panel 1 →"],
+                    },
+                }
+            )
+        ui_in.extend(
+            [
+                {
+                    "type": "tutor_mic",
+                    "action": "on",
+                    "purpose": "oral_intake",
+                    "target_word": "",
+                    "sentence": "",
+                    "prompt": "Answer out loud into the green mic",
+                },
+                {
+                    "type": "input",
+                    "mode": "type",
+                    "prompt": f"Story Logic ({score}/4 pillars): {spoken[:115]}",
+                    "prefill": "",
+                },
+            ]
+        )
         self.ui_locked_this_turn.update({"show_choices", "ask_input"})
         return {
             "epoch": epoch,
             "kind": self.last_kid_kind,
             "spoken_fallback": spoken,
             "ui": ui_in,
-            "directive": f'Ask this single plain follow-up question in 1-2 short sentences (do NOT suggest plot ideas; the green mic turns on automatically after you speak): "{spoken}"',
+            "directive": (
+                f'CRITICAL STORY EDITOR MODE — Say ONLY this exact response in a calm, dry, matter-of-fact adult voice '
+                f'(ZERO praise, ZERO "Wow/Yes/Gold/Love it/Hilarious/Awesome", ZERO laughing or scolding gross humor, '
+                f'ZERO plot suggestions; green mic turns on after you speak): "{spoken}"'
+            ),
         }
 
     def _prompt_tutorial_step(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
@@ -1030,6 +1384,52 @@ class SessionController:
             return b
         return ai_direct_next_beat(self.rec, goal_desc, self.active_story, spine_context=self.spine_summary(), connector_goal=conns)
 
+    def _latent_panel_goal(self, next_pnum: int) -> tuple[str, str]:
+        """Builds a story-aware Socratic prompt goal + connector target from `latent_plan` so oral causal links become written causal clauses."""
+        assert self.project is not None
+        lp = self.project.get("latent_plan") or {}
+        scenes = [s for s in (lp.get("scenes") or []) if isinstance(s, dict) and s.get("beat_summary")]
+        ch_num = len(self.project.get("chapters") or [1])
+        tier = self.current_tier()
+
+        if next_pnum == 1:
+            sc0 = scenes[0] if scenes else {}
+            focus_note = f' (Opening beat: "{sc0.get("beat_summary")}")' if sc0.get("beat_summary") else ""
+            conns = sc0.get("target_connector") or "when | because"
+            goal = (
+                f"We are starting Chapter 1, Panel 1 of '{self.project.get('title')}'{focus_note}. "
+                "Ask ONE crisp, open zoom-in question establishing who the character is and what kicks off the starting problem—"
+                "NEVER quote a finished sentence for them to copy and NEVER gush!"
+            )
+            return goal, conns
+
+        # Pick the active or next causal beat in their arc (zooming smoothly across 100 panels)
+        sc_idx = min(len(scenes) - 1, max(0, (next_pnum - 1) // 2)) if scenes else -1
+        active_sc = scenes[sc_idx] if sc_idx >= 0 else {}
+        oral_brg = str(active_sc.get("oral_causal_bridge") or "").strip()
+        target_c = str(active_sc.get("target_connector") or ("because" if oral_brg else "when | because | so")).strip()
+        speech_cue = (
+            ' Invite them to put what a character shouts in "quotation marks" if they want a comic speech bubble on the panel.'
+            if next_pnum % 2 == 0
+            else (" Invite starting with where or when the moment happens." if tier >= 4 else "")
+        )
+        bridge_note = (
+            f' In oral planning they explained the causal link ("{oral_brg[:120]}")—ask ONE pinpoint WHY or HOW question '
+            f"that prompts them to connect Panel {next_pnum - 1} to this moment using '{target_c}'!"
+            if oral_brg
+            else (
+                " Because their oral arc stopped early, ask ONE pinpoint WHY or HOW question requiring them to explain what CAUSES the next moment!"
+                if lp.get("incomplete_arc")
+                else f" Ask ONE specific, curious Socratic question ('why', 'how', 'when') zooming into the immediate next moment around Arc Beat #{sc_idx + 1} without jumping ahead to the ending!"
+            )
+        )
+        goal = (
+            f"We are on Chapter {ch_num}, Panel {next_pnum} of '{self.project.get('title')}'. "
+            f"Reference briefly what they JUST wrote in Panel {next_pnum - 1}.{bridge_note}"
+            f" NEVER give them a sentence to copy and NEVER use hype!{speech_cue}"
+        )
+        return goal, target_c
+
     def _next_goal_preview(self) -> str:
         if not self.project:
             return "Ask what happens next in the story."
@@ -1040,9 +1440,8 @@ class SessionController:
         if kind == "minecraft_diary":
             return f"Ask what happened next in Minecraft today for Diary Panel {projects.total_panels(self.project) + 2}."
         if kind == "story_jam_novel":
-            pnum = projects.total_panels(self.project) + 2
-            speech_cue = ' (Invite adding what a character shouts in "quote marks" for a speech bubble!)' if pnum >= 2 else ""
-            return f"Using their private Latent Story Structure, ask ONE open why/how/when/what-happens-next question for Panel {pnum} (never give them a sentence to copy!).{speech_cue}"
+            g_txt, _ = self._latent_panel_goal(projects.total_panels(self.project) + 2)
+            return g_txt
         if kind == "epic_graphic_novel":
             if st == "spine_beginning":
                 return "Jump to the Big Finale: how does this whole crazy story finally end up?"
@@ -1525,26 +1924,11 @@ class SessionController:
             conns = "when | because | so"
 
         if has_latent:
-            if next_pnum == 1:
-                zoom_goal = (
-                    f"We are starting Chapter 1, Panel 1 of the student's 100-page comic '{self.project.get('title')}'. "
-                    "Use your private Latent Story Structure above ONLY to ask ONE specific, open zoom-in question about the very opening moment of THEIR story "
-                    "(where the main character starts, what kicks off the first problem, or why)—NEVER quote a pre-written sentence for them to copy! "
-                    f"{tier_req}"
-                )
-            else:
-                zoom_goal = (
-                    f"We are on Chapter {ch_num}, Panel {next_pnum} of '{self.project.get('title')}'. "
-                    "Look at what the student JUST wrote in Panel "
-                    f"{next_pnum - 1} and where that sits inside your private Latent Story Structure above. "
-                    "Ask ONE specific, curious Socratic question ('why', 'how', 'when', 'what happens the second...') that zooms into the immediate next comic moment "
-                    "without jumping ahead to the distant ending and NEVER giving them a sentence to copy! "
-                    f"{tier_req}"
-                )
+            zoom_goal, conns = self._latent_panel_goal(next_pnum)
             beat = self._pop_or_direct_beat(zoom_goal, conns)
             self._beat_input(ui, beat)
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
-            return ui, f"Deliver this specific, story-aware prompt for Panel {next_pnum} in 1–2 natural sentences: {beat['spoken_prompt']}"
+            return ui, f"Deliver this specific, story-aware prompt for Panel {next_pnum} in 1–2 calm, matter-of-fact sentences (zero hype): {beat['spoken_prompt']}"
 
         if ch_num == 1:
             act_name = "Chapter 1 (The Kickoff)"
@@ -3860,11 +4244,64 @@ class SessionController:
                     "directive": f"Great structure ('{raw}')—run a quick Tier 4 Author's Revision pass: ask them to swap '{w0}' in the pre-filled box for a more vivid, specific word.",
                 }
 
+        # Gate 3b: Oral-to-Written Causal Bridge Carry-Over on `story_jam_novel` Panels!
+        # If they orally invented a causal link (or suddenly jump settings like landing on a rocket) and wrote a bare non-causal sentence,
+        # nudge ONCE (only when no spelling/grammar revision already fired this turn, so we never stack a multi-step gauntlet!).
+        if (
+            self.project
+            and self.project.get("kind") == "story_jam_novel"
+            and self.project.get("stage") == "drafting_panels"
+            and not self.causal_nudged_this_item
+            and not self.had_revision
+            and not has_conn
+            and not re.search(r"\b(because|since|so|but|when|while|after|until|although|though)\b", raw, re.I)
+        ):
+            next_pnum_c = projects.total_panels(self.project) + 1
+            lp_c = self.project.get("latent_plan") or {}
+            scenes_c = [s for s in (lp_c.get("scenes") or []) if isinstance(s, dict)]
+            sc_idx_c = min(len(scenes_c) - 1, max(0, (next_pnum_c - 1) // 2)) if scenes_c else -1
+            active_sc_c = scenes_c[sc_idx_c] if sc_idx_c >= 0 else {}
+            prev_panel_txt = (self.active_story[-1] if self.active_story else "").lower()
+            jump_m = _HIGH_SCALE_JUMP_NOUNS.search(raw)
+            has_unexplained_jump = bool(jump_m and jump_m.group(1).lower() not in prev_panel_txt)
+            needs_bridge = next_pnum_c >= 2 and (
+                bool(active_sc_c.get("oral_causal_bridge")) or bool(lp_c.get("incomplete_arc")) or has_unexplained_jump
+            )
+            if needs_bridge:
+                self.causal_nudged_this_item = True
+                self.had_revision = True
+                self.last_kid_kind = "CAUSAL_BRIDGE_UPGRADE"
+                self.draw_unlocked = False
+                raw_conn = str(active_sc_c.get("target_connector") or "because").split("|")[0].strip().lower()
+                conn_word = raw_conn if raw_conn in ("because", "so", "but", "when", "until", "although") else "because"
+                prefill_c = f"{raw.rstrip('.!? ')} {conn_word} "
+                spoken_c = (
+                    f"Hold on—right now '{raw}' jumps ahead without showing the cause and effect. "
+                    f"Add '{conn_word}' at the end in your box so the reader sees HOW or WHY that happened."
+                )
+                ui_actions.append(
+                    {
+                        "type": "input",
+                        "mode": "type",
+                        "prompt": f"Connect the cause and effect: finish '{conn_word} …' in your box and end with a period:",
+                        "prefill": prefill_c,
+                    }
+                )
+                self.ui_locked_this_turn.add("ask_input")
+                return {
+                    "epoch": epoch,
+                    "kind": self.last_kid_kind,
+                    "spoken_fallback": spoken_c,
+                    "ui": ui_actions,
+                    "directive": f'Say ONLY this plain editor nudge (zero hype, zero plot suggestions): "{spoken_c}"',
+                }
+
         # ---------------- 8. VERIFIED COMPLETE STEP! ----------------
-        if self.hint_step == 0 and (coach_accepted or not self.tier_nudged_this_item) and not resolved_inline_word:
+        if self.hint_step == 0 and (coach_accepted or not self.tier_nudged_this_item) and not self.causal_nudged_this_item and not resolved_inline_word:
             self.first_try_streak += 1
         self.hint_step = 0
         self.tier_nudged_this_item = False
+        self.causal_nudged_this_item = False
         self.engaged_draft = ""
         self.pending_spell_targets = []
         self.pending_spell_sentence = ""

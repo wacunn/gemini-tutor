@@ -909,9 +909,13 @@ class TutorSession:
             j_act = str(m.get("action") or "").strip()
             if j_act == "start_writing" and self.ctrl.project.get("stage") in ("oral_intake", "verbal_jam"):
                 self.kid_events += 1
-                ui_acts, dir_w = await asyncio.to_thread(self.ctrl.finish_oral_intake_to_panels, [])
-                await self.apply_controller_ui(ui_acts, epoch=self.ctrl.blackboard.bump_epoch())
-                await self.from_kid(f"[{self.name} is ready to start writing Panel 1]", dir_w)
+                plan_w = await asyncio.to_thread(self.ctrl.try_finish_oral_intake_to_panels, None)
+                await self.apply_controller_ui(plan_w["ui"], epoch=plan_w.get("epoch"))
+                await self.from_kid(
+                    f"[{self.name} clicked Start writing Panel 1]",
+                    plan_w["directive"],
+                    spoken_fallback=plan_w.get("spoken_fallback", ""),
+                )
                 return
 
         elif kind == "request_dialogue_mic":

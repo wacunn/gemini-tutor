@@ -313,7 +313,7 @@ def is_project_nonempty(proj: dict[str, Any]) -> bool:
     if total_panels(proj) > 0:
         return True
     lp = proj.get("latent_plan") or {}
-    if lp.get("turns") or proj.get("jam_beats") or proj.get("tutorial_topic"):
+    if lp.get("raw_turns") or lp.get("turns") or proj.get("jam_beats") or proj.get("tutorial_topic"):
         return True
     sp = proj.get("spine") or {}
     if sp.get("beginning") or sp.get("end") or sp.get("middle") or middle_beats_list(sp):
@@ -332,8 +332,8 @@ def project_progress_label(proj: dict[str, Any]) -> str:
     if kind == "story_jam_novel":
         if stage in ("oral_intake", "verbal_jam") and pcount == 0:
             lp = proj.get("latent_plan") or {}
-            turns = int(lp.get("turns") or 0)
-            return f"{badge} · Plot intake ({turns}/{int(lp.get('max_turns') or 4)})"
+            score = int(lp.get("causal_chain_score") or 0)
+            return f"{badge} · Story logic ({score}/4)"
         n_ch = len(proj.get("chapters") or [1])
         return f"{badge} · Ch.{n_ch} · {pcount} panel{'s' if pcount != 1 else ''}"
     if kind == "how_to_tutorial":
@@ -354,6 +354,38 @@ def project_progress_label(proj: dict[str, Any]) -> str:
         return f"{badge} · {pcount}/4 pages"
     n_ch = len(proj.get("chapters") or [1])
     return f"{badge} · Ch.{n_ch} · {pcount} panel{'s' if pcount != 1 else ''}"
+
+
+def default_latent_plan() -> dict[str, Any]:
+    return {
+        "turns": 0,
+        "raw_turns": 0,
+        "max_turns": 4,
+        "max_raw_turns": 6,
+        "raw_log": [],
+        "pillars": {
+            "protagonist_and_problem": False,
+            "causal_escalation": False,
+            "obstacle_or_stakes": False,
+            "earned_resolution": False,
+        },
+        "pillar_tags": {
+            "protagonist_and_problem": "",
+            "causal_escalation": "",
+            "obstacle_or_stakes": "",
+            "earned_resolution": "",
+        },
+        "causal_chain_score": 0,
+        "last_diagnosis": "",
+        "pending_repair": None,
+        "incomplete_arc": False,
+        "premise": "",
+        "characters": [],
+        "world_rules": "",
+        "scenes": [],
+        "ending": "",
+        "ready": False,
+    }
 
 
 def _today_short() -> str:
@@ -425,17 +457,7 @@ def create_project(
         "title": clean_title or default_titles.get(kind, "Untitled Project"),
         "custom_titled": bool(clean_title),
         "tutorial_topic": clean_title if kind == "how_to_tutorial" and clean_title else "",
-        "latent_plan": {
-            "turns": 0,
-            "max_turns": 4,
-            "raw_log": [],
-            "premise": "",
-            "characters": [],
-            "world_rules": "",
-            "scenes": [],
-            "ending": "",
-            "ready": False,
-        },
+        "latent_plan": default_latent_plan(),
         "author": author or "Author",
         "audience": audience or "Family",
         "style_key": skey,
@@ -579,61 +601,115 @@ def all_panels(proj: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+_TAG_STOP_WORDS = {
+    "the", "a", "an", "and", "then", "but", "so", "because", "when", "while", "if",
+    "is", "are", "was", "were", "has", "had", "have", "gets", "got", "went", "goes",
+    "jumped", "jumps", "he", "she", "it", "they", "his", "her", "their", "into", "onto",
+    "on", "in", "at", "to", "from", "with", "for", "of", "very", "really", "just",
+}
+
+
+def sanitize_short_tag(tag: str, raw_corpus: str = "") -> str:
+    """Strictly caps visual working-memory tags to <= 2 lowercase content words from the child's own speech—never a copyable clause!"""
+    words = [w.lower() for w in re.findall(r"[A-Za-z0-9']+", tag or "") if w.lower() not in _TAG_STOP_WORDS]
+    if raw_corpus:
+        src_stems = {w.lower()[:4] for w in re.findall(r"[A-Za-z0-9']+", raw_corpus) if len(w) >= 3}
+        if src_stems:
+            words = [w for w in words if len(w) < 4 or w[:4] in src_stems]
+    return " ".join(words[:2])[:22]
+
+
 def update_latent_plan(
     proj: dict[str, Any],
     utterance: str,
     extracted: dict[str, Any],
     sandbox: bool | None = None,
 ) -> dict[str, Any]:
-    """Updates the tutor-internal `proj['latent_plan']` from an oral story intake turn (NEVER exposed as copyable sentences on the child's screen!)."""
-    lp = proj.setdefault(
-        "latent_plan",
-        {
-            "turns": 0,
-            "max_turns": 4,
-            "raw_log": [],
-            "premise": "",
-            "characters": [],
-            "world_rules": "",
-            "scenes": [],
-            "ending": "",
-            "ready": False,
-        },
-    )
-    lp["turns"] = int(lp.get("turns") or 0) + 1
+    """Updates `proj['latent_plan']` with causal gatekeeping: broken/unconnected heaps go to `pending_repair` instead of `scenes`!"""
+    base = default_latent_plan()
+    existing = proj.get("latent_plan") or {}
+    for k, v in base.items():
+        if k not in existing:
+            existing[k] = dict(v) if isinstance(v, dict) else (list(v) if isinstance(v, list) else v)
+    lp = proj["latent_plan"] = existing
+
+    lp["raw_turns"] = int(lp.get("raw_turns") or 0) + 1
     if utterance.strip():
         raw_log = list(lp.get("raw_log") or [])
         raw_log.append(utterance.strip()[:450])
-        lp["raw_log"] = raw_log[-8:]
-    if extracted.get("premise"):
-        lp["premise"] = str(extracted["premise"]).strip()[:320]
+        lp["raw_log"] = raw_log[-10:]
+    corpus = " ".join(lp.get("raw_log") or [])
+
     if isinstance(extracted.get("characters"), list) and extracted["characters"]:
         chars = [str(c).strip()[:64] for c in extracted["characters"] if str(c).strip()]
         if chars:
             lp["characters"] = chars[:8]
             proj["characters"] = ", ".join(chars[:6])[:180]
-    if extracted.get("world_rules"):
-        lp["world_rules"] = str(extracted["world_rules"]).strip()[:280]
-    if extracted.get("ending"):
-        lp["ending"] = str(extracted["ending"]).strip()[:260]
-    if isinstance(extracted.get("scenes"), list) and extracted["scenes"]:
-        clean_scenes = []
-        for s in extracted["scenes"][:24]:
-            if isinstance(s, dict) and s.get("beat_summary"):
-                clean_scenes.append(
-                    {
-                        "beat_summary": str(s.get("beat_summary") or "").strip()[:180],
-                        "socratic_angle": str(s.get("socratic_angle") or "").strip()[:180],
-                        "target_connector": str(s.get("target_connector") or "when").strip()[:32],
-                    }
-                )
-        if clean_scenes:
-            lp["scenes"] = clean_scenes
-    if extracted.get("ready") or lp["turns"] >= int(lp.get("max_turns") or 4):
+
+    accepted = bool(extracted.get("accepted_beat"))
+    diag = str(extracted.get("diagnosis") or ("solid_beat" if accepted else "causal_jump")).strip()
+    lp["last_diagnosis"] = diag
+
+    ext_pillars = extracted.get("pillars") if isinstance(extracted.get("pillars"), dict) else {}
+    ext_tags = extracted.get("pillar_tags") if isinstance(extracted.get("pillar_tags"), dict) else {}
+
+    if accepted:
+        lp["turns"] = int(lp.get("turns") or 0) + 1
+        lp["pending_repair"] = None
+        for pk in ("protagonist_and_problem", "causal_escalation", "obstacle_or_stakes", "earned_resolution"):
+            if ext_pillars.get(pk):
+                lp["pillars"][pk] = True
+            if ext_tags.get(pk):
+                clean_tg = sanitize_short_tag(str(ext_tags[pk]), corpus)
+                if clean_tg:
+                    lp["pillar_tags"][pk] = clean_tg
+        if extracted.get("premise"):
+            lp["premise"] = str(extracted["premise"]).strip()[:320]
+        if extracted.get("world_rules"):
+            lp["world_rules"] = str(extracted["world_rules"]).strip()[:280]
+        if extracted.get("ending"):
+            lp["ending"] = str(extracted["ending"]).strip()[:260]
+        if isinstance(extracted.get("scenes"), list) and extracted["scenes"]:
+            clean_scenes = []
+            for s in extracted["scenes"][:24]:
+                if isinstance(s, dict) and s.get("beat_summary"):
+                    clean_scenes.append(
+                        {
+                            "beat_summary": str(s.get("beat_summary") or "").strip()[:180],
+                            "oral_causal_bridge": str(s.get("oral_causal_bridge") or "").strip()[:180],
+                            "socratic_angle": str(s.get("socratic_angle") or "").strip()[:180],
+                            "target_connector": str(s.get("target_connector") or "because").strip()[:32],
+                        }
+                    )
+            if clean_scenes:
+                lp["scenes"] = clean_scenes
+        title_hint = str(extracted.get("book_title") or "").strip()
+        if title_hint and not proj.get("custom_titled") and proj.get("title", "").startswith("Untitled"):
+            proj["title"] = title_hint[:64]
+    else:
+        prev_rep = lp.get("pending_repair") if isinstance(lp.get("pending_repair"), dict) else {}
+        prev_attempts = int(prev_rep.get("attempts") or 0)
+        raw_unlinked = extracted.get("unlinked_elements") if isinstance(extracted.get("unlinked_elements"), list) else []
+        clean_unlinked = [sanitize_short_tag(str(u), corpus) or sanitize_short_tag(str(u)) for u in raw_unlinked[:2]]
+        clean_unlinked = [u for u in clean_unlinked if u]
+        lp["pending_repair"] = {
+            "raw": utterance.strip()[:300],
+            "unlinked_elements": clean_unlinked,
+            "diagnosis": diag,
+            "attempts": prev_attempts + 1,
+        }
+
+    score = sum(1 for v in (lp.get("pillars") or {}).values() if v)
+    lp["causal_chain_score"] = score
+
+    if accepted and score >= 4 and lp["pending_repair"] is None and extracted.get("ready"):
         lp["ready"] = True
-    title_hint = str(extracted.get("book_title") or "").strip()
-    if title_hint and not proj.get("custom_titled") and proj.get("title", "").startswith("Untitled"):
-        proj["title"] = title_hint[:64]
+    elif lp["raw_turns"] >= int(lp.get("max_raw_turns") or 6):
+        # ADHD anti-loop safety ceiling: scope down to Panel 1 without faking pillars or rubber-stamping broken tails!
+        lp["ready"] = True
+        if score < 4 or lp["pending_repair"] is not None:
+            lp["incomplete_arc"] = True
+
     save_project(proj, sandbox=sandbox)
     return lp
 
@@ -1142,6 +1218,42 @@ def project_ui_payload(proj: dict[str, Any]) -> dict[str, Any]:
         c_copy["panels"] = p_list
         norm_chapters.append(c_copy)
     skey = proj.get("style_key") or DEFAULT_STYLE_KEY
+    oral_active = proj.get("stage") in ("oral_intake", "verbal_jam")
+    lp = proj.get("latent_plan") or {}
+    pillars_map = lp.get("pillars") or {}
+    tags_map = lp.get("pillar_tags") or {}
+    pend = lp.get("pending_repair") if isinstance(lp.get("pending_repair"), dict) else None
+    pillar_defs = [
+        ("protagonist_and_problem", "1. Who + Problem"),
+        ("causal_escalation", "2. Why It Gets Worse"),
+        ("obstacle_or_stakes", "3. Big Obstacle"),
+        ("earned_resolution", "4. Earned Ending"),
+    ]
+    intake_pillars = []
+    if oral_active:
+        first_unlocked_marked = False
+        for pkey, plabel in pillar_defs:
+            locked = bool(pillars_map.get(pkey))
+            needs_link = False
+            if not locked and pend and not first_unlocked_marked:
+                needs_link = True
+                first_unlocked_marked = True
+            intake_pillars.append(
+                {
+                    "key": pkey,
+                    "label": plabel,
+                    "locked": locked,
+                    "needs_link": needs_link,
+                    "tag": sanitize_short_tag(str(tags_map.get(pkey) or "")),
+                }
+            )
+    gap_pair = ""
+    if oral_active and pend and pend.get("unlinked_elements"):
+        els = [e for e in pend["unlinked_elements"] if e]
+        gap_pair = f"{els[0]} → {els[1]}?" if len(els) >= 2 else f"{els[0]} → ?"
+    score = int(lp.get("causal_chain_score") or 0)
+    can_start_writing = bool(oral_active and score >= 3 and pend is None)
+
     return {
         "id": proj["id"],
         "kind": "book_project",
@@ -1157,9 +1269,11 @@ def project_ui_payload(proj: dict[str, Any]) -> dict[str, Any]:
         "art_styles": ART_STYLES,
         "stage": proj.get("stage", "drafting_panels"),
         "spine": sp,
-        "oral_intake_active": proj.get("stage") in ("oral_intake", "verbal_jam"),
-        "intake_turns": int((proj.get("latent_plan") or {}).get("turns") or 0),
-        "intake_max_turns": int((proj.get("latent_plan") or {}).get("max_turns") or 4),
+        "oral_intake_active": oral_active,
+        "intake_score": score,
+        "intake_pillars": intake_pillars,
+        "intake_gap_pair": gap_pair,
+        "intake_can_start_writing": can_start_writing,
         "tutorial_topic": proj.get("tutorial_topic") or "",
         "cover_src": f"/media/{proj['cover_image']}.jpg" if proj.get("cover_image") else None,
         "codex_sketch_src": proj.get("codex_sketch_src"),

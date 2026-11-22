@@ -1649,13 +1649,29 @@ function renderBookProject(b) {
         </div>`
       : "";
 
+  const intakePillars = Array.isArray(b.intake_pillars) ? b.intake_pillars : [];
+  const pillarsHtml = intakePillars
+    .map((p) => {
+      const cls = p.locked ? "intake-pillar locked" : p.needs_link ? "intake-pillar needs-link" : "intake-pillar";
+      const icon = p.locked ? "✓" : p.needs_link ? "⚠" : "○";
+      const tag = p.tag ? `<span class="intake-pillar-tag">${esc(p.tag)}</span>` : "";
+      return `<div class="${cls}"><span><strong>${icon}</strong> ${esc(p.label || "")}</span>${tag}</div>`;
+    })
+    .join("");
+  const gapHtml = b.intake_gap_pair
+    ? `<div class="intake-gap-alert">⚠ Missing cause-and-effect link: <strong>${esc(b.intake_gap_pair)}</strong></div>`
+    : "";
   const intakeHtml = b.oral_intake_active
     ? `<div class="intake-status-card">
-        <div>
-          <strong style="color:#8ab4f8">Talking Through Your Plot First (${Number(b.intake_turns || 0)}/${Number(b.intake_max_turns || 4)})</strong>
-          <div class="muted" style="font-size:.84rem;margin-top:3px">Tell Gemini your big story idea out loud so Gemini knows where it's going—then Panel 1 unlocks for writing.</div>
+        <div class="intake-top-row">
+          <div>
+            <strong style="color:#8ab4f8">Story Logic Check Before Panel 1 (${Number(b.intake_score || 0)}/4 connected)</strong>
+            <div class="muted" style="font-size:.83rem;margin-top:2px">Every beat must connect by cause and effect (<em>because / so / but</em>)—not random things in a row.</div>
+          </div>
+          ${b.intake_can_start_writing ? `<button type="button" class="let-save-btn" data-jam-write="1">Start writing Panel 1 →</button>` : ""}
         </div>
-        ${Number(b.intake_turns || 0) >= 1 ? `<button type="button" class="let-save-btn" data-jam-write="1">Start writing Panel 1 →</button>` : ""}
+        ${pillarsHtml ? `<div class="intake-pillar-grid">${pillarsHtml}</div>` : ""}
+        ${gapHtml}
       </div>`
     : "";
 
@@ -1666,7 +1682,7 @@ function renderBookProject(b) {
   const progHtml = `<div class="book-prog"><div class="book-prog-fill" style="width:${pct}%"></div></div>`;
 
   const styles = Array.isArray(b.art_styles) ? b.art_styles : [];
-  const showStyles = state.styleDrawerOpen === null ? stepsDone === 0 : !!state.styleDrawerOpen;
+  const showStyles = state.styleDrawerOpen === null ? (stepsDone === 0 && !b.oral_intake_active) : !!state.styleDrawerOpen;
   const stylesHtml = styles.length
     ? `<div class="style-drawer" ${showStyles ? "" : "hidden"}>
         <div class="muted" style="font-size:.82rem;margin-bottom:8px">Pick your comic art style (click any example):</div>

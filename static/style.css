@@ -1934,7 +1934,7 @@ body.fresh .dock {
   }
 }
 
-/* ---------- Oral Plot Intake Status & Written How-To Guide Document ---------- */
+/* ---------- Oral Plot Intake Story-Logic Bar & Written How-To Guide Document ---------- */
 .intake-status-card {
   background: #1e2126;
   border: 1.5px solid rgba(138, 180, 248, 0.45);
@@ -1942,10 +1942,71 @@ body.fresh .dock {
   padding: 14px 16px;
   margin-bottom: 14px;
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.intake-top-row {
+  display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.intake-pillar-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .intake-pillar-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.intake-pillar {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid #3c4043;
+  border-radius: 10px;
+  padding: 8px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.86rem;
+  color: var(--text-2);
+}
+
+.intake-pillar.locked {
+  border-color: rgba(129, 201, 149, 0.55);
+  background: rgba(52, 168, 83, 0.1);
+  color: #a8dab5;
+}
+
+.intake-pillar.needs-link {
+  border-color: rgba(253, 214, 99, 0.65);
+  background: rgba(253, 214, 99, 0.1);
+  color: #fde293;
+}
+
+.intake-pillar-tag {
+  font-size: 0.76rem;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.intake-gap-alert {
+  background: rgba(253, 214, 99, 0.1);
+  border: 1px solid rgba(253, 214, 99, 0.45);
+  border-radius: 9px;
+  padding: 7px 11px;
+  font-size: 0.85rem;
+  color: #fde293;
 }
 
 .howto-doc {

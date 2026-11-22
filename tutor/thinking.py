@@ -265,7 +265,16 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
         "drop": ["drops", "dropped"],
         "stop": ["stops", "stopped"],
     }
-    _subj_block = {"i", "you", "we", "they", "who", "what", "when", "where", "why", "how", "and", "but", "so", "because", "if", "while", "then", "to", "can", "could", "will", "would", "should", "did", "does", "do", "dont", "don't", "didnt", "didn't", "cant", "can't", "wont", "won't", "not", "never", "please", "lets", "let's"}
+    _subj_block = {
+        "i", "you", "we", "they", "who", "what", "when", "where", "why", "how", "and", "but", "so",
+        "because", "if", "while", "then", "to", "can", "could", "will", "would", "should", "did", "does",
+        "do", "dont", "don't", "didnt", "didn't", "cant", "can't", "wont", "won't", "not", "never",
+        "please", "lets", "let's",
+        # Adjectives so `<det> <adj> <noun_homograph>` ("his giant fart blasted", "a big jump saved") never misflags the noun as a verb!
+        "big", "giant", "huge", "tiny", "little", "small", "old", "new", "good", "bad", "red", "blue",
+        "green", "black", "white", "dark", "loud", "super", "stinky", "smelly", "gross", "crazy", "wild",
+        "secret", "magic", "fast", "slow", "hot", "cold", "long", "high", "first", "next", "last", "one",
+    }
     # Match either: (He|She|It|<CapitalizedSingularName>) <bare_verb> OR (The|A|An|My|His|Her) <singular_noun> <bare_verb>
     for m_vb in re.finditer(
         r"(?:(?:\b(He|She|It)\b|\b([A-Z][a-z]{2,14}))|\b(?:the|a|an|my|his|her)\s+([a-z]{2,12}))\s+([a-z]{2,8})\b",
@@ -280,6 +289,10 @@ def _post_verify_check(raw_text: str, out: dict[str, Any]) -> dict[str, Any]:
             continue
         # Skip plural nouns ending in 's' (except 'boss', 'princess', 'class', 'grass')
         if subj_word.lower().endswith("s") and not subj_word.lower().endswith(("ss", "us")):
+            continue
+        # If `vb` is immediately followed by a real finite/past/auxiliary verb (e.g. "his toxic fart blasted"), `vb` is a NOUN, not a verb!
+        after_txt = text[m_vb.end() :].lstrip()
+        if re.match(r"^(?:is|was|are|were|has|had|can|could|will|would|did|got|went|came|made|fell|hit|blew|[a-z]{3,}ed)\b", after_txt, re.I):
             continue
         # Ensure not preceded by "and" (compound plural subject like "Dylan and Bob get") or auxiliary "does Dylan get"
         before_txt = text[: m_vb.start()].lower().rstrip()
