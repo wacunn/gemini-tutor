@@ -181,7 +181,7 @@ function renderHeroStarters(savedProjects) {
     : "";
   box.innerHTML = `${contPill}
     <button type="button" class="hero-pill" data-new-kind="epic_graphic_novel">Comic book</button>
-    <button type="button" class="hero-pill" data-new-kind="story_jam_novel">Story jam (talk → comic)</button>
+    <button type="button" class="hero-pill" data-new-kind="story_jam_novel">100-page comic (talk plot first)</button>
     <button type="button" class="hero-pill" data-new-kind="how_to_tutorial">How-to guide</button>
     <button type="button" class="hero-pill" data-new-kind="minecraft_diary">Minecraft diary</button>
     <button type="button" class="hero-pill" data-new-kind="epic_codex">Fact codex</button>
@@ -475,7 +475,8 @@ async function startCenterMicRecording() {
   $("centerMicStatus").textContent = "● Mic is ON — speak now!";
   $("centerMicDone").hidden = false;
 
-  const silenceCutoff = centerMic.purpose === "word" ? 24 : centerMic.purpose === "story_jam" ? 50 : 36;
+  const isIntake = centerMic.purpose === "oral_intake" || centerMic.purpose === "story_jam";
+  const silenceCutoff = centerMic.purpose === "word" ? 24 : isIntake ? 50 : 36;
   centerMic.node.port.onmessage = (e) => {
     if (!centerMic.recording) return;
     const pcmCopy = new Int16Array(e.data.pcm);
@@ -505,7 +506,7 @@ async function startCenterMicRecording() {
   clearTimeout(centerMic.maxTimer);
   centerMic.maxTimer = setTimeout(() => {
     if (centerMic.open) stopCenterMic(centerMic.speechFrames >= 2);
-  }, centerMic.purpose === "story_jam" ? 28000 : 12000);
+  }, (centerMic.purpose === "oral_intake" || centerMic.purpose === "story_jam") ? 28000 : 12000);
 }
 
 function showCenterMic(cfg) {
@@ -535,8 +536,8 @@ function showCenterMic(cfg) {
       clearInterval(centerMic.waitTimer);
       return;
     }
-    // Give 350ms for first PCM audio packet to arrive, then start as soon as tutor stops speaking (or after 6.5s max)
-    if ((waitedTicks >= 3 && !tutorAudible()) || waitedTicks >= 54) {
+    // Give 350ms for first PCM audio packet to arrive, then wait until tutor finishes speaking (24s safety cap)
+    if ((waitedTicks >= 3 && !tutorAudible()) || waitedTicks >= 200) {
       clearInterval(centerMic.waitTimer);
       centerMic.waitTimer = null;
       startCenterMicRecording();
@@ -890,7 +891,15 @@ function addKid(html, id) {
 }
 
 function upsertTutor(turn, text) {
+  const cleaned = String(text || "")
+    .replace(/\b(?:no\s+speech(?:\s+detected)?|inaudible|silence|background\s+noise)\b[.\s!]*/gi, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
   let el = document.getElementById("tutor-" + turn);
+  if (!cleaned) {
+    if (el) el.remove();
+    return;
+  }
   if (!el) {
     el = document.createElement("div");
     el.className = "msg tutor speaking";
@@ -898,7 +907,7 @@ function upsertTutor(turn, text) {
     el.innerHTML = `<svg class="spark"><use href="#spark"/></svg><div class="text"></div>`;
     stream.appendChild(el);
   }
-  el.querySelector(".text").textContent = text;
+  el.querySelector(".text").textContent = cleaned;
   scrollDown();
 }
 
@@ -993,7 +1002,8 @@ function renderItem(it) {
       break;
     case "book_project": {
       state.lastBook = it;
-      const pane = canvasPane("book", "Book · PDF", renderBookProject(it));
+      const tabLbl = it.proj_kind === "how_to_tutorial" ? "Guide · PDF" : "Book · PDF";
+      const pane = canvasPane("book", tabLbl, renderBookProject(it));
       wireBookPane(pane, it);
       break;
     }
@@ -1100,7 +1110,8 @@ function openLetteringState(target, tab = "bubble", opts = {}) {
 function refreshLetteringHost(target, focusInput = false) {
   if (!target) return;
   if ((target.startsWith("spine:") || target.startsWith("panel:")) && state.lastBook) {
-    const pane = canvasPane("book", "Book · PDF", renderBookProject(state.lastBook));
+    const tabLbl = state.lastBook.proj_kind === "how_to_tutorial" ? "Guide · PDF" : "Book · PDF";
+    const pane = canvasPane("book", tabLbl, renderBookProject(state.lastBook));
     wireBookPane(pane, state.lastBook);
   } else if (target.startsWith("strip:") && state.lastComic) {
     const pane = canvasPane("comic", "Comic", renderComic(state.lastComic));
@@ -1484,28 +1495,76 @@ function wireBookPane(pane, it) {
       send({ type: "art_feedback", target: btn.dataset.artDel, remove: true });
     };
   });
-  pane.querySelectorAll("[data-jam-start]").forEach((btn) => {
-    btn.onclick = () => {
-      begin();
-      addKid("🎙️ Talk out more of the story");
-      send({ type: "story_jam_mode", action: "start_jam" });
-    };
-  });
   pane.querySelectorAll("[data-jam-write]").forEach((btn) => {
     btn.onclick = () => {
       begin();
-      addKid("✍️ Ready — start writing panels!");
+      addKid("Start writing Panel 1 →");
       send({ type: "story_jam_mode", action: "start_writing" });
     };
   });
-  pane.querySelectorAll("[data-jam-del]").forEach((btn) => {
+  pane.querySelectorAll("[data-step-del]").forEach((btn) => {
     btn.onclick = () => {
-      send({ type: "story_jam_mode", action: "delete_beat", beat_id: btn.dataset.jamDel });
+      if (!confirm("Remove this step from your guide?")) return;
+      begin();
+      send({ type: "art_feedback", target: btn.dataset.stepDel, remove: true });
     };
   });
 }
 
+function renderHowToGuideProject(b) {
+  const allSteps = [];
+  for (const ch of b.chapters || []) {
+    for (const p of ch.panels || []) allSteps.push(p);
+  }
+  const stepsDone = allSteps.length;
+  const stepsGoal = Math.max(4, b.target_panels || 8);
+  const pct = Math.min(100, Math.round((stepsDone / Math.max(1, stepsGoal)) * 100));
+  const progHtml = `<div class="book-prog"><div class="book-prog-fill" style="width:${pct}%"></div></div>`;
+  const stepsHtml = allSteps.length
+    ? `<div class="howto-step-list">${allSteps
+        .map(
+          (st, idx) => `<div class="howto-step-card">
+            <span class="howto-step-num">STEP ${Number(st.number || idx + 1)}</span>
+            <div class="howto-step-text">${esc(st.caption || st.scene || "")}</div>
+            <button type="button" class="howto-step-del" data-step-del="panel:${Number(st.number || idx + 1)}" title="Remove step">✕</button>
+          </div>`
+        )
+        .join("")}</div>`
+    : `<div style="color:#5f6368;font-size:.96rem;padding:8px 2px">${
+        b.stage === "tutorial_topic"
+          ? "Type what your How-To Guide is about on the left to start your guide."
+          : "Write Step 1 on the left—each complete sentence appears here as a numbered step."
+      }</div>`;
+
+  return `<div class="book-head">
+      <div>
+        <div class="comic-title" style="margin:0;display:flex;align-items:center;gap:10px">
+          <span>${esc(b.title || "Untitled How-To Guide")}</span>
+          <button type="button" class="text-btn" style="font-size:.82rem;padding:4px 8px" data-rename-cur="1" title="Rename guide">✎ Rename</button>
+        </div>
+        <div class="muted" style="font-size:.86rem">${esc(b.progress_label || `${stepsDone} step(s)`)}${b.sandbox ? " (Sandbox)" : ""}</div>
+      </div>
+      <div class="book-actions">
+        <button type="button" class="pill-btn" data-switch-book="1">Switch / New</button>
+        <a class="text-btn" href="${esc(b.web_url)}" target="_blank">Web view</a>
+        <a class="btn-primary" href="${esc(b.pdf_url)}" target="_blank">Download PDF</a>
+      </div>
+    </div>
+    ${progHtml}
+    <div class="howto-doc">
+      <div class="howto-doc-head">
+        <div class="howto-eyebrow">How-To Guide · ${stepsDone} step${stepsDone === 1 ? "" : "s"}</div>
+        <h2 class="howto-doc-title">${esc(b.title || "Untitled How-To Guide")}</h2>
+        <div class="howto-doc-by">Written by ${esc(b.author || "Author")}${b.audience ? ` · For ${esc(b.audience)}` : ""}</div>
+      </div>
+      ${stepsHtml}
+    </div>`;
+}
+
 function renderBookProject(b) {
+  if (b.proj_kind === "how_to_tutorial") {
+    return renderHowToGuideProject(b);
+  }
   const sp = b.spine || {};
   const mbeats = Array.isArray(sp.middle_beats) ? sp.middle_beats : [];
   const hasSpine = b.proj_kind === "epic_graphic_novel" || sp.beginning || sp.end || mbeats.length;
@@ -1590,43 +1649,18 @@ function renderBookProject(b) {
         </div>`
       : "";
 
-  const jamBeats = Array.isArray(b.jam_beats) ? b.jam_beats : [];
-  const showJamBoard = b.proj_kind === "story_jam_novel" || b.stage === "verbal_jam" || jamBeats.length > 0;
-  let foundNextJam = false;
-  const jamRowsHtml = jamBeats
-    .map((jb, idx) => {
-      const isDone = !!jb.written;
-      const isNext = !isDone && !foundNextJam && b.stage !== "verbal_jam";
-      if (isNext) foundNextJam = true;
-      const cls = isDone ? "jam-row done" : isNext ? "jam-row next-up" : "jam-row";
-      const tag = isDone ? `✓ Panel ${jb.panel_number || idx + 1}` : isNext ? "▶ Writing now" : `#${idx + 1}`;
-      return `<div class="${cls}">
-        <span class="jam-num">${esc(tag)}</span>
-        <span style="flex:1">${esc(jb.note || "")}</span>
-        <button type="button" class="text-btn" style="padding:2px 6px;font-size:.76rem" data-jam-del="${esc(jb.id || "")}" title="Remove beat">✕</button>
-      </div>`;
-    })
-    .join("");
-
-  const jamHtml = showJamBoard
-    ? `<div class="jam-board ${b.stage === "verbal_jam" ? "active-jam" : ""}">
-        <div class="jam-head">
-          <div>
-            <strong style="color:#8ab4f8">🎙️ 100-Page Story Jam Outline</strong>
-            <div class="muted" style="font-size:.8rem">Talk out what happens &amp; what happens next—then write panel by panel!</div>
-          </div>
-          <div style="display:flex;gap:6px">
-            ${b.stage === "verbal_jam"
-              ? (jamBeats.length ? `<button type="button" class="let-save-btn" data-jam-write="1">✍️ Write Panels Now</button>` : "")
-              : `<button type="button" class="comic-act-btn primary-let" data-jam-start="1">🎙️ Talk Out More Story</button>`}
-          </div>
+  const intakeHtml = b.oral_intake_active
+    ? `<div class="intake-status-card">
+        <div>
+          <strong style="color:#8ab4f8">Talking Through Your Plot First (${Number(b.intake_turns || 0)}/${Number(b.intake_max_turns || 4)})</strong>
+          <div class="muted" style="font-size:.84rem;margin-top:3px">Tell Gemini your big story idea out loud so Gemini knows where it's going—then Panel 1 unlocks for writing.</div>
         </div>
-        ${jamRowsHtml ? `<div class="jam-list">${jamRowsHtml}</div>` : `<div class="muted" style="font-size:.86rem">Speak into the green mic—every story beat you decide appears right here!</div>`}
+        ${Number(b.intake_turns || 0) >= 1 ? `<button type="button" class="let-save-btn" data-jam-write="1">Start writing Panel 1 →</button>` : ""}
       </div>`
     : "";
 
   const stepsDone =
-    (sp.beginning ? 1 : 0) + mbeats.length + (sp.end ? 1 : 0) + jamBeats.length + (b.panel_count || 0);
+    (sp.beginning ? 1 : 0) + mbeats.length + (sp.end ? 1 : 0) + (b.panel_count || 0);
   const stepsGoal = (b.proj_kind === "epic_graphic_novel" || b.proj_kind === "story_jam_novel") ? Math.max(5, stepsDone + 1) : (b.target_panels || 4);
   const pct = Math.min(100, Math.round((stepsDone / Math.max(1, stepsGoal)) * 100));
   const progHtml = `<div class="book-prog"><div class="book-prog-fill" style="width:${pct}%"></div></div>`;
@@ -1683,9 +1717,6 @@ function renderBookProject(b) {
         <div class="muted" style="font-size:.86rem">${esc(b.progress_label || `${b.panel_count || 0} panel(s)`)} · Style: ${esc(b.style_label || "Notebook Ink Doodle")}${b.sandbox ? " (Sandbox)" : ""}</div>
       </div>
       <div class="book-actions">
-        ${(b.proj_kind === "epic_graphic_novel" || b.proj_kind === "story_jam_novel") && b.stage !== "verbal_jam"
-          ? `<button type="button" class="pill-btn" data-jam-start="1" title="Talk out the story verbally before writing panels">🎙️ Story Jam</button>`
-          : ""}
         <button type="button" class="pill-btn" data-toggle-styles="1">Art Style</button>
         <button type="button" class="pill-btn" data-switch-book="1">Switch / New</button>
         <a class="text-btn" href="${esc(b.web_url)}" target="_blank">Web view</a>
@@ -1694,7 +1725,7 @@ function renderBookProject(b) {
     </div>
     ${progHtml}
     ${stylesHtml}
-    ${jamHtml}
+    ${intakeHtml}
     ${spineHtml}
     ${codexLiveHtml}
     ${chHtml || '<div class="muted" style="padding:8px 2px">Tip: Click <b>💬 + Speech Bubble</b> or <b>✎ Caption</b> under any panel to add comic dialogue, shout bubbles, or edit captions!</div>'}`;
@@ -1776,6 +1807,9 @@ function handle(m) {
       break;
     case "tutor_caption":
       upsertTutor(m.turn, m.text);
+      break;
+    case "tutor_clear":
+      document.getElementById("tutor-" + m.turn)?.remove();
       break;
     case "kid_caption":
       upsertKidSpoken(m.turn, m.text);

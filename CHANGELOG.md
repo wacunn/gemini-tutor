@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.0
+- **Bounded Latent Oral Plot Intake → Full Writing Tutoring (`tutor/projects.py`, `tutor/controller.py`, `tutor/live.py`, `static/app.js`, `static/index.html`, `static/style.css`, `tutor/pdf_book.py`):**
+  - Replaced open-ended Verbal Story Jam with a bounded upfront **Oral Plot Intake** (`<= 4` turns, zero panels drawn, zero reward chimes while talking, zero mid-book `"Talk Out More Story"` escape buttons, and **zero AI-written sentences displayed on the student's screen**).
+  - Extracts the student's plot, characters, world rules, causal arc, and ending into a **private tutor-only `latent_plan`**, then permanently locks into **full rigorous panel-by-panel writing tutoring** (enforcing complete sentences, capitals, periods, spelling, grammar, and Mastery Tiers while using `latent_plan` to ask sharp Socratic/causal questions across up to 100 panels).
+- **Pure Written How-To Guides — Zero Cartoons (`tutor/projects.py`, `tutor/controller.py`, `tutor/live.py`, `static/app.js`, `static/style.css`, `tutor/pdf_book.py`, `server.py`):**
+  - Converted **How-to guide** (`how_to_tutorial`) into a pure written procedural document—never generates cartoons/comic panels, never pauses for picture checks, renders a crisp numbered **How-To Guide** document page on the right, and exports a clean typography-only PDF and Web View.
+- **Fixed Post-Speech `"No speech!"` Audio/Caption Bug (`tutor/live.py`, `tutor/prompt.py`, `static/app.js`):**
+  - Removed controller-owned UI tools (`ask_input`, `show_choices`, `show_card`, `show_word`, `turn_on_mic`, `draw`, `comic_new`, `comic_panel`) from Live audio tool declarations and removed `"End your turn silently"` `FunctionResponse` strings so the Live audio model never triggers a post-speech turn vocalizing `"No speech!"`; hardened `upsertTutor`, `tutor_clear`, and `showCenterMic` wait-until-silent gating.
+
 ## 1.4.1
 - **100% Student-Led How-To Guide Topics & Steps (`tutor/controller.py`, `tutor/projects.py`, `static/index.html`, `static/app.js`):**
   - Removed pre-suggested tutorial topics and step assumptions from **How-to guide** (`how_to_tutorial`)—asks openly what his guide is about, keeps his exact title, and asks openly for Step 1, Step 2, Step 3… without suggesting what the steps should be.

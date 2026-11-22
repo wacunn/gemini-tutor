@@ -23,8 +23,8 @@ SANDBOX_PROJECTS: dict[str, dict[str, Any]] = {}
 
 KIND_BADGES: dict[str, str] = {
     "epic_graphic_novel": "Graphic Novel",
-    "story_jam_novel": "Story Jam Comic",
-    "how_to_tutorial": "How-To Tutorial",
+    "story_jam_novel": "100-Page Comic",
+    "how_to_tutorial": "How-To Guide",
     "minecraft_diary": "Minecraft Diary",
     "epic_codex": "Fact Codex",
     "medium_pitch": "Persuasive Pitch",
@@ -41,17 +41,17 @@ PROJECT_MENU: list[dict[str, str]] = [
     },
     {
         "key": "story_jam_novel",
-        "label": "100-Page Story Jam (Talk It Out First → Comic)",
+        "label": "100-Page Comic Book (Talk Out Plot First → Write Panels)",
         "scale": "epic",
-        "time_est": "Verbal back-and-forth → up to 100 panels",
-        "summary": "Build a giant story out loud back-and-forth first (what happens, then what happens next?), then write & draw panel by panel.",
+        "time_est": "Short plot intake → up to 100 panels",
+        "summary": "Tell Gemini your big story idea out loud first so Gemini knows the whole plot—then write & draw every panel yourself.",
     },
     {
         "key": "how_to_tutorial",
-        "label": "Illustrated How-To Guide / Tutorial (PDF)",
+        "label": "How-To Guide (Step-by-Step Written Guide · PDF)",
         "scale": "epic",
-        "time_est": "Step-by-step illustrated guide · PDF",
-        "summary": "Write and illustrate your own step-by-step how-to guide on any topic you choose.",
+        "time_est": "Written step-by-step guide · PDF",
+        "summary": "Write a clear, numbered step-by-step how-to guide on any topic you choose.",
     },
     {
         "key": "minecraft_diary",
@@ -309,10 +309,11 @@ def middle_beats_list(sp: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def is_project_nonempty(proj: dict[str, Any]) -> bool:
-    """True once a project has a custom title, Story Spine/Jam beats, tutorial topic, or at least 1 panel/entry."""
+    """True once a project has a custom title, Story Spine, latent plot intake, tutorial topic, or at least 1 panel/entry."""
     if total_panels(proj) > 0:
         return True
-    if proj.get("jam_beats") or proj.get("tutorial_topic"):
+    lp = proj.get("latent_plan") or {}
+    if lp.get("turns") or proj.get("jam_beats") or proj.get("tutorial_topic"):
         return True
     sp = proj.get("spine") or {}
     if sp.get("beginning") or sp.get("end") or sp.get("middle") or middle_beats_list(sp):
@@ -329,10 +330,12 @@ def project_progress_label(proj: dict[str, Any]) -> str:
     stage = proj.get("stage", "")
     sp = proj.get("spine") or {}
     if kind == "story_jam_novel":
-        n_jam = len(proj.get("jam_beats") or [])
-        if stage == "verbal_jam" and pcount == 0:
-            return f"{badge} · {n_jam} spoken beat{'s' if n_jam != 1 else ''}"
-        return f"{badge} · {pcount} panel{'s' if pcount != 1 else ''} ({n_jam} beats)"
+        if stage in ("oral_intake", "verbal_jam") and pcount == 0:
+            lp = proj.get("latent_plan") or {}
+            turns = int(lp.get("turns") or 0)
+            return f"{badge} · Plot intake ({turns}/{int(lp.get('max_turns') or 4)})"
+        n_ch = len(proj.get("chapters") or [1])
+        return f"{badge} · Ch.{n_ch} · {pcount} panel{'s' if pcount != 1 else ''}"
     if kind == "how_to_tutorial":
         return f"{badge} · {pcount} step{'s' if pcount != 1 else ''}"
     if kind == "minecraft_diary":
@@ -371,7 +374,7 @@ def create_project(
     today_lbl = _today_short()
     default_titles = {
         "epic_graphic_novel": "Untitled Graphic Novel",
-        "story_jam_novel": "Untitled 100-Page Story",
+        "story_jam_novel": "Untitled 100-Page Comic",
         "how_to_tutorial": "Untitled How-To Guide",
         "minecraft_diary": f"{author}'s Minecraft Diary" if author else "Minecraft Adventure Diary",
         "epic_codex": f"{author}'s Fact & Invention Codex" if author else "Fact & Invention Codex",
@@ -381,7 +384,7 @@ def create_project(
     clean_title = (title or "").strip()
     if style_key and style_key in STYLE_BY_KEY:
         skey = style_key
-    elif kind == "minecraft_diary" or (kind == "how_to_tutorial" and re.search(r"\b(minecraft|creeper|redstone|nether|ender|pickaxe)\b", clean_title, re.I)):
+    elif kind == "minecraft_diary":
         skey = "blocky_voxel"
     else:
         skey = DEFAULT_STYLE_KEY
@@ -389,7 +392,7 @@ def create_project(
     if needs_spine:
         init_stage = "spine_beginning"
     elif kind == "story_jam_novel":
-        init_stage = "verbal_jam"
+        init_stage = "oral_intake"
     elif kind == "how_to_tutorial" and not clean_title:
         init_stage = "tutorial_topic"
     else:
@@ -422,7 +425,17 @@ def create_project(
         "title": clean_title or default_titles.get(kind, "Untitled Project"),
         "custom_titled": bool(clean_title),
         "tutorial_topic": clean_title if kind == "how_to_tutorial" and clean_title else "",
-        "jam_beats": [],
+        "latent_plan": {
+            "turns": 0,
+            "max_turns": 4,
+            "raw_log": [],
+            "premise": "",
+            "characters": [],
+            "world_rules": "",
+            "scenes": [],
+            "ending": "",
+            "ready": False,
+        },
         "author": author or "Author",
         "audience": audience or "Family",
         "style_key": skey,
@@ -566,42 +579,63 @@ def all_panels(proj: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def add_jam_beat(
+def update_latent_plan(
     proj: dict[str, Any],
-    note: str,
-    title_hint: str = "",
+    utterance: str,
+    extracted: dict[str, Any],
     sandbox: bool | None = None,
 ) -> dict[str, Any]:
-    """Appends one spoken/brainstormed story beat to `proj['jam_beats']` during Verbal Story Jam."""
-    jlist = proj.setdefault("jam_beats", [])
-    entry = {
-        "id": new_id("jb"),
-        "note": (note or "").strip()[:240],
-        "written": False,
-    }
-    jlist.append(entry)
+    """Updates the tutor-internal `proj['latent_plan']` from an oral story intake turn (NEVER exposed as copyable sentences on the child's screen!)."""
+    lp = proj.setdefault(
+        "latent_plan",
+        {
+            "turns": 0,
+            "max_turns": 4,
+            "raw_log": [],
+            "premise": "",
+            "characters": [],
+            "world_rules": "",
+            "scenes": [],
+            "ending": "",
+            "ready": False,
+        },
+    )
+    lp["turns"] = int(lp.get("turns") or 0) + 1
+    if utterance.strip():
+        raw_log = list(lp.get("raw_log") or [])
+        raw_log.append(utterance.strip()[:450])
+        lp["raw_log"] = raw_log[-8:]
+    if extracted.get("premise"):
+        lp["premise"] = str(extracted["premise"]).strip()[:320]
+    if isinstance(extracted.get("characters"), list) and extracted["characters"]:
+        chars = [str(c).strip()[:64] for c in extracted["characters"] if str(c).strip()]
+        if chars:
+            lp["characters"] = chars[:8]
+            proj["characters"] = ", ".join(chars[:6])[:180]
+    if extracted.get("world_rules"):
+        lp["world_rules"] = str(extracted["world_rules"]).strip()[:280]
+    if extracted.get("ending"):
+        lp["ending"] = str(extracted["ending"]).strip()[:260]
+    if isinstance(extracted.get("scenes"), list) and extracted["scenes"]:
+        clean_scenes = []
+        for s in extracted["scenes"][:24]:
+            if isinstance(s, dict) and s.get("beat_summary"):
+                clean_scenes.append(
+                    {
+                        "beat_summary": str(s.get("beat_summary") or "").strip()[:180],
+                        "socratic_angle": str(s.get("socratic_angle") or "").strip()[:180],
+                        "target_connector": str(s.get("target_connector") or "when").strip()[:32],
+                    }
+                )
+        if clean_scenes:
+            lp["scenes"] = clean_scenes
+    if extracted.get("ready") or lp["turns"] >= int(lp.get("max_turns") or 4):
+        lp["ready"] = True
+    title_hint = str(extracted.get("book_title") or "").strip()
     if title_hint and not proj.get("custom_titled") and proj.get("title", "").startswith("Untitled"):
-        proj["title"] = title_hint.strip()[:64]
+        proj["title"] = title_hint[:64]
     save_project(proj, sandbox=sandbox)
-    return entry
-
-
-def remove_jam_beat(proj: dict[str, Any], beat_id: str, sandbox: bool | None = None) -> bool:
-    jlist = proj.get("jam_beats") or []
-    before = len(jlist)
-    proj["jam_beats"] = [b for b in jlist if b.get("id") != beat_id]
-    if len(proj["jam_beats"]) != before:
-        save_project(proj, sandbox=sandbox)
-        return True
-    return False
-
-
-def next_unwritten_jam_beat(proj: dict[str, Any]) -> tuple[int, dict[str, Any] | None]:
-    """Returns (1-based beat_index, beat_dict) for the next spoken Story Jam beat not yet turned into a panel."""
-    for idx, b in enumerate(proj.get("jam_beats") or [], 1):
-        if not b.get("written"):
-            return idx, b
-    return 0, None
+    return lp
 
 
 def current_chapter(proj: dict[str, Any]) -> dict[str, Any]:
@@ -636,33 +670,36 @@ def add_panel_to_project(
     persist: bool = True,
     sandbox: bool | None = None,
 ) -> tuple[int, dict[str, Any]]:
-    """Appends a new panel/entry to the current chapter, extracts speech bubbles, saves, and returns (global_idx, panel_dict)."""
+    """Appends a new panel/entry/step to the current chapter, saves, and returns (global_idx, panel_dict)."""
     ch = current_chapter(proj)
-    caption, bubbles = extract_dialogue(sentence)
     pnum = total_panels(proj) + 1
     kind = proj.get("kind", "")
     if kind == "how_to_tutorial":
-        badge = f"STEP {pnum}"
-    elif kind == "minecraft_diary":
-        badge = f"{_today_short().upper()} · #{pnum}"
+        # Pure written procedural step — keep full sentence intact (including any quoted button/key names) and never draw cartoons!
+        panel = {
+            "number": pnum,
+            "badge": f"STEP {pnum}",
+            "caption": (sentence or "").strip(),
+            "dialogue": [],
+            "scene": "",
+            "image": None,
+            "src": None,
+            "status": "written",
+            "verified": True,
+        }
     else:
-        badge = ""
-    # Mark next unwritten Story Jam beat as written when turning spoken outline into panels
-    for jb in proj.get("jam_beats") or []:
-        if not jb.get("written"):
-            jb["written"] = True
-            jb["panel_number"] = pnum
-            break
-    panel = {
-        "number": pnum,
-        "badge": badge,
-        "caption": caption,
-        "dialogue": bubbles,
-        "scene": scene or sentence,
-        "image": None,
-        "src": None,
-        "status": "drawing",
-    }
+        caption, bubbles = extract_dialogue(sentence)
+        badge = f"{_today_short().upper()} · #{pnum}" if kind == "minecraft_diary" else ""
+        panel = {
+            "number": pnum,
+            "badge": badge,
+            "caption": caption,
+            "dialogue": bubbles,
+            "scene": scene or sentence,
+            "image": None,
+            "src": None,
+            "status": "drawing",
+        }
     ch.setdefault("panels", []).append(panel)
     is_sb = proj.get("sandbox", False) if sandbox is None else sandbox
     if is_sb:
@@ -967,6 +1004,10 @@ def chronological_scene_context(proj: dict[str, Any], target: str = "") -> str:
     # Panel context: chronological kickoff + middle twists + preceding panels (never future finale unless at end)
     if beg:
         bits.append(f"Story start: {beg[:160]}")
+    else:
+        lp = proj.get("latent_plan") or {}
+        if lp.get("world_rules"):
+            bits.append(f"World/setting: {str(lp['world_rules'])[:150]}")
     panels = all_panels(proj)
     pnum = len(panels)
     if target.startswith("panel:"):
@@ -1116,7 +1157,9 @@ def project_ui_payload(proj: dict[str, Any]) -> dict[str, Any]:
         "art_styles": ART_STYLES,
         "stage": proj.get("stage", "drafting_panels"),
         "spine": sp,
-        "jam_beats": proj.get("jam_beats") or [],
+        "oral_intake_active": proj.get("stage") in ("oral_intake", "verbal_jam"),
+        "intake_turns": int((proj.get("latent_plan") or {}).get("turns") or 0),
+        "intake_max_turns": int((proj.get("latent_plan") or {}).get("max_turns") or 4),
         "tutorial_topic": proj.get("tutorial_topic") or "",
         "cover_src": f"/media/{proj['cover_image']}.jpg" if proj.get("cover_image") else None,
         "codex_sketch_src": proj.get("codex_sketch_src"),

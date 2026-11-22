@@ -146,73 +146,132 @@ def ai_direct_next_beat(
     }
 
 
-STORY_JAM_SYSTEM = """You are a sharp, conversational story-sparring collaborator helping an 8-year-old author build a giant 100-page comic book OUT LOUD before writing the panels.
-Right now we are in VERBAL STORY JAM mode (pure back-and-forth spoken plotting—zero spelling or punctuation talk!).
+LATENT_INTAKE_SYSTEM = """You are conducting a SHORT, BOUNDED UPFRONT ORAL STORY INTAKE (3–4 turns max) with an 8-year-old author BEFORE Panel 1 of their 100-page comic book.
+PEDAGOGICAL PURPOSE:
+- The student is telling you their giant story out loud ONLY so YOU (the AI tutor) can hold their full latent story structure in memory and ask sharp, story-aware questions while they do 100% of the rigorous sentence, grammar, and spelling writing panel by panel.
+- Nothing you write in `premise`, `scenes`, or `ending` is shown on the student's screen—it is strictly your private internal memory map.
 CRITICAL RULES:
-1. ZERO PLOT SUGGESTING: NEVER invent characters, items, twists, or either/or plot choices ("Does he find a sword or a portal?"). Every idea must come 100% from him!
-2. CAPTURE THE BEAT (`beat_note`): Write 1 crisp, factual sentence summarizing ONLY what he just decided happens in this beat.
-3. BACK-AND-FORTH CHALLENGE OR "WHAT NEXT?" (`spoken_reply`):
-   - Speak in 1–2 short, natural sentences (plain, grounded voice—zero hype or baby talk).
-   - Alternate naturally between:
-     a) Challenging/probing a concrete story detail to make HIS idea sharper ("Wait—if he fell into that cavern with nothing, how does he survive the first minute?", "Hold on, why is the boss after him in the first place?", "Where is everyone else while that's happening?"), AND
-     b) Driving the chain forward ("Got that on your board—what happens right after that?").
-4. `book_title`: 2–4 punchy words using ONLY concepts he already named.
+1. ZERO PLOT SUGGESTING: NEVER invent characters, powers, items, twists, or either/or plot choices ("Does he find a sword or a portal?"). Every single story element must come 100% from what the student said!
+2. MERGE & EXPAND LATENT STRUCTURE: Combine `EXISTING LATENT PLAN` with `WHAT THE STUDENT JUST SAID` (never erase earlier facts unless the student changed their mind):
+   - `book_title`: 2–5 words built ONLY from concepts the student named.
+   - `premise`: 1–2 sentences summarizing the core story setup and conflict.
+   - `characters`: list of character names + brief roles/traits they mentioned.
+   - `world_rules`: setting, stakes, or special rules of their story world.
+   - `scenes`: chronological list of 5–16 story beats covering their arc so far, each as:
+     `{"beat_summary": "what happens in this part", "socratic_angle": "open why/how/when/reaction question to ask when they reach this part in writing", "target_connector": "because|when|but|although|so"}`
+   - `ending`: how the big story eventually resolves/ends (empty string `""` if they haven't explained the ending yet).
+3. DECIDE `ready`:
+   - Set `ready: true` if `TURN NUMBER >= MAX TURNS`, OR if `TURN NUMBER >= 3` AND you already know the beginning setup, middle escalation/twists, and where the story is heading at the end.
+   - Otherwise set `ready: false`.
+4. `spoken_question` (used ONLY when `ready` is false):
+   - 1–2 short, plain, matter-of-fact sentences (zero hype, zero baby talk).
+   - Probe the biggest missing piece in THEIR latent plot:
+     * If they gave the opening setup, challenge a causal detail or ask what goes wrong / happens next ("Wait—why are they after him in the first place, and what happens next?").
+     * If they gave middle events but no ending yet (especially by Turn 3), ask where this whole giant story is heading at the very end ("And how is this whole story going to end when they finally get there?").
 Return STRICT JSON:
-{"beat_note": "1 concise sentence capturing what just happened in his words.",
- "book_title": "Short Title From His Words",
- "spoken_reply": "1-2 short natural sentences reacting + challenging a detail OR asking what happens next."}"""
+{"book_title": "Short Title From Their Words",
+ "premise": "...",
+ "characters": ["..."],
+ "world_rules": "...",
+ "scenes": [{"beat_summary": "...", "socratic_angle": "...", "target_connector": "because"}],
+ "ending": "",
+ "ready": false,
+ "spoken_question": "1-2 short plain sentences probing what happens next, why, or how the whole story ends."}"""
 
 
-def run_story_jam_turn(rec: dict[str, Any], existing_beats: list[dict[str, Any]], kid_utterance: str) -> dict[str, str]:
-    """Fast (~0.8s) verbal story-jam sparring turn with 0ms deterministic fallback."""
+def run_latent_story_intake(
+    rec: dict[str, Any],
+    latent_plan: dict[str, Any],
+    kid_utterance: str,
+    turn_num: int,
+    max_turns: int = 4,
+) -> dict[str, Any]:
+    """Extracts/updates the hidden tutor-only `latent_plan` during bounded upfront oral story intake."""
     raw = (kid_utterance or "").strip()
-    clean_note = raw[:1].upper() + raw[1:] if raw else "Story beat added."
-    if clean_note and not re.search(r"[.!?]$", clean_note):
-        clean_note += "."
-    beats_txt = "\n".join(f"{i}. {b.get('note', '')}" for i, b in enumerate(existing_beats[-10:], 1)) or "(First beat!)"
+    existing_json = {
+        "premise": latent_plan.get("premise", ""),
+        "characters": latent_plan.get("characters", []),
+        "world_rules": latent_plan.get("world_rules", ""),
+        "scenes": latent_plan.get("scenes", []),
+        "ending": latent_plan.get("ending", ""),
+    }
     prompt = (
         f"STUDENT: {rec.get('name') or 'Author'} (Grade {rec.get('grade', 3)}).\n"
-        f"STORY JAM OUTLINE SO FAR:\n{beats_txt}\n\n"
-        f"WHAT THE STUDENT JUST SAID HAPPENS:\n{raw}"
+        f"TURN NUMBER: {turn_num} of {max_turns} (MUST set ready=true if TURN NUMBER >= {max_turns}).\n"
+        f"EXISTING LATENT PLAN:\n{existing_json}\n\n"
+        f"WHAT THE STUDENT JUST SAID:\n{raw}"
     )
     if blackboard.QUOTA.allow_background() and raw:
         try:
-            client = genai_client(timeout_ms=10000)
+            client = genai_client(timeout_ms=8500)
             for model in (PLANNER_MODEL, FAST_MODEL):
                 try:
                     resp = client.models.generate_content(
                         model=model,
                         contents=prompt,
                         config=types.GenerateContentConfig(
-                            system_instruction=STORY_JAM_SYSTEM,
-                            temperature=0.45,
+                            system_instruction=LATENT_INTAKE_SYSTEM,
+                            temperature=0.35,
                             response_mime_type="application/json",
                             thinking_config=types.ThinkingConfig(thinking_budget=0),
                         ),
                     )
                     out = thinking._json(resp.text)
-                    if isinstance(out, dict) and out.get("beat_note") and out.get("spoken_reply"):
+                    if isinstance(out, dict) and (out.get("scenes") or out.get("premise")):
+                        is_ready = bool(out.get("ready")) or turn_num >= max_turns
+                        q = str(out.get("spoken_question") or "").strip()[:260]
+                        if not q and not is_ready:
+                            q = (
+                                "And where is this whole big story heading at the very end?"
+                                if turn_num >= max_turns - 1
+                                else "Got it—what goes wrong or escalates right after that, and why?"
+                            )
                         return {
-                            "beat_note": str(out["beat_note"]).strip()[:220],
-                            "book_title": str(out.get("book_title") or "").strip()[:56],
-                            "spoken_reply": str(out["spoken_reply"]).strip()[:280],
+                            "book_title": _infer_book_title(" ".join((latent_plan.get("raw_log") or []) + [raw]), str(out.get("book_title") or "")),
+                            "premise": str(out.get("premise") or latent_plan.get("premise") or raw[:240]).strip()[:320],
+                            "characters": out.get("characters") if isinstance(out.get("characters"), list) else (latent_plan.get("characters") or []),
+                            "world_rules": str(out.get("world_rules") or latent_plan.get("world_rules") or "").strip()[:280],
+                            "scenes": out.get("scenes") if isinstance(out.get("scenes"), list) else (latent_plan.get("scenes") or []),
+                            "ending": str(out.get("ending") or latent_plan.get("ending") or "").strip()[:260],
+                            "ready": is_ready,
+                            "spoken_question": q,
                         }
                 except Exception as e:
-                    blackboard.QUOTA.note_error("story_jam", e)
+                    blackboard.QUOTA.note_error("latent_intake", e)
                     if not blackboard.QUOTA.allow_background():
                         break
         except Exception:
             pass
 
-    beat_n = len(existing_beats) + 1
-    if beat_n % 2 == 1:
-        reply = f"Got Beat #{beat_n} on your Story Jam board! Wait—how does that actually happen, or what detail makes it tricky?"
+    # Deterministic 0ms fallback so intake ALWAYS works offline/under 429 and strictly bounds at max_turns!
+    prev_scenes = list(latent_plan.get("scenes") or [])
+    if raw:
+        prev_scenes.append(
+            {
+                "beat_summary": raw[:180],
+                "socratic_angle": "Ask what happens in this exact moment and why.",
+                "target_connector": "because" if len(prev_scenes) % 2 == 1 else "when",
+            }
+        )
+    is_ready_fb = turn_num >= max_turns
+    if turn_num == 1:
+        fb_q = "Got that setup. What goes wrong or escalates next in the middle, and why?"
+    elif turn_num == 2:
+        fb_q = "Wait—how do they deal with that problem, and what happens right after?"
+    elif turn_num == 3 and not latent_plan.get("ending"):
+        fb_q = "And how does this whole giant story finally end when it all pays off?"
     else:
-        reply = f"Added Beat #{beat_n} to your outline. What happens right after that?"
+        is_ready_fb = True
+        fb_q = ""
     return {
-        "beat_note": clean_note[:220],
-        "book_title": _infer_book_title(raw),
-        "spoken_reply": reply,
+        "book_title": _infer_book_title(" ".join((latent_plan.get("raw_log") or []) + [raw])),
+        "premise": latent_plan.get("premise") or raw[:240],
+        "characters": latent_plan.get("characters") or [],
+        "world_rules": latent_plan.get("world_rules") or "",
+        "scenes": prev_scenes[:20],
+        "ending": raw[:240] if (turn_num >= 3 and not latent_plan.get("ending")) else (latent_plan.get("ending") or ""),
+        "ready": is_ready_fb,
+        "spoken_question": fb_q,
     }
 
 
@@ -402,16 +461,31 @@ class SessionController:
             return ""
         sp = self.project.get("spine") or {}
         bits = []
-        if self.project.get("tutorial_topic"):
-            bits.append(f"Illustrated Tutorial Topic: {self.project['tutorial_topic']}")
+        if self.project.get("kind") == "how_to_tutorial" and self.project.get("tutorial_topic"):
+            bits.append(f"Written How-To Guide Topic: {self.project['tutorial_topic']} (pure written step-by-step guide — NO drawings or cartoons)")
         if self.project.get("kind") == "minecraft_diary":
             bits.append(f"Illustrated Minecraft Diary ({self.project.get('title', 'Minecraft Diary')})")
-        jbeats = self.project.get("jam_beats") or []
-        if jbeats:
-            bits.append("Spoken Story Jam Outline:")
-            for idx_j, jb in enumerate(jbeats, 1):
-                mark = "✓ drawn" if jb.get("written") else "▶ next to write"
-                bits.append(f"  Beat #{idx_j} ({mark}): {jb.get('note', '')}")
+        lp = self.project.get("latent_plan") or {}
+        if lp.get("turns") or lp.get("premise") or lp.get("scenes"):
+            bits.append(
+                "Latent Story Structure (PRIVATE TUTOR MEMORY FROM ORAL INTAKE — NEVER quote or display complete sentences for the student to copy; "
+                "use ONLY to ask pinpoint open WHY/HOW/WHEN/DIALOGUE questions about THEIR story as they write panel by panel!):"
+            )
+            if lp.get("premise"):
+                bits.append(f"  Premise: {lp['premise']}")
+            if lp.get("characters"):
+                bits.append(f"  Characters: {', '.join(str(c) for c in lp['characters'])}")
+            if lp.get("world_rules"):
+                bits.append(f"  World/Setting Rules: {lp['world_rules']}")
+            for idx_s, sc in enumerate(lp.get("scenes") or [], 1):
+                if isinstance(sc, dict) and sc.get("beat_summary"):
+                    ang = f" [Socratic angle: {sc['socratic_angle']}]" if sc.get("socratic_angle") else ""
+                    bits.append(f"  Arc Beat #{idx_s}: {sc['beat_summary']}{ang}")
+            if lp.get("ending"):
+                bits.append(
+                    f"  FUTURE Ending / Destination at Very End of Book (NOT HAPPENED YET — build toward this gradually!): {lp['ending']}"
+                )
+            bits.append(f"  Panels Written So Far: {projects.total_panels(self.project)}")
         if sp.get("beginning"):
             bits.append(f"1. Beginning (START): {sp['beginning']}")
         mbeats = projects.middle_beats_list(sp)
@@ -435,13 +509,15 @@ class SessionController:
             kind = self.project.get("kind", "")
             stage = self.project.get("stage", "")
             pcount = projects.total_panels(self.project)
-            if stage == "verbal_jam":
-                n_jb = len(self.project.get("jam_beats") or [])
-                return f"Story Jam (Talk First): {n_jb} beat{'s' if n_jb != 1 else ''}"
+            if stage in ("oral_intake", "verbal_jam"):
+                lp = self.project.get("latent_plan") or {}
+                t_cur = min(int(lp.get("turns") or 0) + 1, int(lp.get("max_turns") or 4))
+                t_max = int(lp.get("max_turns") or 4)
+                return f"Plot Intake: {t_cur}/{t_max} → Panel 1"
             if kind == "how_to_tutorial":
                 if stage == "tutorial_topic":
-                    return "Tutorial: Pick Topic"
-                return f"Tutorial: Step {pcount + 1} · {pcount} drawn"
+                    return "How-To Guide: Pick Topic"
+                return f"How-To Guide: Step {pcount + 1} · {pcount} written"
             if kind == "minecraft_diary":
                 return f"Minecraft Diary: {pcount} log panel{'s' if pcount != 1 else ''}"
             if stage.startswith("spine_"):
@@ -519,9 +595,9 @@ class SessionController:
             self.session_panels_target = 4
             self.tree_step = min(3, projects.total_panels(proj))
             return self._prompt_pitch_step(ui)
-        if proj.get("stage") == "verbal_jam":
+        if proj.get("stage") in ("oral_intake", "verbal_jam"):
             self.session_panels_target = 4
-            return self.enter_verbal_story_jam(ui, resumed=True)
+            return self.start_oral_story_intake(ui, resumed=True)
         if pkind == "how_to_tutorial":
             self.session_panels_target = 4
             return self._prompt_tutorial_step(ui, resumed=True)
@@ -577,7 +653,7 @@ class SessionController:
 
         if kind == "story_jam_novel":
             self.session_panels_target = 4
-            return self.enter_verbal_story_jam(ui, resumed=False)
+            return self.start_oral_story_intake(ui, resumed=False)
         if kind == "how_to_tutorial":
             self.session_panels_target = 4
             return self._prompt_tutorial_step(ui, resumed=False)
@@ -608,10 +684,10 @@ class SessionController:
             if saved:
                 return self.resume_loaded_project(saved[0])
 
-        if "story jam" in low or "talk first" in low or "talk it out" in low and "100" in low:
+        if "story jam" in low or "talk plot" in low or "talk first" in low or ("100" in low and "comic" in low):
             return self.create_or_switch_project("story_jam_novel")
 
-        if "tutorial" in low or "how-to" in low or "how to play" in low:
+        if "tutorial" in low or "how-to" in low or "how to guide" in low or "how-to guide" in low:
             return self.create_or_switch_project("how_to_tutorial")
 
         if "diary" in low or "minecraft today" in low or "did in minecraft" in low:
@@ -680,47 +756,51 @@ class SessionController:
             f"Ask concisely for {step_instr}"
         )
 
-    def enter_verbal_story_jam(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
-        """Opens back-and-forth Verbal Story Jam mode: green mic turns ON so he can plot a giant 100-page story out loud before writing panels!"""
+    def start_oral_story_intake(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
+        """Bounded upfront oral plot intake (3–4 turns max, zero panels drawn, zero rewards, zero AI sentences displayed):
+        extracts the student's latent story structure for the AI's private memory before locking into full panel writing."""
         assert self.project is not None
-        self.project["stage"] = "verbal_jam"
-        self.phase = "VERBAL_STORY_JAM"
-        self.active_mic_request = {"purpose": "story_jam", "sentence": ""}
-        projects.save_project(self.project, sandbox=self.test_mode)
-        jbeats = self.project.get("jam_beats") or []
+        self.project["stage"] = "oral_intake"
+        self.phase = "ORAL_STORY_INTAKE"
+        self.active_mic_request = {"purpose": "oral_intake", "sentence": ""}
+        if resumed:
+            projects.save_project(self.project, sandbox=self.test_mode)
+        lp = self.project.get("latent_plan") or {}
+        turns_done = int(lp.get("turns") or 0)
         ui.append({"type": "remove", "id": "starters"})
         ui.append({"type": "remove", "id": "art_check_choices"})
+        ui.append({"type": "remove", "id": "intake_choices"})
         ui.append({"type": "item", "item": projects.project_ui_payload(self.project)})
-        if jbeats:
-            last_note = jbeats[-1].get("note", "")
+        ui.append({"type": "goal", "text": self.goal_badge()})
+        if turns_done >= 1:
             ui.append(
                 {
                     "type": "item",
                     "item": {
-                        "id": "jam_choices",
+                        "id": "intake_choices",
                         "kind": "choices",
-                        "prompt": f"{len(jbeats)} story beat{'s' if len(jbeats) != 1 else ''} on your Story Jam Board:",
-                        "options": ["✍️ Ready — Start Writing Panel 1!", "🎤 Keep Talking Out the Story"],
+                        "prompt": "",
+                        "options": ["Start writing Panel 1 →"],
                     },
                 }
             )
             spoken = (
-                f"{'Back in' if resumed else 'In'} Story Jam—last beat was \"{last_note}\". "
-                "Tell me into the green mic what happens next (or tap Ready when you want to start writing panels)!"
+                "Picking up your plot setup before Panel 1. "
+                "Tell me into the green mic how the rest of the story plays out (or tap Start writing Panel 1 if you're ready)."
             )
-            mic_prompt = "Speak into the green mic: what happens next in your story?"
+            mic_prompt = "Tell me how the rest of your story plays out"
         else:
             spoken = (
-                "Story Jam is open—let's talk out your giant story back and forth before writing a single panel. "
-                "Speak into the green mic: who is in this story, and what kicks things off?"
+                "Before we write Panel 1 of your 100-page comic, tell me your whole big story idea out loud—who is in it, "
+                "what happens, and where it's heading."
             )
-            mic_prompt = "Speak into the green mic: who is in your story, and what happens first?"
+            mic_prompt = "Tell me your big story idea out loud (who's in it & what happens)"
 
         ui.append(
             {
                 "type": "tutor_mic",
                 "action": "on",
-                "purpose": "story_jam",
+                "purpose": "oral_intake",
                 "target_word": "",
                 "sentence": "",
                 "prompt": mic_prompt,
@@ -730,78 +810,84 @@ class SessionController:
             {
                 "type": "input",
                 "mode": "type",
-                "prompt": "Green mic is ON—talk out your story (or type here, or tap 'Ready — Start Writing Panel 1!' anytime):",
+                "prompt": "Green mic is ON—tell Gemini your story plot first (or type it here):",
                 "prefill": "",
             }
         )
         self.ui_locked_this_turn.update({"show_choices", "ask_input"})
-        return ui, f'Say plainly in 1-2 short sentences (the green mic turns on right after you speak): "{spoken}"'
+        return ui, f'Say plainly in 1-2 short sentences (do NOT suggest plot ideas; the green mic turns on right after you speak): "{spoken}"'
 
-    def exit_verbal_story_jam_to_panels(self, ui: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
-        """Switches from Verbal Story Jam to panel-by-panel comic writing guided by his spoken `jam_beats`!"""
+    def finish_oral_intake_to_panels(self, ui: list[dict[str, Any]], lead_in: str = "") -> tuple[list[dict[str, Any]], str]:
+        """Locks oral intake permanently and enters full rigorous panel-by-panel writing tutoring."""
         assert self.project is not None
         self.project["stage"] = "drafting_panels"
+        lp = self.project.setdefault("latent_plan", {})
+        lp["ready"] = True
         self.active_mic_request = None
         projects.save_project(self.project, sandbox=self.test_mode)
         ui.append({"type": "tutor_mic", "action": "off"})
-        ui.append({"type": "remove", "id": "jam_choices"})
-        ui.append({"type": "reward", "label": "✍️ Story Jam Locked · Now Writing Panel by Panel!"})
+        ui.append({"type": "remove", "id": "intake_choices"})
         ui.append({"type": "item", "item": projects.project_ui_payload(self.project)})
         ui.append({"type": "goal", "text": self.goal_badge()})
-        return self._prompt_next_book_panel(ui, resumed=False)
+        ui, dir_p1 = self._prompt_next_book_panel(ui, resumed=False)
+        if lead_in:
+            dir_p1 = f'Start with a brief 1-clause confirmation ("{lead_in}"), then immediately: {dir_p1}'
+        return ui, dir_p1
 
-    def _handle_story_jam_utterance(self, raw: str, epoch: int) -> dict[str, Any]:
-        """Processes one spoken (or typed) brainstorming turn during `VERBAL_STORY_JAM`—adds beat + asks/challenges back-and-forth!"""
+    def _handle_oral_intake_turn(self, raw: str, epoch: int) -> dict[str, Any]:
+        """Processes one upfront oral plot-intake turn: updates tutor-only `latent_plan`, asks at most 3 follow-up probes,
+        then automatically locks into full Panel 1 writing tutoring with zero rewards or drawings during talking."""
         assert self.project is not None
         low = raw.lower().strip()
         if re.search(
-            r"\b(ready\s*(?:—|-)?\s*start\s+writing|start\s+writing|ready\s+to\s+write|write\s+panel|draw\s+the\s+panels|let'?s\s+write)\b",
+            r"\b(start\s+writing|ready\s+to\s+write|write\s+panel\s*1|let'?s\s+write|skip\s+to\s+panel)\b",
             low,
         ):
-            ui_go, dir_go = self.exit_verbal_story_jam_to_panels([])
-            return {"epoch": epoch, "kind": "JAM_TO_PANELS", "ui": ui_go, "directive": dir_go}
+            ui_go, dir_go = self.finish_oral_intake_to_panels([], lead_in="Got your plot—let's start writing Panel 1.")
+            return {"epoch": epoch, "kind": "ORAL_INTAKE_COMPLETE", "ui": ui_go, "directive": dir_go}
 
-        if "keep talking out the story" in low:
-            ui_k, dir_k = self.enter_verbal_story_jam([], resumed=True)
-            return {"epoch": epoch, "kind": "STORY_JAM_CONTINUE", "ui": ui_k, "directive": dir_k}
+        lp = dict(self.project.get("latent_plan") or {})
+        max_turns = int(lp.get("max_turns") or 4)
+        turn_num = int(lp.get("turns") or 0) + 1
+        extracted = run_latent_story_intake(self.rec, lp, raw, turn_num=turn_num, max_turns=max_turns)
+        lp = projects.update_latent_plan(self.project, raw, extracted, sandbox=self.test_mode)
 
-        existing = list(self.project.get("jam_beats") or [])
-        jam_out = run_story_jam_turn(self.rec, existing, raw)
-        projects.add_jam_beat(
-            self.project,
-            jam_out["beat_note"],
-            title_hint=jam_out.get("book_title", ""),
-            sandbox=self.test_mode,
-        )
-        n_beats = len(self.project.get("jam_beats") or [])
-        self.last_kid_kind = "STORY_JAM_BEAT"
-        self.active_mic_request = {"purpose": "story_jam", "sentence": ""}
-        spoken = jam_out["spoken_reply"]
-        ui_j: list[dict[str, Any]] = [
-            {"type": "remove", "id": "jam_choices"},
-            {"type": "reward", "label": f"🎙️ Story Jam Beat #{n_beats} Added!"},
+        if lp.get("ready") or turn_num >= max_turns:
+            ui_go, dir_go = self.finish_oral_intake_to_panels(
+                [],
+                lead_in="Got your whole story plot in my head—now let's write Panel 1.",
+            )
+            return {"epoch": epoch, "kind": "ORAL_INTAKE_COMPLETE", "ui": ui_go, "directive": dir_go}
+
+        self.last_kid_kind = "ORAL_INTAKE_TURN"
+        self.draw_unlocked = False
+        self.active_mic_request = {"purpose": "oral_intake", "sentence": ""}
+        spoken = extracted["spoken_question"]
+        ui_in: list[dict[str, Any]] = [
+            {"type": "remove", "id": "intake_choices"},
             {"type": "item", "item": projects.project_ui_payload(self.project)},
+            {"type": "goal", "text": self.goal_badge()},
             {
                 "type": "item",
                 "item": {
-                    "id": "jam_choices",
+                    "id": "intake_choices",
                     "kind": "choices",
-                    "prompt": f"{n_beats} beat{'s' if n_beats != 1 else ''} mapped out! Keep talking, or ready to write Panel 1?",
-                    "options": ["✍️ Ready — Start Writing Panel 1!", "🎤 Keep Talking Out the Story"],
+                    "prompt": "",
+                    "options": ["Start writing Panel 1 →"],
                 },
             },
             {
                 "type": "tutor_mic",
                 "action": "on",
-                "purpose": "story_jam",
+                "purpose": "oral_intake",
                 "target_word": "",
                 "sentence": "",
-                "prompt": "Green mic is ON — answer or say what happens next!",
+                "prompt": "Answer out loud into the green mic",
             },
             {
                 "type": "input",
                 "mode": "type",
-                "prompt": f"Beat #{n_beats} saved! Speak into the green mic (or tap '✍️ Ready — Start Writing Panel 1!' anytime):",
+                "prompt": f"Plot intake ({turn_num}/{max_turns}): answer via the green mic (or tap 'Start writing Panel 1 →' if that's the whole plot):",
                 "prefill": "",
             },
         ]
@@ -810,12 +896,12 @@ class SessionController:
             "epoch": epoch,
             "kind": self.last_kid_kind,
             "spoken_fallback": spoken,
-            "ui": ui_j,
-            "directive": f'Deliver this conversational Story Jam reply in 1-2 short natural sentences (do NOT suggest plot ideas; the green mic turns back on automatically right after you finish speaking): "{spoken}"',
+            "ui": ui_in,
+            "directive": f'Ask this single plain follow-up question in 1-2 short sentences (do NOT suggest plot ideas; the green mic turns on automatically after you speak): "{spoken}"',
         }
 
     def _prompt_tutorial_step(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
-        """Drives Illustrated Step-by-Step How-To Guide — 100% open to HIS topic and HIS steps with zero topic/step suggesting!"""
+        """Drives Written Step-by-Step How-To Guide — pure text procedural document (zero cartoons, zero topic/step suggesting!)."""
         assert self.project is not None
         self.phase = "BUILDING"
         ui.append({"type": "remove", "id": "starters"})
@@ -831,14 +917,14 @@ class SessionController:
                 }
             )
             self.ui_locked_this_turn.update({"show_choices", "ask_input"})
-            spoken = "Starting a new Illustrated How-To Guide. What is your guide going to be about?"
+            spoken = "Starting a new How-To Guide. What is your guide going to be about?"
             return ui, f'Say ONLY this exact open question plainly (do NOT suggest any topics!): "{spoken}"'
 
         pcount = projects.total_panels(self.project)
         next_step = pcount + 1
         topic = self.project.get("tutorial_topic") or self.project.get("title") or "How-To Guide"
         if next_step == 1:
-            spoken = f"{'Welcome back to' if resumed else 'Got it—'} \"{topic}\". What is Step 1 in your guide? Write one complete sentence to draw Step 1."
+            spoken = f"{'Welcome back to' if resumed else 'Got it—'} \"{topic}\". What is Step 1 in your guide? Write one complete sentence for Step 1."
             ui.append(
                 {
                     "type": "input",
@@ -848,17 +934,17 @@ class SessionController:
                 }
             )
             self.ui_locked_this_turn.update({"ask_input"})
-            return ui, f'Say ONLY this exact prompt plainly (do NOT assume or suggest what Step 1 should be!): "{spoken}"'
+            return ui, f'Say ONLY this exact prompt plainly (pure written text guide—do NOT assume or suggest what Step 1 should be!): "{spoken}"'
 
         goal_desc = (
-            f"We are on Step {next_step} of the student's illustrated guide '{topic}'. "
+            f"We are on Step {next_step} of the student's written How-To Guide '{topic}' (pure text procedural guide). "
             f"DO NOT suggest, guess, or hint at what Step {next_step} should be—the student already has their own ideas! "
             f"Briefly reference ONLY what they just wrote in Step {next_step - 1}, and ask plainly and openly what Step {next_step} is next."
         )
         beat = self._pop_or_direct_beat(goal_desc, "because | if | when | so")
         self._beat_input(ui, beat)
         self.ui_locked_this_turn.update({"show_card", "ask_input"})
-        return ui, f"Deliver this open Step {next_step} prompt naturally in 1–2 short sentences (zero suggestions!): {beat['spoken_prompt']}"
+        return ui, f"Deliver this open Step {next_step} prompt naturally in 1–2 short sentences (pure written guide, zero suggestions!): {beat['spoken_prompt']}"
 
     def _prompt_diary_step(self, ui: list[dict[str, Any]], resumed: bool = False) -> tuple[list[dict[str, Any]], str]:
         """Drives Illustrated 'What I Did in Minecraft Today' Personal Recount Diary."""
@@ -950,13 +1036,13 @@ class SessionController:
         kind = self.project.get("kind")
         st = self.project.get("stage", "")
         if kind == "how_to_tutorial":
-            return f"Ask for Step {projects.total_panels(self.project) + 2} of their '{self.project.get('title')}' tutorial."
+            return f"Ask openly for Step {projects.total_panels(self.project) + 2} of their '{self.project.get('title')}' written How-To Guide (no drawings)."
         if kind == "minecraft_diary":
             return f"Ask what happened next in Minecraft today for Diary Panel {projects.total_panels(self.project) + 2}."
         if kind == "story_jam_novel":
-            jb_idx, jb = projects.next_unwritten_jam_beat(self.project)
-            if jb:
-                return f'Invite writing Panel {projects.total_panels(self.project) + 2} for Story Jam Beat #{jb_idx}: "{jb.get("note", "")}".'
+            pnum = projects.total_panels(self.project) + 2
+            speech_cue = ' (Invite adding what a character shouts in "quote marks" for a speech bubble!)' if pnum >= 2 else ""
+            return f"Using their private Latent Story Structure, ask ONE open why/how/when/what-happens-next question for Panel {pnum} (never give them a sentence to copy!).{speech_cue}"
         if kind == "epic_graphic_novel":
             if st == "spine_beginning":
                 return "Jump to the Big Finale: how does this whole crazy story finally end up?"
@@ -1425,24 +1511,40 @@ class SessionController:
         sp = self.project.get("spine") or {}
         mbeats = projects.middle_beats_list(sp)
 
-        # If this book has spoken Story Jam beats (`story_jam_novel` or a graphic novel using Story Jam), guide directly from the next unwritten beat!
-        jb_idx, jb_next = projects.next_unwritten_jam_beat(self.project)
-        if jb_next:
-            bnote = jb_next.get("note", "")
-            spoken_jb = (
-                f'Panel {next_pnum} comes from your Story Jam Beat #{jb_idx}: "{bnote}" '
-                "Write one complete sentence for this panel (and put quotes if someone yells something for a speech bubble)!"
-            )
-            ui.append(
-                {
-                    "type": "input",
-                    "mode": "type",
-                    "prompt": f"Panel {next_pnum} (Story Jam Beat #{jb_idx}: “{bnote[:75]}”): Write 1 complete sentence!",
-                    "prefill": "",
-                }
-            )
+        lp = self.project.get("latent_plan") or {}
+        has_latent = pkind == "story_jam_novel" or bool(lp.get("turns") or lp.get("scenes") or lp.get("premise"))
+
+        if next_pnum >= 2 and next_pnum % 2 == 0:
+            tier_req = 'Invite them to include what a character shouts or says in "quotation marks" (like "Get off!" yelled Dylan.) if they want a real comic speech bubble on the panel!'
+            conns = "when | because | but"
+        elif tier >= 4:
+            tier_req = "Invite starting with where or when the moment happens."
+            conns = "when | although | because"
+        else:
+            tier_req = "Ask a specific story question driving the scene forward."
+            conns = "when | because | so"
+
+        if has_latent:
+            if next_pnum == 1:
+                zoom_goal = (
+                    f"We are starting Chapter 1, Panel 1 of the student's 100-page comic '{self.project.get('title')}'. "
+                    "Use your private Latent Story Structure above ONLY to ask ONE specific, open zoom-in question about the very opening moment of THEIR story "
+                    "(where the main character starts, what kicks off the first problem, or why)—NEVER quote a pre-written sentence for them to copy! "
+                    f"{tier_req}"
+                )
+            else:
+                zoom_goal = (
+                    f"We are on Chapter {ch_num}, Panel {next_pnum} of '{self.project.get('title')}'. "
+                    "Look at what the student JUST wrote in Panel "
+                    f"{next_pnum - 1} and where that sits inside your private Latent Story Structure above. "
+                    "Ask ONE specific, curious Socratic question ('why', 'how', 'when', 'what happens the second...') that zooms into the immediate next comic moment "
+                    "without jumping ahead to the distant ending and NEVER giving them a sentence to copy! "
+                    f"{tier_req}"
+                )
+            beat = self._pop_or_direct_beat(zoom_goal, conns)
+            self._beat_input(ui, beat)
             self.ui_locked_this_turn.update({"show_card", "ask_input"})
-            return ui, f'Say plainly in 1-2 short sentences: "{spoken_jb}"'
+            return ui, f"Deliver this specific, story-aware prompt for Panel {next_pnum} in 1–2 natural sentences: {beat['spoken_prompt']}"
 
         if ch_num == 1:
             act_name = "Chapter 1 (The Kickoff)"
@@ -1454,16 +1556,6 @@ class SessionController:
         else:
             act_name = f"Chapter {ch_num} (The Big Finale)"
             act_focus = sp.get("end", "")
-
-        if next_pnum >= 2 and next_pnum % 2 == 0:
-            tier_req = 'Invite them to include what a character shouts or says in "quotation marks" (like "Get off!" yelled Dylan.) if they want a real comic speech bubble on the panel!'
-            conns = "when | because | but"
-        elif tier >= 4:
-            tier_req = "Invite starting with where or when the moment happens."
-            conns = "when | although | because"
-        else:
-            tier_req = "Ask a specific story question driving the scene forward."
-            conns = "when | because | so"
 
         if next_pnum == 1 and act_focus:
             zoom_goal = (
@@ -1561,7 +1653,7 @@ class SessionController:
             return f"Free writing ({self.active_mechanic or 'quick comic strip'})."
         kind = self.project.get("kind")
         stage = self.project.get("stage", "")
-        if kind == "epic_graphic_novel":
+        if kind in ("epic_graphic_novel", "story_jam_novel"):
             n_mid = len(projects.middle_beats_list(self.project.get("spine") or {}))
             if stage == "spine_beginning":
                 return "Graphic novel plot board: the KICKOFF (who is the hero + what trouble starts it). This sentence unlocks the cover art."
@@ -1571,6 +1663,10 @@ class SessionController:
                 return f"Graphic novel plot board: MIDDLE TWIST #{n_mid + 1} (what else goes wrong / escalates). Good spot for because/when/but."
             ch = len(self.project.get("chapters") or [1])
             return f"Graphic novel, chapter {ch}, panel {projects.total_panels(self.project) + 1}. Dialogue in quotes becomes a speech bubble."
+        if kind == "how_to_tutorial":
+            return f"Written How-To Guide '{self.project.get('title')}', Step {projects.total_panels(self.project) + 1} (clear procedural sentence — NO drawings or cartoons)."
+        if kind == "minecraft_diary":
+            return f"Illustrated Minecraft Diary, Entry #{projects.total_panels(self.project) + 1}."
         if kind == "epic_codex":
             return f"Fact codex step {self.codex_step} (0 = inference about the 3 sources; 1-3 = building a 3-sentence encyclopedia paragraph)."
         if kind == "medium_pitch":
@@ -1760,8 +1856,8 @@ class SessionController:
                 "directive": f'Say in 1 short plain sentence: "{spoken}"',
             }
 
-        if eff_purpose == "story_jam" and transcript:
-            return self._handle_story_jam_utterance(transcript, epoch)
+        if eff_purpose in ("oral_intake", "story_jam") and transcript:
+            return self._handle_oral_intake_turn(transcript, epoch)
 
         if eff_purpose == "picture" and transcript:
             if req.get("target"):
@@ -2392,9 +2488,9 @@ class SessionController:
         self.turn_index += 1
         self.last_kid_text = raw
 
-        # ---------------- 00-JAM. VERBAL 100-PAGE STORY JAM & HOW-TO TUTORIAL TOPIC SELECTION ----------------
-        if self.project and (self.phase == "VERBAL_STORY_JAM" or self.project.get("stage") == "verbal_jam") and raw:
-            return self._handle_story_jam_utterance(raw, epoch)
+        # ---------------- 00-INTAKE. BOUNDED ORAL STORY INTAKE & HOW-TO GUIDE TOPIC SELECTION ----------------
+        if self.project and (self.phase in ("ORAL_STORY_INTAKE", "VERBAL_STORY_JAM") or self.project.get("stage") in ("oral_intake", "verbal_jam")) and raw:
+            return self._handle_oral_intake_turn(raw, epoch)
 
         if self.project and self.project.get("kind") == "how_to_tutorial" and self.project.get("stage") == "tutorial_topic" and raw:
             clean_top = raw.strip().rstrip(".!?")
@@ -2403,13 +2499,10 @@ class SessionController:
             self.project["tutorial_topic"] = clean_top[:72]
             self.project["custom_titled"] = True
             self.project["stage"] = "drafting_panels"
-            if re.search(r"\b(minecraft|creeper|redstone|nether|ender|pickaxe|diamond|villager|wither)\b", clean_top, re.I):
-                projects.set_project_style(self.project, "blocky_voxel", sandbox=self.test_mode)
             projects.save_project(self.project, sandbox=self.test_mode)
             self.last_kid_kind = "PROJECT_PICK"
             ui_tut: list[dict[str, Any]] = [
                 {"type": "remove", "id": "tutorial_topics"},
-                {"type": "reward", "label": f"📘 Guide Started · “{self.project['title']}”"},
                 {"type": "item", "item": projects.project_ui_payload(self.project)},
             ]
             ui_tut, dir_tut = self._prompt_tutorial_step(ui_tut, resumed=False)
@@ -2438,7 +2531,7 @@ class SessionController:
                 return self._handle_wrong_slot_or_undo(epoch, move_end)
 
         # ---------------- 00-LETTERING. ADD SPEECH BUBBLE / DIALOGUE / CAPTION ("it isn't a comic", "add dialogue", 'make Dylan say "..."') ----------------
-        if self.phase not in ("INLINE_WORD_HELP", "WORD_STUDY"):
+        if self.phase not in ("INLINE_WORD_HELP", "WORD_STUDY") and not (self.project and self.project.get("kind") == "how_to_tutorial"):
             let_intent = self._parse_comic_lettering_intent(raw)
             if let_intent:
                 target_let = self.pending_art_target or (projects.latest_art_target(self.project) if self.project else "")
@@ -2554,6 +2647,7 @@ class SessionController:
         # ---------------- 00A. DIRECTOR META-CORRECTION GUARD ("why are you having the spaceship stuck on the moon and not earth>") ----------------
         if (
             self.project
+            and self.project.get("kind") != "how_to_tutorial"
             and how in ("typed", "spoken", "handwritten")
             and self.phase not in ("INLINE_WORD_HELP", "WORD_STUDY")
             and self._is_director_correction(raw)
@@ -2812,7 +2906,7 @@ class SessionController:
                 self.inline_word_help_tries = 0
                 self.last_kid_kind = "COACH_FIX"
                 prompt_ce = (
-                    "Nice spelling fix! Now capitalize the first letter and add a . or ! at the end to unlock the art:"
+                    "Nice spelling fix! Now capitalize the first letter and add a . or ! at the end:"
                     if (miss_c and miss_e)
                     else ("Nice spelling fix! Capitalize the first letter at the start and hit Enter:" if miss_c else "Nice spelling fix! Add a . ! or ? at the end and hit Enter:")
                 )
@@ -3080,7 +3174,7 @@ class SessionController:
                 self.ui_locked_this_turn.add("ask_input")
                 return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": f"Word '{raw}' added to box—ask in 1 short sentence to finish the complete sentence."}
 
-            if any(k in norm for k in ("continue ", "full comic book", "graphic novel", "new comic", "codex", "field guide", "fact", "pitch", "why we should")):
+            if any(k in norm for k in ("continue ", "full comic book", "graphic novel", "new comic", "100-page", "talk plot", "story jam", "how-to", "how to", "tutorial", "diary", "minecraft today", "codex", "field guide", "fact", "pitch", "why we should")):
                 self.last_kid_kind = "PROJECT_PICK"
                 self.avoidance_streak = 0
                 self.refusal_streak = 0
@@ -3099,18 +3193,9 @@ class SessionController:
                     f"{self.name} chose '{raw}'. Call build_activity NOW with a concrete spec where EVERY round requires "
                     "typing or repairing a complete sentence, AND put a 2-kernel Sentence Combining warm-up card on screen while it builds."
                 )
-            else:
-                scaf = generate_combine_scaffold(self.rec, self.active_story, "", self.rung)
-                card_txt = (
-                    f"Option A — Combine these two lines with {_fmt_conns(scaf['connectors'])}:\n"
-                    f"  1. {scaf['kernel_1']}\n  2. {scaf['kernel_2']}\n\n"
-                    "Option B — Write your own complete sentence (Who + Does What + Capital & .)"
-                )
-                ui_actions.append({"type": "item", "item": {"id": "forge", "kind": "card", "title": f"{raw} · Step 1 of {self.goal_target}", "text": card_txt}})
-                ui_actions.append({"type": "input", "mode": "type", "prompt": "Type Sentence 1 (combine Option A, or write your own complete sentence)."})
-                self.ui_locked_this_turn.update({"show_card", "ask_input"})
-                directive = f"{self.name} picked '{raw}'. Call comic_new(panels='3') and invite combining Option A or writing their own complete first sentence."
-            return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": directive}
+                return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": directive}
+            strip_ui, strip_dir = self.create_or_switch_project("quick_strip", title=raw[:60])
+            return {"kind": self.last_kid_kind, "ui": strip_ui, "directive": strip_dir}
 
         # ---------------- 2B. CUSTOM CODEX TOPIC SUBMISSION ----------------
         if self.awaiting_codex_topic and self.project and self.project.get("kind") == "epic_codex" and raw:
@@ -3662,11 +3747,12 @@ class SessionController:
                 needed.append("update " + (" and ".join(gf_ptrs)))
             need_str = ", and ".join(needed) if len(needed) <= 2 else (", ".join(needed[:-1]) + f", and {needed[-1]}")
             sel_word = word_issues[0]["wrote"] if (word_issues and not missing_end and not missing_cap) else ""
+            lead_polish = "Almost ready!" if (self.project and self.project.get("kind") == "how_to_tutorial") else "Almost unlocks the art!"
             ui_actions.append(
                 {
                     "type": "input",
                     "mode": "type",
-                    "prompt": f"Almost unlocks the art! {need_str[:1].upper() + need_str[1:]} right in the box and hit Enter.",
+                    "prompt": f"{lead_polish} {need_str[:1].upper() + need_str[1:]} right in the box and hit Enter.",
                     "prefill": raw,
                     "select_word": sel_word,
                 }
@@ -3726,7 +3812,7 @@ class SessionController:
                 return {"kind": self.last_kid_kind, "ui": ui_actions, "directive": "Ask them to frame Page 3 with 'Although' or 'Even though' (pre-filled in box) to answer the counter-argument."}
 
         # Gate 3: Mastery Tier Escalation Gates on Graphic Novel Panels (Tier 2 causal, Tier 3 dialogue, Tier 4 vivid verb revision)
-        if self.project and self.project.get("kind") == "epic_graphic_novel" and self.project.get("stage") == "drafting_panels" and not self.tier_nudged_this_item:
+        if self.project and self.project.get("kind") in ("epic_graphic_novel", "story_jam_novel") and self.project.get("stage") == "drafting_panels" and not self.tier_nudged_this_item:
             next_pnum = projects.total_panels(self.project) + 1
             tier = self.current_tier()
             if tier >= 3 and next_pnum % 2 == 0 and not has_dial:
@@ -3954,6 +4040,46 @@ class SessionController:
             ui_actions, next_dir = self._prompt_pitch_step(ui_actions)
             return _finish({"kind": self.last_kid_kind, "ui": ui_actions, "directive": f"Page {self.tree_step} locked and rendering! " + next_dir})
 
+        # CASE C2: Advancing Pure Written How-To Guide (`how_to_tutorial`) — Zero Cartoons / Zero Art Gate!
+        if self.project and self.project.get("kind") == "how_to_tutorial":
+            self.last_kid_kind = "COMPLETE_SENTENCE"
+            self.draw_unlocked = False
+            self.goal_done += 1
+            if self.goal_done == 1 and self.rung == "B3.1_simple":
+                self.rung = "B3.1_compound"
+            elif self.goal_done >= 2 and self.rung in ("B3.1_simple", "B3.1_compound"):
+                self.rung = "B3.1_complex"
+            trigger_ws_tut = not self.word_study_done and (
+                (self.misspellings and self.goal_done >= 2) or self.goal_done >= self.session_panels_target
+            )
+            if trigger_ws_tut:
+                return _finish(self._launch_word_forge(ui_actions, raw))
+            ui_actions.append({"type": "goal", "text": self.goal_badge()})
+            if self.goal_done >= self.session_panels_target:
+                self.phase = "WRAP"
+                total_steps = projects.total_panels(self.project) + 1
+                ui_actions.append(
+                    {
+                        "type": "item",
+                        "item": {
+                            "id": "done_choices",
+                            "kind": "choices",
+                            "prompt": f"Today's slice complete ({total_steps} steps in your written How-To Guide)!",
+                            "options": ["Keep going — add 3 more steps", f"Download Guide PDF & save for {self.parent_title}"],
+                        },
+                    }
+                )
+                self.ui_locked_this_turn.add("show_choices")
+                return _finish(
+                    {
+                        "kind": self.last_kid_kind,
+                        "ui": ui_actions,
+                        "directive": f"Step {total_steps} is saved into their written How-To Guide '{self.project.get('title')}' (no drawings). Mention the Download PDF button on the right and ask if they want to add more steps or save here.",
+                    }
+                )
+            ui_actions, next_dir = self._prompt_tutorial_step(ui_actions, resumed=False)
+            return _finish({"kind": self.last_kid_kind, "ui": ui_actions, "directive": next_dir})
+
         # CASE D: Graphic Novel Panel, 3-Panel Strip, or Quick Sprint Sentence!
         self.last_kid_kind = "COMPLETE_SENTENCE"
         self.draw_unlocked = True
@@ -4030,9 +4156,11 @@ class SessionController:
             return None
 
         if name in ("draw", "comic_panel"):
+            if self.project and self.project.get("kind") == "how_to_tutorial":
+                return {"ok": True, "status": "How-To Guides are pure written documents with no drawings."}
             if not self.draw_unlocked:
                 if self.last_kid_kind in ("COMPLETE_SENTENCE", "SPINE_BEAT_COMPLETE"):
-                    return {"ok": True, "status": "Handled automatically by the project/panel renderer. Do not repeat yourself."}
+                    return {"ok": True, "status": "Already rendered."}
                 return {
                     "blocked": True,
                     "reason": f"Drawing blocked by education gate: last student input class was {self.last_kid_kind!r}. Wait until the complete sentence / power-up edit is submitted.",
@@ -4053,7 +4181,7 @@ class SessionController:
             return {"blocked": True, "reason": "Wait until the complete sentence is finalized before adding to the page."}
 
         if name in ("show_card", "show_choices", "ask_input", "show_word") and name in self.ui_locked_this_turn:
-            return {"ok": True, "note": f"{name} is already on screen. Do NOT repeat anything you already said aloud."}
+            return {"ok": True}
 
         if name == "show_choices":
             opts = [o.strip() for o in (args.get("options") or "").split("|") if o.strip()]

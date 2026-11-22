@@ -57,9 +57,24 @@ def _clean_transcript(raw: str) -> str:
     return s
 
 
+_LIVE_TOOL_NAMES = {
+    "build_activity",
+    "change_activity",
+    "open_activity",
+    "close_activity",
+    "message_activity",
+    "save_piece",
+    "invent_ideas",
+}
+
+
 def _tool_declarations() -> list[types.Tool]:
+    """Exposes ONLY tools not already deterministically driven by `SessionController` so the Live audio model
+    never fires redundant post-speech UI tool calls (`ask_input`, `show_choices`, etc.) that trigger a second audio turn."""
     decls = []
     for spec in TOOL_SPECS:
+        if spec["name"] not in _LIVE_TOOL_NAMES:
+            continue
         props = {k: types.Schema(type=types.Type.STRING, description=d) for k, (_, d) in spec["params"].items()}
         params = types.Schema(type=types.Type.OBJECT, properties=props, required=spec["required"]) if props else None
         decls.append(types.FunctionDeclaration(name=spec["name"], description=spec["description"], parameters=params))
@@ -290,16 +305,23 @@ class TutorSession:
             return ""
         self.ctrl.draw_unlocked = False  # Prevent duplicate LLM draw tool call for this same sentence
 
-        # Persistent Multi-Session Book / Graphic Novel / Codex Project!
+        # Persistent Multi-Session Book / Graphic Novel / Codex / How-To Guide Project!
         if self.ctrl.project:
             proj = self.ctrl.project
+            if proj.get("kind") == "how_to_tutorial":
+                pnum, _ = projects.add_panel_to_project(proj, sentence, scene="", persist=True, sandbox=self.test_mode)
+                await self.ui({"type": "reward", "label": f"✓ Step {pnum} Added to “{proj.get('title','How-To Guide')}”"})
+                await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
+                await self.ui({"type": "goal", "text": self.ctrl.goal_badge()})
+                self.log.add("howto_step_saved", project=proj["id"], step=pnum, sentence=sentence)
+                return f" (Step {pnum} is saved on the written How-To Guide page on the right—do NOT mention drawing or pictures.)"
             pnum, _ = projects.add_panel_to_project(proj, sentence, scene=sentence, persist=True, sandbox=self.test_mode)
             await self.ui({"type": "reward", "label": f"★ Panel {pnum} Inked into “{proj.get('title','Book')}”!"})
             await self.ui({"type": "item", "item": projects.project_ui_payload(proj)})
             await self.ui({"type": "goal", "text": self.ctrl.goal_badge()})
             self.spawn(self._draw_project_panel(proj, pnum, sentence))
             self.log.add("auto_draw_book_panel", project=proj["id"], panel=pnum, sentence=sentence)
-            return f" (Book Panel {pnum} is already saved and rendering on screen automatically—do NOT call draw or comic_panel again.)"
+            return f" (Book Panel {pnum} is already saved and rendering on screen automatically.)"
 
         if self.comic:
             idx = next((i for i, p in enumerate(self.comic["panels"]) if not p.get("image") and p.get("status") != "drawing"), None)
@@ -885,21 +907,11 @@ class TutorSession:
             if not self.ctrl.project:
                 return
             j_act = str(m.get("action") or "").strip()
-            if j_act == "delete_beat":
-                bid = str(m.get("beat_id") or "").strip()
-                if bid and projects.remove_jam_beat(self.ctrl.project, bid, sandbox=self.test_mode):
-                    await self.ui({"type": "item", "item": projects.project_ui_payload(self.ctrl.project)})
-                return
-            self.kid_events += 1
-            if j_act == "start_writing":
-                ui_acts, dir_w = await asyncio.to_thread(self.ctrl.exit_verbal_story_jam_to_panels, [])
+            if j_act == "start_writing" and self.ctrl.project.get("stage") in ("oral_intake", "verbal_jam"):
+                self.kid_events += 1
+                ui_acts, dir_w = await asyncio.to_thread(self.ctrl.finish_oral_intake_to_panels, [])
                 await self.apply_controller_ui(ui_acts, epoch=self.ctrl.blackboard.bump_epoch())
-                await self.from_kid(f"[{self.name} switched from Story Jam to writing comic panels]", dir_w)
-                return
-            if j_act == "start_jam":
-                ui_j, dir_j = await asyncio.to_thread(self.ctrl.enter_verbal_story_jam, [], True)
-                await self.apply_controller_ui(ui_j, epoch=self.ctrl.blackboard.bump_epoch())
-                await self.from_kid(f"[{self.name} opened Verbal Story Jam to talk out more of the story]", dir_j)
+                await self.from_kid(f"[{self.name} is ready to start writing Panel 1]", dir_w)
                 return
 
         elif kind == "request_dialogue_mic":
@@ -1275,6 +1287,10 @@ class TutorSession:
                             if len(self.tutor_buf.strip()) > 8:
                                 self.spoke_since_kid = True
                             await self.ui({"type": "tutor_caption", "turn": self.turn, "text": self.tutor_buf.strip()})
+                        elif self.tutor_buf:
+                            # Partial token (e.g. "No") resolved to a stripped silence marker ("No speech!") -> remove bubble!
+                            self.tutor_buf = ""
+                            await self.ui({"type": "tutor_clear", "turn": self.turn})
                     if sc.interrupted:
                         self._flush_tutor()
                         self.tutor_busy = False
@@ -1300,21 +1316,16 @@ class TutorSession:
 
     async def handle_tool_calls(self, calls: list[Any]) -> None:
         responses = []
-        already_spoke = self.spoke_since_kid
         for fc in calls:
             args = dict(fc.args or {})
             gate_block = self.ctrl.gate_tool(fc.name, args)
             if gate_block is not None:
-                if already_spoke and gate_block.get("ok"):
-                    gate_block = {**gate_block, "stop_speaking": "You ALREADY spoke to the student this turn. End your turn silently now without repeating yourself."}
                 self.log.add("tool_gated", name=fc.name, args=args, gate=gate_block)
                 responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response=gate_block))
                 continue
             self.log.add("tool", name=fc.name, args=args)
             try:
                 result = await self.run_tool(fc.name, args)
-                if already_spoke and isinstance(result, dict):
-                    result = {**result, "note_on_speech": "If you ALREADY spoke the next sentence prompt aloud before this tool call, do NOT repeat it; otherwise state it once briefly."}
             except Exception as e:
                 result = {"error": str(e)}
                 self.log.add("error", where=f"tool:{fc.name}", error=traceback.format_exc()[-800:])

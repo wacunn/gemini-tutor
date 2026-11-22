@@ -499,6 +499,45 @@ def project_page(pid: str):
         cap_html = f"<figcaption>{html.escape(cap_txt)}</figcaption>" if (cap_txt or "").strip() else ""
         return f"<figure><div class='art-wrap'><span class='pno'>{html.escape(badge_lbl)}</span>{img}{bubs}</div>{cap_html}</figure>"
 
+    if proj.get("kind") == "how_to_tutorial":
+        step_items = []
+        for ch in ui_proj.get("chapters") or []:
+            for pp in ch.get("panels") or []:
+                snum = int(pp.get("number") or len(step_items) + 1)
+                stxt = html.escape(str(pp.get("caption") or pp.get("scene") or ""))
+                step_items.append(f"<li class='howto-step'><span class='step-tag'>STEP {snum}</span><div class='step-body'>{stxt}</div></li>")
+        steps_html = "".join(step_items) or "<li class='howto-empty'>No steps written yet.</li>"
+        aud = f"<div class='for'>For {html.escape(proj['audience'])}</div>" if proj.get("audience") else ""
+        back_js = "if(window.opener){window.close();return false;}if(history.length>1){history.back();return false;}"
+        return HTMLResponse(f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(proj.get('title','How-To Guide'))}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{{font-family:'Google Sans Text',-apple-system,sans-serif;max-width:820px;margin:0 auto;padding:16px 24px 64px;color:#1d1d1f;background:#faf9f6;line-height:1.65}}
+.nav-bar{{position:sticky;top:0;z-index:20;background:rgba(250,249,246,.95);backdrop-filter:blur(8px);padding:12px 0;margin-bottom:22px;border-bottom:1px solid #e5e2dc;display:flex;justify-content:space-between;align-items:center;gap:12px}}
+.back-btn{{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#1d1d1f;border:1.5px solid #ccc;text-decoration:none;padding:8px 16px;border-radius:999px;font-weight:600;font-size:15px}}
+.btn{{display:inline-block;background:#1a56c4;color:#fff;text-decoration:none;padding:9px 18px;border-radius:999px;font-weight:600;font-size:15px}}
+.sheet{{background:#fff;border:2px solid #22262e;border-radius:16px;padding:32px 36px;box-shadow:0 6px 24px rgba(0,0,0,.06)}}
+.eyebrow{{color:#1a56c4;font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}}
+h1{{font-size:34px;margin:0 0 6px;line-height:1.2}}
+.by{{color:#555;font-size:15px}} .for{{color:#777;font-style:italic;margin-bottom:20px}}
+.howto-list{{list-style:none;padding:0;margin:24px 0 0;display:flex;flex-direction:column;gap:14px}}
+.howto-step{{display:flex;align-items:flex-start;gap:16px;background:#fcfcfa;border:1.5px solid #e2e5ec;border-radius:12px;padding:16px 18px}}
+.step-tag{{background:#e8f0fe;color:#1a44a8;border:1.5px solid #1a56c4;border-radius:8px;padding:3px 10px;font-weight:700;font-size:13px;white-space:nowrap;margin-top:2px}}
+.step-body{{font-size:18px;color:#1d1d1f;flex:1}}
+.howto-empty{{color:#777;font-style:italic}}
+</style></head><body>
+<div class="nav-bar">
+  <a class="back-btn" href="/" onclick="{back_js}">← Back to Studio</a>
+  <a class="btn" href="/api/project/{html.escape(proj['id'])}/pdf">Download Guide PDF</a>
+</div>
+<div class="sheet">
+  <div class="eyebrow">How-To Guide · {total_panels(proj)} step(s)</div>
+  <h1>{html.escape(proj.get('title','How-To Guide'))}</h1>
+  <div class="by">Written by {html.escape(proj.get('author',''))}</div>{aud}
+  <ol class="howto-list">{steps_html}</ol>
+</div>
+</body></html>""")
+
     spine_html = ""
     if sp.get("beginning") or mbs or sp.get("end"):
         rows = []

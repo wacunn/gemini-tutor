@@ -100,16 +100,18 @@ def _render_cover(proj: dict[str, Any], panels: list[dict[str, Any]]) -> Image.I
     pkind = proj.get("kind", "")
     kind_label = {
         "epic_graphic_novel": "GRAPHIC NOVEL EDITION",
-        "story_jam_novel": "100-PAGE STORY JAM GRAPHIC NOVEL",
-        "how_to_tutorial": "OFFICIAL ILLUSTRATED HOW-TO GUIDE",
+        "story_jam_novel": "100-PAGE GRAPHIC NOVEL EDITION",
         "minecraft_diary": "ILLUSTRATED MINECRAFT & ADVENTURE DIARY",
         "epic_codex": "ILLUSTRATED FIELD CODEX",
         "medium_pitch": "ILLUSTRATED PITCH EDITION",
     }.get(pkind, "ORIGINAL COMIC EDITION")
     n_panels = len(panels)
     n_ch = len(proj.get("chapters") or [1])
-    unit_lbl = "STEP" if pkind == "how_to_tutorial" else ("LOG PANEL" if pkind == "minecraft_diary" else "PANEL")
-    banner = f"{kind_label}  ·  {n_panels} {unit_lbl}{'S' if n_panels != 1 else ''}" if pkind in ("how_to_tutorial", "minecraft_diary") else f"{kind_label}  ·  {n_ch} CHAPTER{'S' if n_ch != 1 else ''}  ·  {n_panels} PANEL{'S' if n_panels != 1 else ''}"
+    banner = (
+        f"{kind_label}  ·  {n_panels} LOG PANEL{'S' if n_panels != 1 else ''}"
+        if pkind == "minecraft_diary"
+        else f"{kind_label}  ·  {n_ch} CHAPTER{'S' if n_ch != 1 else ''}  ·  {n_panels} PANEL{'S' if n_panels != 1 else ''}"
+    )
     d.text((MARGIN + 16, 86), banner, fill=(168, 199, 250), font=f_badge)
 
     # Title
@@ -399,51 +401,81 @@ def _render_panel_pages(proj: dict[str, Any], panels: list[dict[str, Any]]) -> l
     return pages
 
 
-def _render_jam_outline_page(proj: dict[str, Any]) -> list[Image.Image]:
-    jbeats = proj.get("jam_beats") or []
-    if not jbeats:
-        return []
-    f_head = _font(40, bold=True)
-    f_sub = _font(23, bold=False)
-    f_item = _font(24, bold=False)
+def _render_howto_guide_pages(proj: dict[str, Any], steps: list[dict[str, Any]]) -> list[Image.Image]:
+    """Renders a clean, typography-only printable How-To Guide PDF (zero cartoons, zero comic frames)."""
+    f_eyebrow = _font(22, bold=True)
+    f_title = _font(52, bold=True)
+    f_by = _font(24, bold=False)
+    f_step_num = _font(22, bold=True)
+    f_step_txt = _font(26, bold=False)
+    f_foot = _font(19, bold=False)
+
+    title_str = (proj.get("title") or "How-To Guide").strip()
+    author_str = (proj.get("author") or "Author").strip()
+    aud_str = (proj.get("audience") or "").strip()
     pages: list[Image.Image] = []
 
-    def _new_pg(first: bool) -> tuple[Image.Image, ImageDraw.ImageDraw, int]:
-        pg = Image.new("RGB", (PAGE_W, PAGE_H), (249, 247, 242))
+    def _new_guide_page(first: bool, page_num: int) -> tuple[Image.Image, ImageDraw.ImageDraw, int]:
+        pg = Image.new("RGB", (PAGE_W, PAGE_H), (252, 251, 248))
         dr = ImageDraw.Draw(pg)
-        dr.text((MARGIN, 80), "STORY JAM OUTLINE" if first else "STORY JAM OUTLINE (CONT.)", fill=(24, 26, 30), font=f_head)
-        dr.text((MARGIN, 134), "Spoken story beats mapped out before drawing panels", fill=(100, 104, 112), font=f_sub)
-        return pg, dr, 200
+        dr.rectangle([42, 42, PAGE_W - 42, PAGE_H - 42], outline=(34, 38, 46), width=3)
+        if first:
+            dr.text((MARGIN + 16, 88), f"HOW-TO GUIDE  ·  {len(steps)} STEP{'S' if len(steps) != 1 else ''}", fill=(36, 84, 190), font=f_eyebrow)
+            y_cur = 132
+            for tln in _wrap(dr, title_str, f_title, PAGE_W - 2 * (MARGIN + 16))[:3]:
+                dr.text((MARGIN + 16, y_cur), tln, fill=(18, 20, 26), font=f_title)
+                y_cur += 64
+            by_line = f"Written by {author_str}" + (f"  ·  For {aud_str}" if aud_str else "")
+            dr.text((MARGIN + 16, y_cur + 8), by_line, fill=(96, 102, 112), font=f_by)
+            y_div = y_cur + 56
+            dr.line([MARGIN + 16, y_div, PAGE_W - MARGIN - 16, y_div], fill=(195, 198, 206), width=3)
+            return pg, dr, y_div + 36
+        dr.text((MARGIN + 16, 84), f"{title_str.upper()}  (CONTINUED)", fill=(96, 102, 112), font=f_eyebrow)
+        dr.line([MARGIN + 16, 122, PAGE_W - MARGIN - 16, 122], fill=(210, 212, 218), width=2)
+        return pg, dr, 156
 
-    pg, d, y = _new_pg(True)
-    for idx, jb in enumerate(jbeats, 1):
-        txt = f"{idx}. {jb.get('note', '')}" + ("  [Panel drawn]" if jb.get("written") else "")
-        lines = _wrap(d, txt, f_item, PAGE_W - 2 * MARGIN - 48)
-        bh = 34 + len(lines) * 34
-        if y + bh > PAGE_H - 90:
-            pages.append(pg)
-            pg, d, y = _new_pg(False)
-        d.rounded_rectangle([MARGIN, y, PAGE_W - MARGIN, y + bh], radius=14, fill=(255, 255, 255), outline=(28, 30, 34), width=3)
-        ty = y + 16
-        for ln in lines:
-            d.text((MARGIN + 24, ty), ln, fill=(24, 26, 30), font=f_item)
-            ty += 34
-        y += bh + 16
+    pg, d, y = _new_guide_page(True, 1)
+    box_w = PAGE_W - 2 * (MARGIN + 16)
+
+    if not steps:
+        d.text((MARGIN + 16, y + 20), "No steps written yet.", fill=(120, 124, 132), font=f_step_txt)
+    else:
+        for idx, st in enumerate(steps, 1):
+            raw_txt = (st.get("caption") or st.get("scene") or "").strip()
+            lines = _wrap(d, raw_txt, f_step_txt, box_w - 150)
+            bh = max(84, 38 + len(lines) * 38)
+            if y + bh > PAGE_H - 110:
+                d.text((PAGE_W // 2 - 38, PAGE_H - 76), f"Page {len(pages) + 1}", fill=(120, 124, 132), font=f_foot)
+                pages.append(pg)
+                pg, d, y = _new_guide_page(False, len(pages) + 1)
+            x0 = MARGIN + 16
+            d.rounded_rectangle([x0, y, x0 + box_w, y + bh], radius=14, fill=(255, 255, 255), outline=(214, 218, 226), width=2)
+            # Number badge on left
+            d.rounded_rectangle([x0 + 20, y + 20, x0 + 116, y + 62], radius=10, fill=(232, 240, 254), outline=(36, 84, 190), width=2)
+            d.text((x0 + 33, y + 28), f"STEP {idx}", fill=(26, 68, 168), font=f_step_num)
+            ty = y + 22
+            for ln in lines:
+                d.text((x0 + 136, ty), ln, fill=(22, 24, 28), font=f_step_txt)
+                ty += 38
+            y += bh + 18
+
+    d.text((PAGE_W // 2 - 38, PAGE_H - 76), f"Page {len(pages) + 1}", fill=(120, 124, 132), font=f_foot)
     pages.append(pg)
     return pages
 
 
 def build_project_pdf(proj: dict[str, Any]) -> bytes:
-    """Renders a complete multi-page Comic Book / Tutorial / Diary PDF byte stream for any project."""
+    """Renders a complete multi-page Comic Book / Written How-To Guide / Diary PDF byte stream for any project."""
     panels = all_panels(proj)
-    spine_panels = _spine_as_comic_panels(proj)
-    all_pages: list[Image.Image] = [_render_cover(proj, panels or spine_panels)]
-    if proj.get("jam_beats"):
-        all_pages.extend(_render_jam_outline_page(proj))
-    if spine_panels:
-        all_pages.extend(_render_panel_pages(proj, spine_panels))
-    if panels:
-        all_pages.extend(_render_panel_pages(proj, panels))
+    if proj.get("kind") == "how_to_tutorial":
+        all_pages = _render_howto_guide_pages(proj, panels)
+    else:
+        spine_panels = _spine_as_comic_panels(proj)
+        all_pages = [_render_cover(proj, panels or spine_panels)]
+        if spine_panels:
+            all_pages.extend(_render_panel_pages(proj, spine_panels))
+        if panels:
+            all_pages.extend(_render_panel_pages(proj, panels))
 
     buf = io.BytesIO()
     first, rest = all_pages[0], all_pages[1:]

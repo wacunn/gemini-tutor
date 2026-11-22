@@ -1934,67 +1934,108 @@ body.fresh .dock {
   }
 }
 
-/* ---------- 100-Page Verbal Story Jam Outline Card ---------- */
-.jam-board {
+/* ---------- Oral Plot Intake Status & Written How-To Guide Document ---------- */
+.intake-status-card {
   background: #1e2126;
-  border: 1.5px solid #3c4043;
+  border: 1.5px solid rgba(138, 180, 248, 0.45);
   border-radius: 14px;
-  padding: 12px 14px;
+  padding: 14px 16px;
   margin-bottom: 14px;
-}
-
-.jam-board.active-jam {
-  border-color: #81c995;
-  background: rgba(52, 168, 83, 0.07);
-}
-
-.jam-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 8px;
 }
 
-.jam-list {
+.howto-doc {
+  background: #fcfbf8;
+  color: #1c1e24;
+  border: 2px solid #2b2f38;
+  border-radius: 16px;
+  padding: 24px 26px;
+  margin-top: 8px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.24);
+}
+
+.howto-doc-head {
+  border-bottom: 2px solid #e3e5ec;
+  padding-bottom: 14px;
+  margin-bottom: 18px;
+}
+
+.howto-eyebrow {
+  color: #1a56c4;
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.howto-doc-title {
+  font-family: var(--font);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #14161a;
+  margin: 0 0 4px;
+  line-height: 1.25;
+}
+
+.howto-doc-by {
+  color: #5f6368;
+  font-size: 0.88rem;
+}
+
+.howto-step-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
 }
 
-.jam-row {
+.howto-step-card {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 9px;
-  padding: 7px 10px;
-  font-size: 0.92rem;
+  align-items: flex-start;
+  gap: 12px;
+  background: #ffffff;
+  border: 1.5px solid #dfe3eb;
+  border-radius: 12px;
+  padding: 13px 15px;
 }
 
-.jam-row.next-up {
-  border-color: #8ab4f8;
-  background: rgba(138, 180, 248, 0.1);
-}
-
-.jam-num {
+.howto-step-num {
+  background: #e8f0fe;
+  color: #1a44a8;
+  border: 1.5px solid #1a56c4;
+  border-radius: 8px;
+  padding: 3px 9px;
+  font-family: var(--font);
   font-weight: 700;
   font-size: 0.78rem;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: #2c2f33;
-  color: var(--text-2);
+  white-space: nowrap;
   flex: none;
+  margin-top: 1px;
 }
 
-.jam-row.done .jam-num {
-  background: rgba(129, 201, 149, 0.2);
-  color: #81c995;
+.howto-step-text {
+  flex: 1;
+  font-size: 1.04rem;
+  line-height: 1.55;
+  color: #1c1e24;
 }
 
-.jam-row.next-up .jam-num {
-  background: #8ab4f8;
-  color: #131314;
+.howto-step-del {
+  background: transparent;
+  border: none;
+  color: #8a9099;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.howto-step-del:hover {
+  background: #fee2e2;
+  color: #b91c1c;
 }
