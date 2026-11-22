@@ -2100,3 +2100,128 @@ body.fresh .dock {
   background: #fee2e2;
   color: #b91c1c;
 }
+
+/* ---------- Local Video Game Rewards (Fists of Doom & Minecraft) ---------- */
+.arcade-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(168, 199, 250, 0.1);
+  border: 1px solid rgba(168, 199, 250, 0.3);
+  color: #c6dafc;
+  font-family: var(--font);
+  font-size: 0.79rem;
+  font-weight: 500;
+  padding: 5px 11px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.arcade-play-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #1b5e3b, #14532d);
+  border: 1px solid #81c995;
+  color: #e6f4ea;
+  font-family: var(--font);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 6px 13px;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 0 14px rgba(129, 201, 149, 0.28);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  white-space: nowrap;
+}
+
+.arcade-play-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 20px rgba(129, 201, 149, 0.45);
+}
+
+.arcade-play-btn.mc {
+  background: linear-gradient(135deg, #1e4620, #2e5d24);
+  border-color: #a3e635;
+}
+
+.arcade-play-btn.running {
+  background: rgba(253, 214, 99, 0.18);
+  border-color: #fdd663;
+  color: #fde68a;
+}
+
+.arcade-side-box {
+  margin: 6px 10px 10px;
+  padding: 10px 12px;
+  background: rgba(129, 201, 149, 0.08);
+  border: 1px solid rgba(129, 201, 149, 0.28);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 0.84rem;
+}
+
+.hero-pill.arcade-hero {
+  border: 1px solid rgba(129, 201, 149, 0.55);
+  background: rgba(129, 201, 149, 0.12);
+  color: #a8dab5;
+}
+
+.arcade-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: #050608;
+  display: flex;
+  flex-direction: column;
+}
+
+.arcade-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  background: #131418;
+  border-bottom: 1px solid #2b2f38;
+  flex-wrap: wrap;
+}
+
+.arcade-bar-center {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font);
+  font-weight: 500;
+}
+
+.arcade-bar-title {
+  color: #e3e3e3;
+  font-size: 0.95rem;
+}
+
+.arcade-timer-badge {
+  background: rgba(129, 201, 149, 0.16);
+  border: 1px solid #81c995;
+  color: #81c995;
+  padding: 3px 11px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+
+.arcade-timer-badge.low {
+  background: rgba(242, 139, 130, 0.2);
+  border-color: #f28b82;
+  color: #f28b82;
+}
+
+.arcade-frame {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #000;
+}

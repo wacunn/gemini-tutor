@@ -28,6 +28,9 @@ const state = {
   lastComic: null,
   drawnItems: {},
   lettering: null,
+  arcade: { visible: false },
+  savedProjects: [],
+  arcadeOpen: false,
 };
 
 // ---------------------------------------------------------------- setup
@@ -71,8 +74,12 @@ async function boot() {
   } else {
     $("helloText").textContent = `Hi ${st.name}`;
   }
-  renderHeroStarters(st.projects || []);
+  state.arcade = st.arcade || { visible: false };
+  state.savedProjects = st.projects || [];
+  renderHeroStarters(state.savedProjects);
+  renderArcadeUI();
   wireSidebar();
+  wireArcade();
   $("input").focus();
 }
 
@@ -170,7 +177,15 @@ async function refreshSidebar() {
 
 async function refreshHeroShelf() {
   const st = await (await fetch(`/api/state?sandbox=${IS_SANDBOX ? 1 : 0}`)).json();
-  renderHeroStarters(st.projects || []);
+  state.arcade = st.arcade || { visible: false };
+  state.savedProjects = st.projects || [];
+  renderHeroStarters(state.savedProjects);
+  renderArcadeUI();
+}
+
+function fmtClock(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 function renderHeroStarters(savedProjects) {
@@ -179,7 +194,18 @@ function renderHeroStarters(savedProjects) {
   const contPill = savedProjects.length
     ? `<button type="button" class="hero-pill" data-open-hero="${esc(savedProjects[0].id)}">Continue “${esc(savedProjects[0].title)}”</button>`
     : "";
-  box.innerHTML = `${contPill}
+  const arc = state.arcade || {};
+  let arcadeHeroPills = "";
+  if (arc.visible && arc.can_play) {
+    const tStr = fmtClock(arc.game_seconds_available);
+    if (arc.fod_installed) {
+      arcadeHeroPills += `<button type="button" class="hero-pill arcade-hero" data-play-arcade="fod">🥊 Play Fists of Doom (${tStr})</button>`;
+    }
+    if (arc.minecraft_installed) {
+      arcadeHeroPills += `<button type="button" class="hero-pill arcade-hero" data-play-arcade="minecraft">⛏️ Play Minecraft (${tStr})</button>`;
+    }
+  }
+  box.innerHTML = `${contPill}${arcadeHeroPills}
     <button type="button" class="hero-pill" data-new-kind="epic_graphic_novel">Comic book</button>
     <button type="button" class="hero-pill" data-new-kind="story_jam_novel">100-page comic (talk plot first)</button>
     <button type="button" class="hero-pill" data-new-kind="how_to_tutorial">How-to guide</button>
@@ -195,6 +221,12 @@ function renderHeroStarters(savedProjects) {
       send({ type: "open_project", id: heroOpen.dataset.openHero });
     };
   }
+  box.querySelectorAll("[data-play-arcade]").forEach((el) => {
+    el.onclick = () => {
+      if (el.dataset.playArcade === "minecraft") launchMinecraftArcade();
+      else openFodArcade();
+    };
+  });
   box.querySelectorAll("[data-new-kind]").forEach((el) => {
     el.onclick = () => {
       begin();
@@ -264,6 +296,10 @@ function begin() {
 }
 
 function tick() {
+  if (state.arcadeOpen) {
+    state.startTime += 1000;
+    return;
+  }
   const s = Math.floor((Date.now() - state.startTime) / 1000);
   $("timer").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   if (s >= 720 && !state.notes.twelve) {
@@ -1987,6 +2023,16 @@ function handle(m) {
     case "status":
       toast(m.message);
       break;
+    case "arcade_update":
+      if (m.arcade) {
+        state.arcade = m.arcade;
+        renderArcadeUI();
+        if (document.body.classList.contains("fresh")) renderHeroStarters(state.savedProjects || []);
+      }
+      if ((m.milestone === "unlocked" || m.milestone === "point") && m.message) {
+        showRewardBadge(m.message);
+      }
+      break;
     case "protective_bug":
       showProtectiveBug(m.code || "ERR-G42");
       break;
@@ -2054,6 +2100,240 @@ function endSession() {
   setTimeout(() => state.ws && state.ws.close(), 300);
   toast("Saved. See you next time.");
   $("endBtn").hidden = true;
+}
+
+// ---------------------------------------------------------------- Local Arcade Rewards (Fists of Doom & Minecraft)
+
+let fodTickTimer = null;
+let fodHeartbeatTimer = null;
+let fodLocalRem = 0;
+let fodWarnedOneMin = false;
+let mcPollTimer = null;
+
+function renderArcadeUI() {
+  const arc = state.arcade || {};
+  const pill = $("arcadeProgressPill");
+  const fodBtn = $("arcadePlayFodBtn");
+  const mcBtn = $("arcadePlayMcBtn");
+  const sideBox = $("arcadeSideBox");
+  if (!pill || !fodBtn || !mcBtn || !sideBox) return;
+
+  if (!arc.visible) {
+    pill.hidden = true;
+    fodBtn.hidden = true;
+    mcBtn.hidden = true;
+    sideBox.hidden = true;
+    return;
+  }
+
+  const chunkMinDone = Math.floor((Number(arc.committed_work_seconds) || 0) / 60);
+  const mpp = Number(arc.minutes_per_point) || 15;
+  const pts = Number(arc.points) || 0;
+  const ptu = Number(arc.points_to_unlock) || 2;
+  const avail = Number(arc.game_seconds_available) || 0;
+
+  pill.hidden = false;
+  pill.textContent = `⭐ ${pts}/${ptu} pts · ${chunkMinDone}/${mpp}m solid writing`;
+  pill.title = `Every ${mpp} min of active, verified writing earns 1 point (saved across sessions). ${ptu} points (${mpp * ptu} min) unlocks ${arc.reward_game_minutes} min of game time!`;
+
+  if (arc.fod_installed && arc.can_play) {
+    fodBtn.hidden = false;
+    fodBtn.textContent = `🥊 Play Fists of Doom (${fmtClock(avail)})`;
+  } else {
+    fodBtn.hidden = true;
+  }
+
+  if (arc.minecraft_installed && (arc.can_play || arc.minecraft_running)) {
+    mcBtn.hidden = false;
+    if (arc.minecraft_running) {
+      mcBtn.classList.add("running");
+      mcBtn.textContent = `⏸ Pause Minecraft (${fmtClock(avail)} left)`;
+      ensureMinecraftPoll();
+    } else {
+      mcBtn.classList.remove("running");
+      mcBtn.textContent = `⛏️ Play Minecraft (${fmtClock(avail)})`;
+    }
+  } else {
+    mcBtn.hidden = true;
+  }
+
+  sideBox.hidden = false;
+  let sideBtns = "";
+  if (arc.can_play && arc.fod_installed) {
+    sideBtns += `<button type="button" class="arcade-play-btn" data-side-arcade="fod" style="justify-content:center">🥊 Play Fists of Doom (${fmtClock(avail)})</button>`;
+  }
+  if ((arc.can_play || arc.minecraft_running) && arc.minecraft_installed) {
+    sideBtns += `<button type="button" class="arcade-play-btn mc ${arc.minecraft_running ? "running" : ""}" data-side-arcade="minecraft" style="justify-content:center">${arc.minecraft_running ? `⏸ Pause Minecraft (${fmtClock(avail)})` : `⛏️ Play Minecraft (${fmtClock(avail)})`}</button>`;
+  }
+  sideBox.innerHTML = `
+    <div style="font-weight:600;color:#a8dab5">🎮 Video Game Points: ${pts} / ${ptu}</div>
+    <div class="muted" style="font-size:.79rem">${chunkMinDone} / ${mpp} min toward next point · ${avail >= 1 ? `${fmtClock(avail)} game time ready` : `${ptu * mpp - (pts * mpp + chunkMinDone)}m solid writing to unlock ${arc.reward_game_minutes}m`}</div>
+    ${sideBtns}`;
+  sideBox.querySelectorAll("[data-side-arcade]").forEach((b) => {
+    b.onclick = () => {
+      toggleSidebar(false);
+      if (b.dataset.sideArcade === "minecraft") {
+        if (state.arcade?.minecraft_running) pauseMinecraftArcade();
+        else launchMinecraftArcade();
+      } else {
+        openFodArcade();
+      }
+    };
+  });
+}
+
+function wireArcade() {
+  const fodBtn = $("arcadePlayFodBtn");
+  const mcBtn = $("arcadePlayMcBtn");
+  const closeBtn = $("arcadeCloseBtn");
+  if (fodBtn) fodBtn.onclick = () => openFodArcade();
+  if (mcBtn) {
+    mcBtn.onclick = () => {
+      if (state.arcade?.minecraft_running) pauseMinecraftArcade();
+      else launchMinecraftArcade();
+    };
+  }
+  if (closeBtn) closeBtn.onclick = () => closeFodArcade(false);
+}
+
+function updateOverlayBadge() {
+  const b = $("arcadeTimerBadge");
+  if (!b) return;
+  b.textContent = `Time Left: ${fmtClock(fodLocalRem)}`;
+  b.classList.toggle("low", fodLocalRem <= 60);
+}
+
+async function openFodArcade() {
+  stopCenterMic(false);
+  if (state.micOn) micStop();
+  stopPlayback();
+  const r = await fetch(`/api/arcade/start?sandbox=${IS_SANDBOX ? 1 : 0}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ game: "fod", sandbox: IS_SANDBOX ? 1 : 0 }),
+  });
+  if (!r.ok) {
+    toast(await r.text());
+    return;
+  }
+  const d = await r.json();
+  state.arcade = d.arcade || state.arcade;
+  fodLocalRem = Number(state.arcade?.game_seconds_available) || 0;
+  fodWarnedOneMin = false;
+  state.arcadeOpen = true;
+  if (state.wsOpen) send({ type: "arcade_opened" });
+
+  const host = location.hostname || "localhost";
+  const url = `${location.protocol}//${host}:${d.port || 8788}/?embedded=tutor&t=${Date.now()}`;
+  $("arcadeFrame").src = url;
+  $("arcadeOverlay").hidden = false;
+  updateOverlayBadge();
+
+  clearInterval(fodTickTimer);
+  clearInterval(fodHeartbeatTimer);
+  fodTickTimer = setInterval(() => {
+    fodLocalRem = Math.max(0, fodLocalRem - 1);
+    updateOverlayBadge();
+    if (fodLocalRem === 60 && !fodWarnedOneMin) {
+      fodWarnedOneMin = true;
+      playRewardChime();
+    }
+    if (fodLocalRem <= 0) {
+      closeFodArcade(true);
+    }
+  }, 1000);
+
+  fodHeartbeatTimer = setInterval(async () => {
+    try {
+      const hr = await fetch("/api/arcade/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ elapsed_seconds: 5, sandbox: IS_SANDBOX ? 1 : 0, source: "fod" }),
+      });
+      if (hr.ok) {
+        const hd = await hr.json();
+        state.arcade = hd;
+        fodLocalRem = Number(hd.game_seconds_available) || 0;
+        updateOverlayBadge();
+        if (hd.expired || fodLocalRem <= 0) closeFodArcade(true);
+      }
+    } catch (_) {}
+  }, 5000);
+}
+
+async function closeFodArcade(expired = false) {
+  if (!state.arcadeOpen) return;
+  state.arcadeOpen = false;
+  clearInterval(fodTickTimer);
+  clearInterval(fodHeartbeatTimer);
+  fodTickTimer = null;
+  fodHeartbeatTimer = null;
+  if (document.pointerLockElement) {
+    try { document.exitPointerLock(); } catch (_) {}
+  }
+  $("arcadeFrame").src = "about:blank";
+  $("arcadeOverlay").hidden = true;
+  if (state.wsOpen) send({ type: "arcade_closed" });
+
+  try {
+    const st = await (await fetch(`/api/arcade/status?sandbox=${IS_SANDBOX ? 1 : 0}`)).json();
+    state.arcade = st;
+  } catch (_) {}
+  renderArcadeUI();
+  if (document.body.classList.contains("fresh")) renderHeroStarters(state.savedProjects || []);
+
+  if (expired) {
+    toast("🥊 Time's up! Awesome job defending Toronto — do some more solid writing whenever you want to unlock your next session!");
+  } else {
+    toast(`⏸ Fists of Doom paused — ${fmtClock(state.arcade?.game_seconds_available || 0)} saved in your game bank!`);
+  }
+}
+
+function ensureMinecraftPoll() {
+  if (mcPollTimer) return;
+  mcPollTimer = setInterval(async () => {
+    try {
+      const st = await (await fetch(`/api/arcade/status?sandbox=${IS_SANDBOX ? 1 : 0}`)).json();
+      const wasRunning = !!state.arcade?.minecraft_running;
+      state.arcade = st;
+      renderArcadeUI();
+      if (document.body.classList.contains("fresh")) renderHeroStarters(state.savedProjects || []);
+      if (!st.minecraft_running) {
+        clearInterval(mcPollTimer);
+        mcPollTimer = null;
+        if (wasRunning && (st.game_seconds_available || 0) <= 0) {
+          toast("⛏️ Minecraft time finished! Do some more solid writing to earn your next session.");
+        }
+      }
+    } catch (_) {}
+  }, 3000);
+}
+
+async function launchMinecraftArcade() {
+  const r = await fetch(`/api/arcade/start?sandbox=${IS_SANDBOX ? 1 : 0}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ game: "minecraft", sandbox: IS_SANDBOX ? 1 : 0 }),
+  });
+  if (!r.ok) {
+    toast(await r.text());
+    return;
+  }
+  const d = await r.json();
+  state.arcade = d.arcade || state.arcade;
+  renderArcadeUI();
+  ensureMinecraftPoll();
+  toast("⛏️ Launching Minecraft! Your timer counts down automatically and warns you 1 minute before closing so you can save your world.");
+}
+
+async function pauseMinecraftArcade() {
+  const r = await fetch(`/api/arcade/stop?sandbox=${IS_SANDBOX ? 1 : 0}`, { method: "POST" });
+  if (r.ok) {
+    const d = await r.json();
+    state.arcade = d.arcade || state.arcade;
+    renderArcadeUI();
+    toast(`⏸ Minecraft closed — ${fmtClock(state.arcade?.game_seconds_available || 0)} saved in your game bank!`);
+  }
 }
 
 boot();

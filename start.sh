@@ -8,6 +8,7 @@ mkdir -p logs
 is_up() { curl -fs -o /dev/null --max-time 1 "$URL/api/version"; }
 
 open_app() {
+  [[ "${TUTOR_NO_OPEN:-}" == "1" ]] && return 0
   if [[ "$(uname)" == "Darwin" ]]; then
     if [[ -d "/Applications/Google Chrome.app" || -d "$HOME/Applications/Google Chrome.app" ]]; then
       open -na "Google Chrome" --args --app="$URL" --window-size=1280,860

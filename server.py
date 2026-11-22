@@ -29,6 +29,9 @@ from tutor.record import (
 from tutor.review import review_session
 
 ensure_dirs()
+from tutor import arcade as _arcade_boot
+
+_arcade_boot.start_background_watchdog()
 STATIC = ROOT / "static"
 app = FastAPI(title="Gemini Tutor")
 
@@ -66,7 +69,7 @@ class SetupIn(BaseModel):
 
 @app.get("/api/state")
 def state(sandbox: int = 0):
-    from tutor import guardian
+    from tutor import arcade, guardian
     from tutor.projects import list_projects
 
     is_sb = bool(sandbox)
@@ -102,6 +105,7 @@ def state(sandbox: int = 0):
         "projects": projs,
         "activities": acts,
         "pieces": [{"id": p["id"], "title": p["title"], "audience": p.get("audience", "")} for p in list_pieces(sandbox=is_sb)[:12]],
+        "arcade": arcade.client_status(rec, sandbox=is_sb),
     }
 
 
@@ -204,7 +208,7 @@ def settings(body: SettingsIn):
 
 @app.get("/api/parent")
 def parent_data():
-    from tutor import guardian
+    from tutor import arcade, guardian
     from tutor.blackboard import QUOTA
     from tutor.curriculum_tracker import ensure_report_card, format_report_for_ui
     from tutor.projects import list_projects
@@ -225,6 +229,7 @@ def parent_data():
         "sessions": sessions,
         "activities": list_activities(),
         "pieces": list_pieces(),
+        "arcade": arcade.client_status(rec),
     }
 
 
@@ -343,6 +348,114 @@ def guardian_clear():
 
     guardian.clear_bug_lock(sandbox=None)
     return {"ok": True}
+
+
+# ---------- Fists of Doom local arcade rewards ----------
+
+
+class ArcadeSettingsIn(BaseModel):
+    enabled: Optional[bool] = None
+    minutes_per_point: Optional[int] = None
+    points_to_unlock: Optional[int] = None
+    reward_game_minutes: Optional[int] = None
+    lock_standalone: Optional[bool] = None
+    gate_minecraft: Optional[bool] = None
+    minecraft_instance: Optional[str] = None
+    grant_minutes: Optional[float] = None
+    reset_bank: bool = False
+
+
+class ArcadeStartIn(BaseModel):
+    game: str = "fod"
+    sandbox: int = 0
+
+
+class ArcadeHeartbeatIn(BaseModel):
+    elapsed_seconds: float = 5.0
+    sandbox: int = 0
+    source: str = "fod"
+
+
+@app.get("/api/arcade/status")
+def arcade_status(sandbox: int = 0):
+    from tutor import arcade
+
+    return arcade.client_status(sandbox=bool(sandbox))
+
+
+@app.post("/api/arcade/settings")
+def arcade_settings(body: ArcadeSettingsIn):
+    from tutor import arcade
+
+    return arcade.update_parent_settings(
+        enabled=body.enabled,
+        minutes_per_point=body.minutes_per_point,
+        points_to_unlock=body.points_to_unlock,
+        reward_game_minutes=body.reward_game_minutes,
+        lock_standalone=body.lock_standalone,
+        gate_minecraft=body.gate_minecraft,
+        minecraft_instance=body.minecraft_instance,
+        grant_minutes=body.grant_minutes,
+        reset_bank=body.reset_bank,
+    )
+
+
+@app.post("/api/arcade/start")
+async def arcade_start(body: Optional[ArcadeStartIn] = None, sandbox: int = 0):
+    from tutor import arcade
+
+    req_game = (body.game if body else "fod").strip().lower()
+    is_sb = bool(body.sandbox if body else sandbox)
+    st = arcade.client_status(sandbox=is_sb)
+    if not st.get("enabled"):
+        raise HTTPException(403, "Video game rewards are turned off on the Parent page.")
+    if st.get("game_seconds_available", 0) < 1.0:
+        raise HTTPException(403, "No game time unlocked yet—keep writing to earn points!")
+
+    if req_game == "minecraft":
+        if not arcade.is_minecraft_installed():
+            raise HTTPException(404, "Minecraft (Prism Launcher) is not installed locally on this computer.")
+        try:
+            res = await asyncio.to_thread(
+                arcade.launch_minecraft,
+                instance_override=st.get("minecraft_instance") or None,
+                parent_setup=False,
+            )
+        except Exception as e:
+            raise HTTPException(502, str(e))
+        return {"ok": True, "game": "minecraft", **res, "arcade": arcade.client_status(sandbox=is_sb)}
+
+    if not arcade.is_fod_installed():
+        raise HTTPException(404, "Fists of Doom is not installed locally on this computer.")
+    ok = await asyncio.to_thread(arcade.ensure_fod_running)
+    if not ok:
+        raise HTTPException(502, "Couldn't start the local Fists of Doom server.")
+    return {"ok": True, "game": "fod", "port": arcade.FOD_PORT, "arcade": st}
+
+
+@app.post("/api/arcade/stop")
+async def arcade_stop(sandbox: int = 0):
+    from tutor import arcade
+
+    await asyncio.to_thread(arcade.stop_minecraft)
+    return {"ok": True, "arcade": arcade.client_status(sandbox=bool(sandbox))}
+
+
+@app.post("/api/arcade/minecraft-parent-setup")
+async def arcade_minecraft_parent_setup():
+    from tutor import arcade
+
+    if not arcade.is_minecraft_installed():
+        raise HTTPException(404, "Prism Launcher is not installed yet. Run setup_minecraft_chromebook.sh first.")
+    res = await asyncio.to_thread(arcade.launch_minecraft, parent_setup=True)
+    return {"ok": True, **res, "arcade": arcade.client_status()}
+
+
+@app.post("/api/arcade/heartbeat")
+def arcade_heartbeat(body: ArcadeHeartbeatIn):
+    from tutor import arcade
+
+    return arcade.consume_game_seconds(body.elapsed_seconds, sandbox=bool(body.sandbox), source=body.source)
 
 
 @app.post("/api/quit")

@@ -112,7 +112,7 @@ def apply() -> dict:
             else:
                 shutil.copy2(item, dest)
     if os.name != "nt":
-        for script in ("start.sh", "install.sh"):
+        for script in ("start.sh", "install.sh", "setup_minecraft_chromebook.sh", "bin/prism-gated-launch.sh"):
             p = ROOT / script
             if p.exists():
                 try:

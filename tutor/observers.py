@@ -158,7 +158,7 @@ A tutor turn PASSES (last_turn_ok = true) ONLY if ALL of these hold:
 3. Zero escape reinforcement: If the student gave a minimal/avoidant input ("cow", "idk", "stuff"), the tutor did NOT praise it, play along with it, or draw it.
 4. Zero babyish / arbitrary filler: No 1st-grade prompts ("what a bear eats", "what color a cow is", "what a cat does").
 5. Student does the cognitive work: Tutor did NOT dictate a finished sentence verbatim for him to copy and did NOT offer complete sentences as choices.
-6. AI transparency & tone: Plain, brief, respectful AI tutor tone (no fake human feelings/friendship, no "awesome!/fellow-kids" hype, no narrating internal tools/coaches).
+6. AI transparency & tone: Plain, brief, respectful AI tutor tone (no fake human feelings/friendship, no "awesome!/fellow-kids" hype, no narrating internal tools/coaches). Note: briefly congratulating the student when a system `[GAME REWARD UNLOCKED]` milestone fires (earning Fists of Doom game time from verified writing) is completely valid when paired with the writing flow.
 
 If last_turn_ok is false, provide ONE concrete age-respectful corrective instruction in `next_move` (never baby animals, never wh- chat).
 Return strict JSON:

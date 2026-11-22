@@ -296,6 +296,11 @@
       <ul id="notes" class="muted"></ul>
     </div>
 
+    <h2>Video Game Rewards (Local Install Only)</h2>
+    <div id="arcadeParentSection">
+      <div class="card muted">Checking local game installs…</div>
+    </div>
+
     <h2>Software</h2>
     <div class="card" id="SoftwareCard">
       <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:12px">
@@ -561,6 +566,7 @@
             </div>${strandCards}`;
         }
         $("notes").innerHTML = (L.parent_notes || []).slice().reverse().map(n => `<li>${esc(n.date.slice(0, 10))}: ${esc(n.note)}</li>`).join("");
+        renderArcadeParent(d.arcade || { installed: false });
 
         const st = await (await fetch("/api/state")).json();
         $("childName").value = L.name || "";
@@ -568,6 +574,170 @@
         $("parentTitle").value = L.parent_title || "Mom";
         $("cursiveReady").checked = !!L.cursive_ready;
         $("voice").innerHTML = st.voices.map(([v, d]) => `<option value="${v}" ${v === st.voice ? "selected" : ""}>${v} (${d})</option>`).join("");
+      }
+
+      function fmtMinSec(sec) {
+        const s = Math.max(0, Math.round(Number(sec) || 0));
+        return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+      }
+
+      function renderArcadeParent(A) {
+        const box = $("arcadeParentSection");
+        if (!box) return;
+        if (!A || !A.installed) {
+          box.innerHTML = `<div class="card">
+            <h3>No Local Video Games Installed on This Computer</h3>
+            <div class="muted" style="line-height:1.5">
+              Your child sees <b>zero</b> video game UI or points unless <b>Fists of Doom</b> or <b>Minecraft (Prism Launcher)</b> is installed locally on this computer:
+              <ul>
+                <li><b>Fists of Doom (Mac / Chromebook / Linux):</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash</code></li>
+                <li><b>Fists of Doom (Windows PowerShell):</b> <code>irm https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.ps1 | iex</code></li>
+                <li><b>Minecraft on Chromebook (Linux):</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_chromebook.sh | bash</code></li>
+              </ul>
+            </div>
+          </div>`;
+          return;
+        }
+
+        const mpp = Number(A.minutes_per_point) || 15;
+        const ptu = Number(A.points_to_unlock) || 2;
+        const rgm = Number(A.reward_game_minutes) || 15;
+        const chunkDoneMin = Math.round(((Number(A.committed_work_seconds) || 0) / 60) * 10) / 10;
+        const gameTags = [
+          A.fod_installed ? `<span class="pill ok">🥊 Fists of Doom Installed</span>` : `<span class="pill muted">Fists of Doom not installed</span>`,
+          A.minecraft_installed ? `<span class="pill ok">⛏️ Minecraft (Prism Launcher) Installed</span>` : `<span class="pill muted">Minecraft not installed</span>`,
+        ].join(" ");
+
+        const instOpts = (A.minecraft_instances || []).map(i =>
+          `<option value="${esc(i.id)}" ${i.id === A.minecraft_instance ? "selected" : ""}>${esc(i.name)} (${esc(i.id)})</option>`
+        ).join("");
+
+        const histHtml = (A.history || []).slice(0, 6).map(h => {
+          const dt = esc((h.date || "").slice(5, 16).replace("T", " "));
+          if (h.kind === "earned") return `<li>${dt} — Earned <b>+${h.minutes} min</b> game time (${h.writing_minutes} min solid writing)</li>`;
+          if (h.kind === "parent_bonus") return `<li>${dt} — Parent granted <b>+${h.minutes} min</b> bonus</li>`;
+          if (h.kind === "parent_reset") return `<li>${dt} — Parent reset game bank to 0:00</li>`;
+          return `<li>${dt} — Finished earned play session</li>`;
+        }).join("");
+
+        box.innerHTML = `
+          <div class="grid">
+            <div class="card">
+              <h3>Earned Game Bank &amp; Writing Progress</h3>
+              <div style="margin-bottom:8px">${gameTags}</div>
+              <div class="big">${fmtMinSec(A.game_seconds_available)} <span class="muted" style="font-size:1rem">ready to play</span></div>
+              <div style="margin-top:8px">Points toward next unlock: <b>${A.points ?? 0} / ${ptu}</b> · Current point progress: <b>${chunkDoneMin} / ${mpp} min</b> (saved across sessions)</div>
+              <div class="muted" style="margin-top:6px;font-size:.86rem">
+                All-time solid writing: <b>${A.lifetime_work_minutes ?? 0}m</b> (${A.lifetime_sentences_verified ?? 0} verified sentences) · Game time played: <b>${A.lifetime_game_minutes_played ?? 0}m</b>
+              </div>
+              <div class="muted" style="margin-top:8px;font-size:.83rem">
+                <b>What counts as active solid writing:</b> Leaving the app open idle, single-word escapes, or pushback earns 0s. Each turn caps thinking/writing time (&le;75s) and only locks into points when a Homework-Standard complete sentence (capital, end mark, complete clause, clean spelling/grammar) or spelling word retrieval is verified.
+              </div>
+              <div class="row" style="margin-top:12px;flex-wrap:wrap">
+                <button type="button" class="ghost" id="arcGrant15Btn">+ Grant 15m bonus</button>
+                <button type="button" class="ghost" id="arcResetBankBtn">Reset bank to 0:00</button>
+                ${A.minecraft_installed ? `<button type="button" class="ghost" id="arcMcParentBtn">🔧 Open Prism Launcher (Parent Setup)</button>` : ""}
+              </div>
+              ${histHtml ? `<ul class="muted" style="margin-top:10px;font-size:.84rem">${histHtml}</ul>` : ""}
+            </div>
+
+            <div class="card">
+              <h3>Parent Conversion Rules</h3>
+              <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+                <input type="checkbox" id="arcEnabled" style="width:auto" ${A.enabled ? "checked" : ""} />
+                <span>Enable video game points &amp; in-app game access</span>
+              </label>
+              <div class="row" style="flex-wrap:wrap;margin-bottom:10px">
+                <label style="flex:1;min-width:140px">Solid writing per 1 Point (min)
+                  <input type="number" id="arcMpp" min="5" max="60" value="${mpp}" />
+                </label>
+                <label style="flex:1;min-width:140px">Points needed to unlock
+                  <input type="number" id="arcPtu" min="1" max="10" value="${ptu}" />
+                </label>
+                <label style="flex:1;min-width:140px">Game time earned (min)
+                  <input type="number" id="arcRgm" min="5" max="120" value="${rgm}" />
+                </label>
+              </div>
+              <div id="arcRulePreview" class="muted" style="font-size:.88rem;margin-bottom:12px">
+                Every <b>${mpp} min</b> of active solid writing earns <b>1 point</b> (saved across sessions). Reaching <b>${ptu} point(s) (${mpp * ptu} min total)</b> unlocks <b>${rgm} min</b> of game time.
+              </div>
+              ${A.minecraft_installed ? `
+                <label style="display:block;margin-bottom:10px">Minecraft Instance (Prism Launcher)
+                  <select id="arcMcInst">
+                    <option value="">Auto (${esc(A.minecraft_default_instance || "Launcher selection")})</option>
+                    ${instOpts}
+                  </select>
+                </label>
+                <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <input type="checkbox" id="arcGateMc" style="width:auto" ${A.gate_minecraft ? "checked" : ""} />
+                  <span>Gate Chromebook Minecraft shelf icon &amp; close automatically at 0:00</span>
+                </label>
+              ` : ""}
+              ${A.fod_installed ? `
+                <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                  <input type="checkbox" id="arcLockFod" style="width:auto" ${A.lock_standalone ? "checked" : ""} />
+                  <span>Also lock standalone Fists of Doom app when earned bank is 0:00</span>
+                </label>
+              ` : ""}
+              <div class="row" style="margin-top:10px">
+                <button type="button" id="arcSaveBtn">Save reward rules</button>
+                <span class="muted" id="arcMsg"></span>
+              </div>
+            </div>
+          </div>`;
+
+        const updatePreview = () => {
+          const m = Math.max(5, Number($("arcMpp")?.value) || 15);
+          const p = Math.max(1, Number($("arcPtu")?.value) || 2);
+          const g = Math.max(5, Number($("arcRgm")?.value) || 15);
+          if ($("arcRulePreview")) {
+            $("arcRulePreview").innerHTML = `Every <b>${m} min</b> of active solid writing earns <b>1 point</b> (saved across sessions). Reaching <b>${p} point(s) (${m * p} min total)</b> unlocks <b>${g} min</b> of game time.`;
+          }
+        };
+        ["arcMpp", "arcPtu", "arcRgm"].forEach(id => $(id)?.addEventListener("input", updatePreview));
+
+        $("arcSaveBtn").onclick = async () => {
+          await fetch("/api/arcade/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              enabled: $("arcEnabled").checked,
+              minutes_per_point: Number($("arcMpp").value) || 15,
+              points_to_unlock: Number($("arcPtu").value) || 2,
+              reward_game_minutes: Number($("arcRgm").value) || 15,
+              lock_standalone: $("arcLockFod") ? $("arcLockFod").checked : undefined,
+              gate_minecraft: $("arcGateMc") ? $("arcGateMc").checked : undefined,
+              minecraft_instance: $("arcMcInst") ? $("arcMcInst").value : undefined,
+            }),
+          });
+          $("arcMsg").textContent = "Saved.";
+          loadAll();
+        };
+        $("arcGrant15Btn").onclick = async () => {
+          await fetch("/api/arcade/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ grant_minutes: 15 }),
+          });
+          loadAll();
+        };
+        $("arcResetBankBtn").onclick = async () => {
+          if (!confirm("Reset banked video game time to 0:00?")) return;
+          await fetch("/api/arcade/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reset_bank: true }),
+          });
+          loadAll();
+        };
+        if ($("arcMcParentBtn")) {
+          $("arcMcParentBtn").onclick = async () => {
+            const r = await fetch("/api/arcade/minecraft-parent-setup", { method: "POST" });
+            $("arcMsg").textContent = r.ok
+              ? "Opened Prism Launcher in Parent Setup mode (unlocked until you close it)."
+              : "Couldn't open Prism Launcher: " + (await r.text());
+          };
+        }
       }
 
       $("saveNote").onclick = async () => {

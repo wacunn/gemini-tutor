@@ -20,7 +20,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from google import genai
 from google.genai import types
 
-from . import blackboard, builder, controller, curriculum_tracker, guardian, media, observers, projects, thinking
+from . import arcade, blackboard, builder, controller, curriculum_tracker, guardian, media, observers, projects, thinking
 from .config import DATA, LIVE_FALLBACK_MODELS, LIVE_MODEL, api_key, genai_client
 from .prompt import TOOL_SPECS, build_system_prompt, opening_message
 from .record import (
@@ -136,6 +136,7 @@ class TutorSession:
         self.last_flawed_words: set[str] = set()
         self.tried: list[str] = []
         self.inventing = False
+        self.arcade = arcade.SessionArcadeTracker(sandbox=test_mode)
 
     def _load_opening_ideas(self) -> list[dict[str, Any]]:
         try:
@@ -298,6 +299,19 @@ class TutorSession:
                 )
             elif act.get("type") == "input":
                 self.log.add("ctrl_ui", ui_kind="input", title=act.get("prompt", ""), detail=f"prefill={act.get('prefill','')!r}")
+
+    async def _apply_arcade_event(self, ev: dict[str, Any] | None) -> str:
+        if not ev:
+            return ""
+        await self.ui({"type": "arcade_update", **ev})
+        if ev.get("milestone") in ("point", "unlocked") and ev.get("message"):
+            self.log.add(
+                "arcade_milestone",
+                milestone=ev["milestone"],
+                unlocked_minutes=ev.get("unlocked_minutes", 0),
+                points=ev.get("arcade", {}).get("points", 0),
+            )
+        return str(ev.get("tutor_note") or "")
 
     async def auto_render_sentence(self, sentence: str) -> str:
         """Immediately starts rendering the current book panel, comic panel, or scene image as soon as a complete sentence is verified."""
@@ -518,6 +532,8 @@ class TutorSession:
             self.spoke_since_kid = False
             plan = self.ctrl.classify_and_advance(spoken, "spoken", chk=None, opening_ideas=self.opening_ideas)
             self.log.add("ctrl_plan", how="spoken", input_class=plan["kind"], phase=self.ctrl.phase, rung=self.ctrl.rung)
+            arc_ev = self.arcade.record_turn(how="spoken", raw_text=spoken, plan=plan, ctrl=self.ctrl)
+            self.spawn(self._apply_arcade_event(arc_ev))
             self.spawn(self.apply_controller_ui(plan["ui"]))
             self.spawn(self._watch_turn_bg(spoken, plan.get("spoken_fallback", "")))
         self.kid_raw_buf = ""
@@ -754,10 +770,13 @@ class TutorSession:
                 final_txt = plan.get("full_paragraph") or plan.get("repaired_text") or text
                 await self.apply_target(target, final_txt, "typed")
                 render_note = await self.auto_render_sentence(final_txt)
+            arc_note = await self._apply_arcade_event(
+                self.arcade.record_turn(how="typed", raw_text=text, plan=plan, ctrl=self.ctrl)
+            )
             self.spawn(self._watch_turn_bg(text, plan.get("spoken_fallback", "")))
             await self.from_kid(
                 f'[{self.name} typed ({secs}s, {bs} backspaces): "{text}"]{check_note}',
-                plan["directive"] + render_note,
+                plan["directive"] + render_note + arc_note,
                 spoken_fallback=plan.get("spoken_fallback", ""),
             )
 
@@ -803,11 +822,14 @@ class TutorSession:
                 final_txt = plan.get("full_paragraph") or plan.get("repaired_text") or text
                 await self.apply_target(target, final_txt, "handwritten")
                 render_note = await self.auto_render_sentence(final_txt)
+            arc_note = await self._apply_arcade_event(
+                self.arcade.record_turn(how="handwritten", raw_text=text, plan=plan, ctrl=self.ctrl)
+            ) if text else ""
             if text:
                 self.spawn(self._watch_turn_bg(text, plan.get("spoken_fallback", "")))
             await self.from_kid(
                 f'[{self.name} handwrote: "{text}" (legible: {res.get("legible")}).]{check_note}',
-                plan["directive"] + render_note,
+                plan["directive"] + render_note + arc_note,
                 png,
                 spoken_fallback=plan.get("spoken_fallback", ""),
             )
@@ -887,6 +909,7 @@ class TutorSession:
                     )
                 return
             if m.get("ok"):
+                self.arcade.record_art_approved()
                 projects.mark_art_verified(self.ctrl.project, art_target, sandbox=self.test_mode)
                 if self.ctrl.phase == "AWAITING_ART_CHECK" and self.ctrl.pending_art_target == art_target:
                     plan = self.ctrl._continue_after_art_approved([])
@@ -987,6 +1010,8 @@ class TutorSession:
                 self.log.add("comic_lettering", target=target_l, action=action_l)
                 if raw_check_txt and action_l in ("add_bubble", "edit_bubble", "set_caption"):
                     self.spawn(self._watch_turn_bg(raw_check_txt, ""))
+                    if not m.get("force"):
+                        await self._apply_arcade_event(self.arcade.record_verified_lettering(raw_check_txt))
                 await self.ui({"type": "comic_lettering_saved", "target": target_l, "action": action_l})
 
         elif kind == "tap":
@@ -1014,9 +1039,12 @@ class TutorSession:
                 final_txt = plan.get("full_paragraph") or plan.get("repaired_text") or val
                 await self.apply_target(self.input_target, final_txt, "typed")
                 render_note = await self.auto_render_sentence(final_txt)
+            arc_note = await self._apply_arcade_event(
+                self.arcade.record_turn(how="tap", raw_text=val, plan=plan, ctrl=self.ctrl)
+            )
             await self.from_kid(
                 f'[{self.name} tapped choice: "{val}"]',
-                plan["directive"] + render_note,
+                plan["directive"] + render_note + arc_note,
                 spoken_fallback=plan.get("spoken_fallback", ""),
             )
 
@@ -1090,12 +1118,18 @@ class TutorSession:
             render_note = ""
             if plan.get("redraw_art"):
                 render_note = await self._run_redraw_art(plan["redraw_art"])
+            arc_note = await self._apply_arcade_event(
+                self.arcade.record_turn(how="voice_clip", raw_text=shown, plan=plan, ctrl=self.ctrl)
+            )
             self.spawn(self._watch_turn_bg(shown, plan.get("spoken_fallback", "")))
             await self.from_kid(
                 f'[{self.name} spoke into the green mic ({purpose}): "{shown}"' + (f' -> intended word "{intended}"' if intended else "") + "]",
-                plan["directive"] + render_note,
+                plan["directive"] + render_note + arc_note,
                 spoken_fallback=plan.get("spoken_fallback", ""),
             )
+
+        elif kind in ("arcade_opened", "arcade_closed"):
+            self.arcade.reset_prompt_clock()
 
         elif kind == "mic_paused":
             if self.live:

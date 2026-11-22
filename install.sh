@@ -36,6 +36,8 @@ SRC="$(find "$TMP" -mindepth 1 -maxdepth 1 -type d | head -n1)"
 (cd "$SRC" && tar -cf - --exclude=./data --exclude=./.env --exclude=./.venv --exclude=./.git .) | (cd "$DIR" && tar -xf -)
 rm -rf "$TMP"
 chmod +x "$DIR/start.sh" "$DIR/install.sh"
+[[ -f "$DIR/setup_minecraft_chromebook.sh" ]] && chmod +x "$DIR/setup_minecraft_chromebook.sh" || true
+[[ -f "$DIR/bin/prism-gated-launch.sh" ]] && chmod +x "$DIR/bin/prism-gated-launch.sh" || true
 
 # 3) Python and libraries (one time, about a minute).
 say "Step 3 of 4: setting up Python (about a minute the first time)…"

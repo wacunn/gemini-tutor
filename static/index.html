@@ -80,6 +80,7 @@
         <button type="button" class="side-action" data-new-kind="quick_strip">+ Quick 3-panel strip</button>
         <button type="button" class="side-action" data-new-kind="quick_game">+ New mini-game</button>
       </div>
+      <div id="arcadeSideBox" class="arcade-side-box" hidden></div>
       <div class="side-label">Saved</div>
       <div class="side-list" id="sideList"></div>
       <div class="side-foot">
@@ -101,6 +102,9 @@
       </div>
       <div class="top-right">
         <span class="building" id="building" hidden><span class="dot"></span><span id="buildingText">Making something</span></span>
+        <span class="arcade-pill" id="arcadeProgressPill" hidden></span>
+        <button type="button" class="arcade-play-btn" id="arcadePlayFodBtn" hidden></button>
+        <button type="button" class="arcade-play-btn mc" id="arcadePlayMcBtn" hidden></button>
         <span class="goal-pill" id="goalPill" hidden></span>
         <span class="timer" id="timer"></span>
         <button class="icon-btn" id="phonesBtn" title="Headphones on: you can talk while Gemini is talking" aria-pressed="false">
@@ -191,6 +195,19 @@
           <canvas id="penCanvas"></canvas>
         </div>
       </div>
+    </div>
+
+    <!-- Embedded Local Arcade Overlay (Fists of Doom: Toronto) -->
+    <div class="arcade-overlay" id="arcadeOverlay" hidden>
+      <div class="arcade-bar">
+        <button type="button" class="pill-btn" id="arcadeCloseBtn">← Pause &amp; Save Remaining Time</button>
+        <div class="arcade-bar-center">
+          <span class="arcade-bar-title">🥊 Fists of Doom: Toronto</span>
+          <span class="arcade-timer-badge" id="arcadeTimerBadge">15:00</span>
+        </div>
+        <span class="muted" style="font-size:.82rem">Press ESC anytime to release mouse</span>
+      </div>
+      <iframe id="arcadeFrame" class="arcade-frame" allow="pointer-lock; autoplay; fullscreen"></iframe>
     </div>
   </div>
 

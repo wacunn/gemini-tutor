@@ -28,6 +28,9 @@ For step-by-step parent instructions, see **[SETUP.md](SETUP.md)**.
 ### One-Click Updates Inside the App
 No command line needed after installing: click the **Parent icon** (top right) → **Software** → **Check for updates** → **Update now**. Your API key and all saved books and progress stay untouched.
 
+### Optional Local Video Game Rewards (Fists of Doom & Chromebook Minecraft)
+When **[Fists of Doom](https://github.com/wacunn/toronto-fight-game)** and/or **Minecraft (Prism Launcher)** is installed locally on the same computer, students can earn video game points from **active, verified writing** (never idle open-app time, fragments, or avoidance—saved across sessions so progress is never lost) and launch earned game time straight from Gemini Tutor. Parents control the exact conversion ratio on `/parent`. For one-line Chromebook Minecraft setup and shelf gating, see **[MINECRAFT_SETUP.md](MINECRAFT_SETUP.md)**.
+
 ## Models Used
 
 | Part | Model | What It Does |

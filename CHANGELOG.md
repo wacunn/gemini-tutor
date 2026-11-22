@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.0
+- **Local Video Game Rewards — Fists of Doom & Chromebook Minecraft (`tutor/arcade.py`, `server.py`, `tutor/live.py`, `static/index.html`, `static/app.js`, `static/parent.html`):**
+  - **Strict Local Install Detection**: Activated **if and only if** `Fists of Doom` (`~/FistsOfDoom`) and/or `Minecraft` (`org.prismlauncher.PrismLauncher` user Flatpak) is installed locally on the same computer; completely invisible otherwise.
+  - **Quality-Gated Active Writing Clock (`SessionArcadeTracker`)**: Never counts idle open-tab time, single-word escapes, or pushback. Bounds each active turn (`<= 75s`) and buffers drafting/revision/spelling effort until a Homework-Standard complete sentence (starting capital, end punctuation, complete clause, clean spelling/grammar) or Cover-Copy-Compare word retrieval is verified.
+  - **Cross-Session Point Milestones & Parent Conversion Controls**: Persists earned active writing time across sessions in `learner.json` (`15 min solid writing = 1 Point` by default, `2 Points = 30 min → 15 min of game time`), with full parent customization, bonus/reset controls, and play history on `/parent`.
+  - **Embedded Fists of Doom Arcade & Chromebook Minecraft Setup (`setup_minecraft_chromebook.sh`, `bin/prism-gated-launch.sh`, `MINECRAFT_SETUP.md`)**: Launches Fists of Doom directly inside Gemini Tutor with a live countdown and auto-close at `0:00`, and includes an automatic Crostini Chromebook installer (`flatpak --user`, `QT_QPA_PLATFORM=xcb`, ChromeOS shelf `.desktop` gating, 1-minute save warning, and `flatpak kill` enforcement).
+
 ## 1.6.0
 - **Causal Story-Arc Friction Engine in Oral Story Construction (`tutor/controller.py`, `tutor/projects.py`, `tutor/live.py`, `static/app.js`, `static/style.css`):**
   - **Conservation of Learning Friction**: When transcription/spelling load drops to zero during upfront oral story building (`ORAL_STORY_INTAKE`), cognitive friction shifts explicitly to **causal storytelling & critical thinking** (*Trabasso & van den Broek* causal networks + *Stein & Glenn* story grammar + the *"Because / Therefore / But"* rule).
