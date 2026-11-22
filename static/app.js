@@ -688,7 +688,48 @@ function clearAsk() {
 
 // ---------------------------------------------------------------- pen
 
-const pen = { ctx: null, gctx: null, drawing: false, strokes: 0, prompt: "", tool: "pen", spot: null, w: 0, h: 0, dpr: 1 };
+const pen = {
+  ctx: null,
+  gctx: null,
+  drawing: false,
+  activePointerId: null,
+  stylusSeen: false,
+  lastX: 0,
+  lastY: 0,
+  strokes: 0,
+  eraserStrokes: 0,
+  samples: 0,
+  palmRejected: 0,
+  firstDownAt: 0,
+  strokeDownAt: 0,
+  activeInkMs: 0,
+  pressureSum: 0,
+  pressureMax: 0,
+  tiltSum: 0,
+  tiltCount: 0,
+  pointerType: "unknown",
+  prompt: "",
+  tool: "pen",
+  spot: null,
+  w: 0,
+  h: 0,
+  dpr: 1,
+};
+
+function resetPenTelemetry() {
+  pen.strokes = 0;
+  pen.eraserStrokes = 0;
+  pen.samples = 0;
+  pen.palmRejected = 0;
+  pen.firstDownAt = 0;
+  pen.strokeDownAt = 0;
+  pen.activeInkMs = 0;
+  pen.pressureSum = 0;
+  pen.pressureMax = 0;
+  pen.tiltSum = 0;
+  pen.tiltCount = 0;
+  pen.pointerType = pen.stylusSeen ? "pen" : "unknown";
+}
 
 function setPenTool(tool) {
   pen.tool = tool === "erase" ? "erase" : "pen";
@@ -826,7 +867,7 @@ function openPen(prompt, opts = {}) {
   if (savedBitmap) {
     pen.ctx.drawImage(savedBitmap, 0, 0, c.width, c.height);
   } else {
-    pen.strokes = 0;
+    resetPenTelemetry();
   }
   pen.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   pen.ctx.lineCap = "round";
@@ -836,52 +877,109 @@ function openPen(prompt, opts = {}) {
 
 (function wirePen() {
   const c = $("penCanvas");
-  const pos = (e) => {
+  c.addEventListener("contextmenu", (e) => e.preventDefault());
+  const sampleEvent = (e) => {
     const r = c.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top, p: e.pressure > 0 ? e.pressure : 0.5 };
+    const isPen = e.pointerType === "pen";
+    const rawP = typeof e.pressure === "number" && e.pressure > 0 ? e.pressure : (isPen ? 0.35 : 0.5);
+    pen.samples++;
+    pen.pressureSum += rawP;
+    if (rawP > pen.pressureMax) pen.pressureMax = rawP;
+    if (isPen && (typeof e.tiltX === "number" || typeof e.tiltY === "number")) {
+      pen.tiltSum += Math.hypot(e.tiltX || 0, e.tiltY || 0);
+      pen.tiltCount++;
+    }
+    return { x: e.clientX - r.left, y: e.clientY - r.top, p: rawP };
   };
+  const isHardwareEraser = (e) => e.button === 5 || ((e.buttons || 0) & 32) !== 0;
+
   $("penDrawBtn").onclick = () => setPenTool("pen");
   $("penEraseBtn").onclick = () => setPenTool("erase");
+
   c.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "pen") {
+      pen.stylusSeen = true;
+      pen.pointerType = "pen";
+    } else if (e.pointerType === "touch" && pen.stylusSeen) {
+      // 360-degree tablet palm rejection: ignore resting hand/palm once a USI stylus is active
+      pen.palmRejected++;
+      e.preventDefault();
+      return;
+    }
+    if (pen.drawing && pen.activePointerId !== null && e.pointerId !== pen.activePointerId) {
+      if (e.pointerType === "touch") pen.palmRejected++;
+      e.preventDefault();
+      return;
+    }
     e.preventDefault();
-    c.setPointerCapture(e.pointerId);
+    try { c.setPointerCapture(e.pointerId); } catch (_) {}
     pen.drawing = true;
+    pen.activePointerId = e.pointerId;
+    if (!pen.stylusSeen && e.pointerType) pen.pointerType = e.pointerType;
+    const now = performance.now();
+    if (!pen.firstDownAt) pen.firstDownAt = now;
+    pen.strokeDownAt = now;
     pen.strokes++;
+    const erasing = pen.tool === "erase" || isHardwareEraser(e);
+    if (erasing) pen.eraserStrokes++;
     if (pen.spot) {
       pen.spot = null;
       drawPrimaryLinesOn(pen.gctx, pen.w, pen.h, null);
     }
-    const p = pos(e);
-    if (pen.tool === "erase") {
-      pen.ctx.globalCompositeOperation = "destination-out";
-      pen.ctx.lineWidth = 22;
-    } else {
-      pen.ctx.globalCompositeOperation = "source-over";
-      pen.ctx.strokeStyle = "#1f1f1f";
-      pen.ctx.lineWidth = 2.6 + p.p * 3.6;
-    }
+    const p = sampleEvent(e);
+    pen.lastX = p.x;
+    pen.lastY = p.y;
+    pen.ctx.globalCompositeOperation = erasing ? "destination-out" : "source-over";
+    pen.ctx.strokeStyle = "#1f1f1f";
+    pen.ctx.lineWidth = erasing ? 22 : (2.2 + p.p * 4.0);
     pen.ctx.beginPath();
     pen.ctx.moveTo(p.x, p.y);
-  });
-  c.addEventListener("pointermove", (e) => {
-    if (!pen.drawing) return;
-    const p = pos(e);
-    if (pen.tool !== "erase") pen.ctx.lineWidth = 2.6 + p.p * 3.6;
-    pen.ctx.lineTo(p.x, p.y);
+    pen.ctx.lineTo(p.x + 0.01, p.y + 0.01);
     pen.ctx.stroke();
   });
-  const end = () => {
+
+  c.addEventListener("pointermove", (e) => {
+    if (!pen.drawing || (pen.activePointerId !== null && e.pointerId !== pen.activePointerId)) return;
+    e.preventDefault();
+    const erasing = pen.tool === "erase" || isHardwareEraser(e);
+    pen.ctx.globalCompositeOperation = erasing ? "destination-out" : "source-over";
+    pen.ctx.strokeStyle = "#1f1f1f";
+    // Preserve full 120-240Hz USI 2.0 stylus sub-frame telemetry via getCoalescedEvents()
+    const events = (typeof e.getCoalescedEvents === "function" && e.getCoalescedEvents().length)
+      ? e.getCoalescedEvents()
+      : [e];
+    for (let i = 0; i < events.length; i++) {
+      const p = sampleEvent(events[i]);
+      pen.ctx.beginPath();
+      pen.ctx.moveTo(pen.lastX, pen.lastY);
+      pen.ctx.lineWidth = erasing ? 22 : (2.2 + p.p * 4.0);
+      pen.ctx.lineTo(p.x, p.y);
+      pen.ctx.stroke();
+      pen.lastX = p.x;
+      pen.lastY = p.y;
+    }
+  });
+
+  const end = (e) => {
+    if (!pen.drawing) return;
+    if (e && pen.activePointerId !== null && e.pointerId !== undefined && e.pointerId !== pen.activePointerId) return;
+    if (pen.strokeDownAt > 0) {
+      pen.activeInkMs += Math.max(0, performance.now() - pen.strokeDownAt);
+      pen.strokeDownAt = 0;
+    }
     pen.drawing = false;
+    pen.activePointerId = null;
     if (pen.ctx) pen.ctx.globalCompositeOperation = "source-over";
   };
   c.addEventListener("pointerup", end);
   c.addEventListener("pointercancel", end);
+
   $("penClear").onclick = () => {
     pen.ctx.save();
     pen.ctx.setTransform(1, 0, 0, 1, 0, 0);
     pen.ctx.clearRect(0, 0, c.width, c.height);
     pen.ctx.restore();
-    pen.strokes = 0;
+    resetPenTelemetry();
     pen.spot = null;
     drawPrimaryLinesOn(pen.gctx, pen.w, pen.h, null);
     setPenTool("pen");
@@ -889,6 +987,20 @@ function openPen(prompt, opts = {}) {
   $("penCancel").onclick = () => ($("penSheet").hidden = true);
   $("penDone").onclick = () => {
     if (!pen.strokes) return ($("penSheet").hidden = true);
+    const totalSpanMs = pen.firstDownAt > 0 ? Math.round(performance.now() - pen.firstDownAt) : 0;
+    const telemetry = {
+      pointer_type: pen.pointerType,
+      stylus_detected: pen.stylusSeen,
+      strokes: pen.strokes,
+      eraser_strokes: pen.eraserStrokes,
+      samples: pen.samples,
+      active_ink_ms: Math.round(pen.activeInkMs),
+      total_span_ms: totalSpanMs,
+      pressure_mean: pen.samples ? Number((pen.pressureSum / pen.samples).toFixed(3)) : 0,
+      pressure_max: Number(pen.pressureMax.toFixed(3)),
+      tilt_mean_deg: pen.tiltCount ? Number((pen.tiltSum / pen.tiltCount).toFixed(1)) : 0,
+      palm_rejected: pen.palmRejected,
+    };
     const out = document.createElement("canvas");
     out.width = c.width;
     out.height = c.height;
@@ -902,7 +1014,7 @@ function openPen(prompt, opts = {}) {
     $("penSheet").hidden = true;
     const ph = addKid(`<img src="${png}" alt="handwriting"><span class="muted">Reading…</span>`);
     ph.dataset.pending = "pen";
-    send({ type: "pen", png_b64: png, prompt: pen.prompt });
+    send({ type: "pen", png_b64: png, prompt: pen.prompt, telemetry });
     clearAsk();
   };
 })();

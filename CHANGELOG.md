@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.1
+- **360° Chromebook / Googlebook USI 2.0 Pen Telemetry & Native Host-Chrome Bridge (`launch.py`, `static/app.js`, `tutor/live.py`):**
+  - Prioritized ChromeOS's native `garcon-url-handler` bridge before `xdg-open` in `launch.py` so `http://localhost:8787` always opens in host ChromeOS Chrome rather than Crostini XWayland, preserving raw USI 2.0 stylus `PointerEvent` hardware telemetry.
+  - Upgraded `#penCanvas` with 120–240Hz `e.getCoalescedEvents()` sub-frame stroke sampling, per-segment variable pressure, USI barrel/tail eraser detection (`button === 5` / `buttons & 32`), 360°-tablet palm rejection once a stylus is detected (`pointerType === "pen"`), and full `pen_telemetry` logging (stroke count, active ink ms, total span, pressure, tilt, and rejected palm touches).
+
 ## 1.7.0
 - **Local Video Game Rewards — Fists of Doom & Chromebook Minecraft (`tutor/arcade.py`, `server.py`, `tutor/live.py`, `static/index.html`, `static/app.js`, `static/parent.html`):**
   - **Strict Local Install Detection**: Activated **if and only if** `Fists of Doom` (`~/FistsOfDoom`) and/or `Minecraft` (`org.prismlauncher.PrismLauncher` user Flatpak) is installed locally on the same computer; completely invisible otherwise.

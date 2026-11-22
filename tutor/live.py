@@ -782,6 +782,8 @@ class TutorSession:
 
         elif kind == "pen":
             png = base64.b64decode((m.get("png_b64") or "").split(",", 1)[-1])
+            pen_tel = m.get("telemetry") if isinstance(m.get("telemetry"), dict) else {}
+            pen_secs = round(float(pen_tel.get("total_span_ms") or 0) / 1000.0, 1)
             target = self.input_target
             self.input_target = None
             self.kid_events += 1
@@ -794,14 +796,22 @@ class TutorSession:
                 res = {"text": "", "legible": False, "letter_issue": None, "error": str(e)}
             text = (res.get("text") or "").strip()
             letter_issue = res.get("letter_issue") if isinstance(res.get("letter_issue"), dict) else None
-            self.log.add("kid_wrote", text=text, legible=res.get("legible"), letter_issue=letter_issue, image=mid, target=target)
+            self.log.add(
+                "kid_wrote",
+                text=text,
+                legible=res.get("legible"),
+                letter_issue=letter_issue,
+                image=mid,
+                target=target,
+                pen_telemetry=pen_tel or None,
+            )
             inst_pen = guardian.instant_screen(self.id, text, sandbox=self.test_mode)
             if inst_pen:
                 await self.trigger_protective_bug(inst_pen)
                 return
             await self.ui({"type": "kid_pen", "text": text, "image": f"/media/{mid}.jpg"})
-            chk, check_note = await self.check(text, "handwritten") if (text and not letter_issue) else ({}, "")
-            self.ctrl.turn_signals = {"how": "handwritten"}
+            chk, check_note = await self.check(text, "handwritten", pen_secs) if (text and not letter_issue) else ({}, "")
+            self.ctrl.turn_signals = {"how": "handwritten", "pen_telemetry": pen_tel}
             plan = await asyncio.to_thread(
                 self.ctrl.classify_and_advance, text or "?", "handwritten", chk, self.opening_ideas, letter_issue
             )
