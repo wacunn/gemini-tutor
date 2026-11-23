@@ -206,13 +206,14 @@ def prism_data_dir() -> Path:
         if appdata:
             return Path(appdata) / "PrismLauncher"
         return home / "AppData" / "Roaming" / "PrismLauncher"
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "PrismLauncher"
     flatpak_data = home / ".var" / "app" / PRISM_APP_ID / "data" / "PrismLauncher"
     if flatpak_data.exists() or (home / ".local" / "share" / "flatpak" / "app" / PRISM_APP_ID).exists():
         return flatpak_data
-    if sys.platform == "darwin":
-        mac_dir = home / "Library" / "Application Support" / "PrismLauncher"
-        if mac_dir.exists():
-            return mac_dir
+    native_linux = home / ".local" / "share" / "PrismLauncher"
+    if native_linux.exists():
+        return native_linux
     return flatpak_data
 
 
@@ -230,14 +231,22 @@ def minecraft_flavor() -> str:
         if _win_official_minecraft_info()["installed"]:
             return "official"
         return ""
-    if (home / ".local" / "share" / "flatpak" / "app" / PRISM_APP_ID).exists():
-        return "prism"
-    if (home / ".local" / "share" / "flatpak" / "exports" / "share" / "applications" / f"{PRISM_APP_ID}.desktop").exists():
-        return "prism"
-    if sys.platform == "darwin" and (
-        Path("/Applications/Prism Launcher.app").exists() or (home / "Applications/Prism Launcher.app").exists()
+    if sys.platform == "darwin":
+        if Path("/Applications/Prism Launcher.app").exists() or (home / "Applications/Prism Launcher.app").exists():
+            return "prism"
+        if Path("/Applications/Minecraft.app").exists() or (home / "Applications/Minecraft.app").exists():
+            return "official"
+        return ""
+    # Chromebook (Crostini) & Desktop Linux
+    if (
+        (home / ".local" / "share" / "flatpak" / "app" / PRISM_APP_ID).exists()
+        or Path(f"/var/lib/flatpak/app/{PRISM_APP_ID}").exists()
+        or (home / ".local" / "share" / "flatpak" / "exports" / "share" / "applications" / f"{PRISM_APP_ID}.desktop").exists()
+        or shutil.which("prismlauncher") is not None
     ):
         return "prism"
+    if shutil.which("minecraft-launcher") is not None or (home / ".minecraft" / "versions").is_dir():
+        return "official"
     return ""
 
 
@@ -494,11 +503,15 @@ def stop_minecraft() -> None:
     if fp:
         subprocess.run([fp, "kill", PRISM_APP_ID], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     if sys.platform == "darwin":
-        subprocess.run(["pkill", "-f", "Prism Launcher"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        for pat in ("Prism Launcher", "Minecraft.app/Contents/MacOS", "net.minecraft.client.main.Main", "org.prismlauncher"):
+            subprocess.run(["pkill", "-f", pat], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    else:
+        for pat in ("prismlauncher", "minecraft-launcher", "net.minecraft.client.main.Main", "org.prismlauncher"):
+            subprocess.run(["pkill", "-f", pat], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
 def launch_minecraft(*, instance_override: str | None = None, parent_setup: bool = False) -> dict[str, Any]:
-    """Launches Prism Launcher (or Official Windows Minecraft) directly into an instance or Parent Setup mode."""
+    """Launches Prism Launcher (or Official Minecraft Launcher) directly into an instance or Parent Setup mode."""
     global _MC_LAUNCHED_AT, _MC_WARNED_ONE_MIN, _PARENT_SETUP_UNTIL
     flavor = minecraft_flavor()
     if not flavor:
@@ -546,19 +559,40 @@ def launch_minecraft(*, instance_override: str | None = None, parent_setup: bool
             return {"ok": True, "instance": None, "parent_setup": parent_setup, "flavor": "official"}
         raise RuntimeError("Could not locate Prism Launcher or Minecraft Launcher executable on Windows.")
 
-    # 2. Chromebook / Linux (`flatpak`)
+    # 2. macOS
+    if sys.platform == "darwin":
+        for app_p in (Path("/Applications/Prism Launcher.app"), Path.home() / "Applications/Prism Launcher.app"):
+            if app_p.exists():
+                cmd = ["open", "-a", str(app_p)]
+                if chosen:
+                    cmd.extend(["--args", "--launch", chosen])
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return {"ok": True, "instance": chosen or None, "parent_setup": parent_setup, "flavor": "prism"}
+        for mc_app in (Path("/Applications/Minecraft.app"), Path.home() / "Applications/Minecraft.app"):
+            if mc_app.exists():
+                subprocess.Popen(["open", "-a", str(mc_app)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return {"ok": True, "instance": None, "parent_setup": parent_setup, "flavor": "official"}
+        raise RuntimeError("Could not locate Prism Launcher.app or Minecraft.app on macOS.")
+
+    # 3. Chromebook (Crostini) & Desktop Linux
     env = dict(os.environ)
-    env["QT_QPA_PLATFORM"] = "xcb"
+    is_crostini = Path("/dev/.cros_milestone").exists()
+    if is_crostini:
+        env["QT_QPA_PLATFORM"] = "xcb"
 
     fp = shutil.which("flatpak")
-    if fp and (Path.home() / ".local" / "share" / "flatpak" / "app" / PRISM_APP_ID).exists():
-        # Ensure permanent XWayland override is applied for Crostini stability
-        subprocess.run(
-            [fp, "--user", "override", "--env=QT_QPA_PLATFORM=xcb", PRISM_APP_ID],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+    has_flatpak_prism = fp and (
+        (Path.home() / ".local" / "share" / "flatpak" / "app" / PRISM_APP_ID).exists()
+        or Path(f"/var/lib/flatpak/app/{PRISM_APP_ID}").exists()
+    )
+    if has_flatpak_prism:
+        if is_crostini:
+            subprocess.run(
+                [fp, "--user", "override", "--env=QT_QPA_PLATFORM=xcb", PRISM_APP_ID],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
         cmd = [fp, "run", PRISM_APP_ID]
         if chosen:
             cmd.extend(["--launch", chosen])
@@ -571,23 +605,54 @@ def launch_minecraft(*, instance_override: str | None = None, parent_setup: bool
         )
         return {"ok": True, "instance": chosen or None, "parent_setup": parent_setup, "flavor": "prism"}
 
-    # 3. macOS
-    if sys.platform == "darwin":
-        app_p = Path("/Applications/Prism Launcher.app")
-        if not app_p.exists():
-            app_p = Path.home() / "Applications/Prism Launcher.app"
-        cmd = ["open", "-a", str(app_p)]
+    native_prism = shutil.which("prismlauncher")
+    if native_prism:
+        cmd = [native_prism]
         if chosen:
-            cmd.extend(["--args", "--launch", chosen])
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            cmd.extend(["--launch", chosen])
+        subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         return {"ok": True, "instance": chosen or None, "parent_setup": parent_setup, "flavor": "prism"}
 
-    raise RuntimeError("Could not find Prism Launcher binary on this system.")
+    native_mc = shutil.which("minecraft-launcher")
+    if native_mc:
+        subprocess.Popen([native_mc], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return {"ok": True, "instance": None, "parent_setup": parent_setup, "flavor": "official"}
+
+    raise RuntimeError("Could not find Prism Launcher or Minecraft Launcher binary on this system.")
 
 
 def sync_minecraft_desktop_gate(gate_enabled: bool) -> None:
-    """Syncs OS-level Minecraft gating (Windows Startup watchdog + Desktop shortcut, or ChromeOS `.desktop`)."""
+    """Syncs OS-level Minecraft gating across Windows, macOS, ChromeOS, and Desktop Linux."""
     if sys.platform == "darwin":
+        plist_dir = Path.home() / "Library" / "LaunchAgents"
+        plist_path = plist_dir / "com.geminitutor.watchdog.plist"
+        py_bin = ROOT / ".venv" / "bin" / "python"
+        if not py_bin.is_file():
+            py_bin = Path(sys.executable)
+        try:
+            if gate_enabled:
+                plist_dir.mkdir(parents=True, exist_ok=True)
+                plist_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.geminitutor.watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{py_bin}</string>
+    <string>{ROOT / "launch.py"}</string>
+    <string>--no-open</string>
+  </array>
+  <key>WorkingDirectory</key><string>{ROOT}</string>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+"""
+                plist_path.write_text(plist_xml, encoding="utf-8")
+            elif plist_path.is_file():
+                plist_path.unlink()
+        except OSError:
+            pass
         return
 
     if _is_win():
@@ -664,6 +729,29 @@ def sync_minecraft_desktop_gate(gate_enabled: bool) -> None:
         return
 
     home = Path.home()
+    # Desktop Linux XDG autostart watchdog
+    autostart_dir = home / ".config" / "autostart"
+    autostart_file = autostart_dir / "gemini-tutor-watchdog.desktop"
+    py_linux = ROOT / ".venv" / "bin" / "python"
+    if not py_linux.is_file():
+        py_linux = Path(sys.executable)
+    try:
+        if gate_enabled:
+            autostart_dir.mkdir(parents=True, exist_ok=True)
+            autostart_file.write_text(
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                "Name=Gemini Tutor Minecraft Watchdog\n"
+                f'Exec="{py_linux}" "{ROOT / "launch.py"}" --no-open\n'
+                "Terminal=false\n"
+                "X-GNOME-Autostart-enabled=true\n",
+                encoding="utf-8",
+            )
+        elif autostart_file.is_file():
+            autostart_file.unlink()
+    except OSError:
+        pass
+
     export_desktop = home / ".local" / "share" / "flatpak" / "exports" / "share" / "applications" / f"{PRISM_APP_ID}.desktop"
     local_desktop = home / ".local" / "share" / "applications" / f"{PRISM_APP_ID}.desktop"
     wrapper = ROOT / "bin" / "prism-gated-launch.sh"

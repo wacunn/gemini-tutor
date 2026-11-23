@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.3
+- **Full 4-OS Documentation & Automatic Minecraft Java Setup (`README.md`, `SETUP.md`, `MINECRAFT_SETUP.md`, `setup_minecraft_mac.sh`, `setup_minecraft_linux.sh`, `setup_minecraft_chromebook.sh`, `tutor/arcade.py`, `static/parent.html`):**
+  - Added complete installation, optional *Fists of Doom* & *Minecraft Java Edition* add-on commands, and Parent Controls documentation right on the GitHub landing page (`README.md`), `SETUP.md`, and `MINECRAFT_SETUP.md` covering **Windows 11/10**, **macOS**, **ChromeOS**, and **Desktop Linux** (Ubuntu, Debian, Fedora, Mint, Arch).
+  - Added `setup_minecraft_mac.sh` (with macOS `LaunchAgent` login watchdog) and `setup_minecraft_linux.sh` (with XDG autostart watchdog + `apt`/`dnf`/`pacman` support) for full 4-OS parity with `setup_minecraft_windows.ps1` and `setup_minecraft_chromebook.sh`.
+
 ## 1.7.2
 - **Native Windows 11/10 Minecraft Setup, Login Watchdog & Toast Notifications (`tutor/arcade.py`, `setup_minecraft_windows.ps1`, `bin/minecraft-gated-launch.py`, `launch.py`, `install.ps1`, `static/parent.html`, `static/icon.ico`):**
   - Added one-line automatic Windows PowerShell setup (`setup_minecraft_windows.ps1`) that installs/updates Gemini Tutor, installs Prism Launcher + Eclipse Temurin Java 21 via `winget`, configures a silent Windows `Startup` background watchdog (`pythonw.exe launch.py --no-open`), and creates a gated Desktop shortcut (`bin/minecraft-gated-launch.py`).

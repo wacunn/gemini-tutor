@@ -6,30 +6,100 @@ Kids learn sentence structure, verb endings, punctuation, and spelling by making
 
 ## What Kids Can Make
 
-- **Comic Books & Graphic Novels (Save Anytime · Printable PDF):** Kids plan the kickoff, jump to the big finale, pack the middle with as many wild plot twists as they want, and then write chapter by chapter with speech bubbles and consistent characters. Includes 6 comic art styles (*Dog Man*-style marker comics, *Wimpy Kid*-style lined-notebook doodles, action manga, heavy-metal zine ink, blocky voxel worlds, and indie adventure comics).
-- **Fact & Invention Codex (Reading + Writing · PDF):** Kids read 3 short real-world science, history, or engineering sources (or ask to research any topic they want), answer an inference question, and build a 3-sentence illustrated encyclopedia entry.
+- **Comic Books & Graphic Novels (Save Anytime · Printable PDF):** Kids plan the kickoff, jump to the big finale, pack the middle with plot twists, and write chapter by chapter with speech bubbles and consistent characters across 6 comic art styles (*Dog Man*-style marker comics, *Wimpy Kid*-style lined-notebook doodles, action manga, heavy-metal zine ink, blocky voxel worlds, and indie adventure comics).
+- **How-To Guides & Minecraft Diaries (Printable PDF):** Pure procedural step-by-step guides and illustrated survival journals driven by the student's own ideas.
+- **Fact & Invention Codex (Reading + Writing · PDF):** Kids read 3 short real-world science, history, or engineering sources, answer an inference question, and build a 3-sentence illustrated encyclopedia entry.
 - **4-Page Persuasive Pitch ('Why We Should…' · PDF):** Guides kids step by step through making a real case (*Claim → Reason → Counter-Argument → Deal*) to print or show a parent.
-- **Quick 3-Panel Strips, Mini-Games & Primary-Lined Handwriting Pad:** Includes a stylus/touchscreen writing pad with **Sky, Fence, Grass, and Worm** letter lines (plus single-letter erase & touch-up), spoken dictation-to-edit for tired days, and daily spaced spelling practice.
-- **Multiple Saved Books & Parent Sandbox (`/?sandbox=1`):** Open the `☰` menu to switch between saved books or start a new one, or use **Parent Try-It (Sandbox)** to test everything without touching your child's saved work or progress report.
+- **Stylus / 2-in-1 Touchscreen Handwriting Pad:** Primary-lined **Sky, Fence, Grass, and Worm** handwriting sheet with 120–240Hz `PointerEvent` stylus pressure/tilt capture, 360°-tablet palm rejection, and single-letter erase & touch-up.
+- **Multiple Saved Books & Parent Sandbox (`/?sandbox=1`):** Open the `☰` menu to switch between saved books or start a new one, or use **Parent Try-It (Sandbox)** to test everything without touching your child's saved work, points, or progress report.
 
-## One-Line Install (Mac, Windows PC & Chromebook)
+---
 
-For step-by-step parent instructions, see **[SETUP.md](SETUP.md)**.
+## 💻 Installation by Operating System (Windows, Mac, ChromeOS & Linux)
 
-- **Mac or Chromebook (Terminal):**
-  ```bash
-  curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/install.sh | bash
-  ```
-- **Windows PC (PowerShell):**
+No coding or manual Python setup needed—each one-line installer downloads standalone Python 3.12 (`uv`), creates a Desktop / App Launcher icon, and opens Gemini Tutor automatically. After installing, **updates happen with one click inside the Parent page**.
+
+*(Before starting, grab a free Gemini API key once at **https://aistudio.google.com/app/api-keys** to paste on the first-run screen. Full step-by-step parent walkthrough: **[SETUP.md](SETUP.md)**.)*
+
+### 1. Windows 11 / 10 (PC & 2-in-1 Touch Laptops)
+Open **PowerShell** (`Start` → type `PowerShell` → `Enter`) and paste:
+```powershell
+irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/install.ps1 | iex
+```
+
+### 2. macOS (Apple Silicon & Intel Macs)
+Open **Terminal** (`⌘ Command` + `Space` → type `Terminal` → `Return`) and paste:
+```bash
+curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/install.sh | bash
+```
+
+### 3. ChromeOS (Chromebook / Googlebook)
+1. One-time Linux turn-on: **Settings → About ChromeOS → Developers → Linux development environment → Turn On**.
+2. In the **Linux Terminal** window (`Ctrl` + `Shift` + `V` to paste), run:
+```bash
+curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/install.sh | bash
+```
+
+### 4. Linux (Ubuntu, Debian, Fedora, Mint, Arch)
+Open **Terminal** and paste:
+```bash
+curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/install.sh | bash
+```
+
+---
+
+## 🎮 Optional Add-Ons: Earned Video Game Time & Parent Controls
+
+**Important:** Gemini Tutor shows **zero** video game UI, points, or game buttons **unless** you install **[Fists of Doom: Toronto](https://github.com/wacunn/toronto-fight-game)** and/or **Minecraft Java Edition** locally on the same computer.
+
+### Option A — Add *Fists of Doom: Toronto* (Local Install + In-Tutor Arcade)
+Kids earn play time through verified writing and launch *Fists of Doom* right inside Gemini Tutor (with a live countdown and auto-close at `0:00`):
+
+- **Windows (PowerShell):**
   ```powershell
-  irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.ps1 | iex
+  ```
+- **Mac, ChromeOS, or Linux (Terminal):**
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash
   ```
 
-### One-Click Updates Inside the App
-No command line needed after installing: click the **Parent icon** (top right) → **Software** → **Check for updates** → **Update now**. Your API key and all saved books and progress stay untouched.
+### Option B — Add *Minecraft Java Edition* (Auto-Setup + OS Time-Gating)
+Each one-line script installs **Prism Launcher** (+ Java 21 where needed), links OS shortcuts & a silent login watchdog to Gemini Tutor's earned-time bank, and opens **Parent Setup** for your one-time Microsoft account sign-in (full details in **[MINECRAFT_SETUP.md](MINECRAFT_SETUP.md)**):
 
-### Optional Local Video Game Rewards (Fists of Doom & Chromebook Minecraft)
-When **[Fists of Doom](https://github.com/wacunn/toronto-fight-game)** and/or **Minecraft (Prism Launcher)** is installed locally on the same computer, students can earn video game points from **active, verified writing** (never idle open-app time, fragments, or avoidance—saved across sessions so progress is never lost) and launch earned game time straight from Gemini Tutor. Parents control the exact conversion ratio on `/parent`. For one-line Chromebook Minecraft setup and shelf gating, see **[MINECRAFT_SETUP.md](MINECRAFT_SETUP.md)**.
+- **Windows 11 / 10 (PowerShell):**
+  ```powershell
+  irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex
+  ```
+  *(Also auto-detects and gates the Official Microsoft Store / Xbox App Minecraft Launcher and Minecraft Bedrock if installed.)*
+- **macOS (Terminal):**
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_mac.sh | bash
+  ```
+- **ChromeOS / Chromebook (Linux Terminal):**
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_chromebook.sh | bash
+  ```
+- **Linux — Ubuntu, Debian, Fedora, Mint, Arch (Terminal):**
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_linux.sh | bash
+  ```
+
+### 👨‍👩‍👦 Parent Controls (`http://localhost:8787/parent`)
+Click the **Parent icon** (person icon in the top-right corner of Gemini Tutor) and scroll to **Video Game Rewards**:
+
+- **Active Solid Writing Only (Never Idle Open-App Time):** Leaving the app open, typing `"idk"`, fragments, or off-task chat earns **0 seconds**. Each turn caps active thinking/writing time (`<= 75s`) and commits credit **only** when a Homework-Standard complete sentence (starting capital, ending punctuation, complete clause, clean spelling/grammar) or Cover-Copy-Compare spelling retrieval succeeds.
+- **Saved Across Sessions:** By default, **15 minutes** of solid writing = **1 Point** (never lost if a child stops after 15 minutes!), and **2 Points (30 minutes of solid writing)** = **15 minutes of game time**.
+- **Customizable Conversion Rules:** Parents set the exact **minutes per point**, **points to unlock**, and **game minutes earned**, toggle rewards on/off anytime, **grant +15m bonus time**, or **reset the bank to `0:00`**.
+- **Automatic Enforcement & 1-Minute Save Warning:**
+  - Launching Minecraft from the Desktop / Start Menu / ChromeOS Shelf when banked time is `0:00` notifies your child and opens **Gemini Tutor** instead; standalone *Fists of Doom* can also be locked at `0:00`.
+  - With **1 minute left**, a native OS notification + chime warns your child to **Save & Quit to Title**, and at **`0:00`** the game closes automatically.
+  - Need to sign in, update Minecraft, or add mods without using banked time? Click **🔧 Open Prism Launcher (Parent Setup)** on `/parent` for an unlocked maintenance session.
+
+---
+
+## 🔄 One-Click Updates Inside the App
+No command line needed after installing: click the **Parent icon** (top right) → **Software** → **Check for updates** → **Update now**. Your API key and all saved books, points, and progress stay untouched.
 
 ## Models Used
 
@@ -47,7 +117,7 @@ When **[Fists of Doom](https://github.com/wacunn/toronto-fight-game)** and/or **
 ## Running Locally from Source
 
 ```bash
-./start.sh          # Mac / Chromebook / Linux -> http://localhost:8787
+./start.sh          # Mac / ChromeOS / Linux -> http://localhost:8787
 start.cmd           # Windows PC -> http://localhost:8787
 ```
 

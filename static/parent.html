@@ -590,10 +590,12 @@
             <div class="muted" style="line-height:1.5">
               Your child sees <b>zero</b> video game UI or points unless <b>Fists of Doom</b> or <b>Minecraft</b> is installed locally on this computer:
               <ul>
-                <li><b>Fists of Doom (Windows PowerShell):</b> <code>irm https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.ps1 | iex</code></li>
-                <li><b>Minecraft + Time-Gating (Windows PowerShell):</b> <code>irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex</code></li>
-                <li><b>Fists of Doom (Mac / Chromebook):</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash</code></li>
-                <li><b>Minecraft + Time-Gating (Chromebook Linux):</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_chromebook.sh | bash</code></li>
+                <li><b>Windows (PowerShell) — Fists of Doom:</b> <code>irm https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.ps1 | iex</code></li>
+                <li><b>Windows (PowerShell) — Minecraft Java + Time-Gating:</b> <code>irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex</code></li>
+                <li><b>Mac (Terminal) — Fists of Doom:</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash</code></li>
+                <li><b>Mac (Terminal) — Minecraft Java + Time-Gating:</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_mac.sh | bash</code></li>
+                <li><b>ChromeOS / Linux (Terminal) — Fists of Doom:</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash</code></li>
+                <li><b>ChromeOS / Linux (Terminal) — Minecraft Java + Time-Gating:</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_chromebook.sh | bash</code></li>
               </ul>
             </div>
           </div>`;
@@ -605,6 +607,12 @@
         const rgm = Number(A.reward_game_minutes) || 15;
         const mcLabel = A.minecraft_label || "Prism Launcher";
         const isWin = A.platform === "windows";
+        const isMac = A.platform === "mac";
+        const gateLabel = isWin
+          ? "Gate Minecraft on Windows (silent login watchdog, Desktop shortcut &amp; auto-close at 0:00)"
+          : isMac
+          ? "Gate Minecraft on Mac (login watchdog &amp; auto-close at 0:00)"
+          : "Gate Minecraft on ChromeOS / Linux (launcher wrapper, login watchdog &amp; auto-close at 0:00)";
         const chunkDoneMin = Math.round(((Number(A.committed_work_seconds) || 0) / 60) * 10) / 10;
         const gameTags = [
           A.fod_installed ? `<span class="pill ok">🥊 Fists of Doom Installed</span>` : `<span class="pill muted">Fists of Doom not installed</span>`,
@@ -674,7 +682,7 @@
                 </label>` : ""}
                 <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
                   <input type="checkbox" id="arcGateMc" style="width:auto" ${A.gate_minecraft ? "checked" : ""} />
-                  <span>${isWin ? "Gate Minecraft on Windows (silent login watchdog, Desktop shortcut &amp; auto-close at 0:00)" : "Gate Chromebook Minecraft shelf icon &amp; close automatically at 0:00"}</span>
+                  <span>${gateLabel}</span>
                 </label>
               ` : ""}
               ${A.fod_installed ? `
