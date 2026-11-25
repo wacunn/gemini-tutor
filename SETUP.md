@@ -95,7 +95,7 @@ Click **Done**. Everything stays privately on your computer.
 
 ## Optional Step 4: Add Earned Video Game Rewards & Parent Controls
 
-Gemini Tutor shows **zero** video game UI unless **Fists of Doom** and/or **Minecraft Java Edition** is installed locally on the same computer.
+Gemini Tutor shows **zero** video game UI unless **Fists of Doom**, **Minecraft Bedrock**, and/or **Minecraft Java Edition** is installed locally on the same computer. All installed games **share the same earned game-time bank**.
 
 ### 1. Install *Fists of Doom: Toronto* (Local Install)
 - **Windows (PowerShell):**
@@ -107,13 +107,14 @@ Gemini Tutor shows **zero** video game UI unless **Fists of Doom** and/or **Mine
   curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash
   ```
 
-### 2. Install & Time-Gate *Minecraft Java Edition* (Prism Launcher)
+### 2. Install & Time-Gate *Minecraft (Bedrock &/or Java Edition)*
 See **[MINECRAFT_SETUP.md](MINECRAFT_SETUP.md)** for full details and Microsoft account sign-in steps, or run the one-line setup for your OS:
 
-- **Windows 11 / 10 (PowerShell):**
+- **Windows 11 / 10 — Minecraft Bedrock & Java (PowerShell):**
   ```powershell
   irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex
   ```
+  *(Automatically detects & gates **Minecraft for Windows (Bedrock)** from Microsoft Store / Xbox App AND installs **Prism Launcher + Java 21** so your child can spend earned minutes on **either Bedrock or Java**! For Bedrock-only without installing Java: `$env:TUTOR_BEDROCK_ONLY="1"; irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex`.)*
 - **Mac (Terminal):**
   ```bash
   curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_mac.sh | bash
@@ -127,12 +128,13 @@ See **[MINECRAFT_SETUP.md](MINECRAFT_SETUP.md)** for full details and Microsoft 
   curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_linux.sh | bash
   ```
 
-### 3. Configure Parent Controls (`http://localhost:8787/parent`)
+### 3. Configure Parent Controls & Parent Override (`http://localhost:8787/parent`)
 Click the **Parent icon** (top-right corner of Gemini Tutor) → **Video Game Rewards**:
 
-- **Customize Conversion Ratio:** Set how many minutes of active, verified writing earn **1 Point** (default `15 min`, saved across sessions so shorter sessions never lose progress), how many points unlock a reward (default `2 Points` = `30 min`), and how many minutes of game time are unlocked (default `15 min`).
-- **Bonus / Reset / Lock Controls:** Grant `+15m` bonus time, reset banked time to `0:00`, lock standalone *Fists of Doom* when banked time is `0:00`, or toggle OS-level Minecraft gating (silent login watchdog + Desktop/Shelf shortcut wrapper + 1-minute save warning + auto-close at `0:00`).
-- **Parent Maintenance Mode:** Click **🔧 Open Prism Launcher (Parent Setup)** anytime to log into Microsoft, update Minecraft, or install mods without deducting your child's banked time.
+- **ADHD-Friendly `1:2` Default Ratio:** By default, **1 minute of active, verified solid writing earns 2 minutes of gaming** (`15 min solid writing → 1 Point → 30 min gaming`, with partial minutes always saved across sessions). You can adjust **minutes per point**, **points to unlock**, and **game minutes earned** anytime or click 1-tap presets.
+- **Parent Override (Free Play Unlock):** Unlock free play for **30m**, **1 hr**, **Rest of Today**, or **Until Turned Off** (plus **End Override Now**) without draining your child's banked points or closing Bedrock/Java/Fists of Doom.
+- **Bonus / Reset / Per-Edition Lock Controls:** Grant `+15m` / `+30m` bonus time, reset banked time to `0:00`, lock standalone *Fists of Doom* at `0:00`, or toggle OS-level gating independently for **Minecraft Bedrock** and **Minecraft Java** (silent login watchdog + Desktop/Shelf shortcut wrapper + 1-minute save warning + auto-close at `0:00`).
+- **Parent Maintenance Mode:** Click **🔧 Open Bedrock (Parent Setup)** or **🔧 Open Prism Launcher (Parent Setup)** anytime to log into Microsoft, update Minecraft, or install mods without deducting your child's banked time.
 
 ---
 

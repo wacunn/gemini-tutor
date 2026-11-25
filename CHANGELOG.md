@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.4
+- **Dual Minecraft Bedrock + Java Support on Windows, Parent Override & `1:2` ADHD-Friendly Conversion Default (`tutor/arcade.py`, `server.py`, `bin/minecraft-gated-launch.py`, `setup_minecraft_windows.ps1`, `static/index.html`, `static/app.js`, `static/parent.html`):**
+  - **Dual Minecraft Bedrock + Java Edition Support**: Independently detects **Minecraft Bedrock (`Minecraft for Windows`, `Microsoft.MinecraftUWP_8wekyb3d8bbwe` / `Minecraft.Windows.exe`)** and **Minecraft Java (`Prism Launcher` / `Minecraft Launcher`)** on Windows so both can be installed side by side, launched directly (`shell:AppsFolder\Microsoft.MinecraftUWP_8wekyb3d8bbwe!App` for Bedrock, Prism/Official for Java), gated independently via Desktop shortcuts + login watchdog, and played from the **same shared earned game-time bank**.
+  - **1-Click Parent Override (`Free Play`)**: Added Parent Override controls on `/parent` (`30m`, `1 hr`, `Rest of Today`, `Until Turned Off`, and `End Override Now`, plus per-edition `Parent Setup` maintenance mode) that unlock Bedrock, Java, and Fists of Doom without spending banked points or auto-closing games.
+  - **ADHD-Friendly `1:2` Default Conversion (`1 min solid work = 2 min gaming`)**: Updated default conversion rules to `15 min solid writing → 1 Point → 30 min gaming` (auto-migrating untouched `v1.7.0` defaults while preserving custom parent settings) with quick ratio presets on `/parent`.
+
 ## 1.7.3
 - **Full 4-OS Documentation & Automatic Minecraft Java Setup (`README.md`, `SETUP.md`, `MINECRAFT_SETUP.md`, `setup_minecraft_mac.sh`, `setup_minecraft_linux.sh`, `setup_minecraft_chromebook.sh`, `tutor/arcade.py`, `static/parent.html`):**
   - Added complete installation, optional *Fists of Doom* & *Minecraft Java Edition* add-on commands, and Parent Controls documentation right on the GitHub landing page (`README.md`), `SETUP.md`, and `MINECRAFT_SETUP.md` covering **Windows 11/10**, **macOS**, **ChromeOS**, and **Desktop Linux** (Ubuntu, Debian, Fedora, Mint, Arch).

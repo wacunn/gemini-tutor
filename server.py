@@ -360,6 +360,8 @@ class ArcadeSettingsIn(BaseModel):
     reward_game_minutes: Optional[int] = None
     lock_standalone: Optional[bool] = None
     gate_minecraft: Optional[bool] = None
+    gate_bedrock: Optional[bool] = None
+    override_mode: Optional[str] = None
     minecraft_instance: Optional[str] = None
     grant_minutes: Optional[float] = None
     reset_bank: bool = False
@@ -368,6 +370,10 @@ class ArcadeSettingsIn(BaseModel):
 class ArcadeStartIn(BaseModel):
     game: str = "fod"
     sandbox: int = 0
+
+
+class MinecraftParentSetupIn(BaseModel):
+    edition: str = "auto"
 
 
 class ArcadeHeartbeatIn(BaseModel):
@@ -394,6 +400,8 @@ def arcade_settings(body: ArcadeSettingsIn):
         reward_game_minutes=body.reward_game_minutes,
         lock_standalone=body.lock_standalone,
         gate_minecraft=body.gate_minecraft,
+        gate_bedrock=body.gate_bedrock,
+        override_mode=body.override_mode,
         minecraft_instance=body.minecraft_instance,
         grant_minutes=body.grant_minutes,
         reset_bank=body.reset_bank,
@@ -409,21 +417,23 @@ async def arcade_start(body: Optional[ArcadeStartIn] = None, sandbox: int = 0):
     st = arcade.client_status(sandbox=is_sb)
     if not st.get("enabled"):
         raise HTTPException(403, "Video game rewards are turned off on the Parent page.")
-    if st.get("game_seconds_available", 0) < 1.0:
+    if st.get("game_seconds_available", 0) < 1.0 and not st.get("parent_override_active"):
         raise HTTPException(403, "No game time unlocked yet—keep writing to earn points!")
 
-    if req_game == "minecraft":
+    if req_game in ("minecraft", "minecraft_java", "minecraft_bedrock"):
         if not arcade.is_minecraft_installed():
-            raise HTTPException(404, "Minecraft (Prism Launcher) is not installed locally on this computer.")
+            raise HTTPException(404, "Minecraft is not installed locally on this computer.")
+        ed = "bedrock" if req_game == "minecraft_bedrock" else ("java" if req_game == "minecraft_java" else "auto")
         try:
             res = await asyncio.to_thread(
                 arcade.launch_minecraft,
+                edition=ed,
                 instance_override=st.get("minecraft_instance") or None,
                 parent_setup=False,
             )
         except Exception as e:
             raise HTTPException(502, str(e))
-        return {"ok": True, "game": "minecraft", **res, "arcade": arcade.client_status(sandbox=is_sb)}
+        return {"ok": True, "game": req_game, **res, "arcade": arcade.client_status(sandbox=is_sb)}
 
     if not arcade.is_fod_installed():
         raise HTTPException(404, "Fists of Doom is not installed locally on this computer.")
@@ -442,12 +452,13 @@ async def arcade_stop(sandbox: int = 0):
 
 
 @app.post("/api/arcade/minecraft-parent-setup")
-async def arcade_minecraft_parent_setup():
+async def arcade_minecraft_parent_setup(body: Optional[MinecraftParentSetupIn] = None):
     from tutor import arcade
 
     if not arcade.is_minecraft_installed():
-        raise HTTPException(404, "Prism Launcher is not installed yet. Run setup_minecraft_chromebook.sh first.")
-    res = await asyncio.to_thread(arcade.launch_minecraft, parent_setup=True)
+        raise HTTPException(404, "Minecraft is not installed yet on this computer.")
+    ed = (body.edition if body else "auto").strip().lower()
+    res = await asyncio.to_thread(arcade.launch_minecraft, edition=ed, parent_setup=True)
     return {"ok": True, **res, "arcade": arcade.client_status()}
 
 

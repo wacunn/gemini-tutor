@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/install.sh
 
 ## 🎮 Optional Add-Ons: Earned Video Game Time & Parent Controls
 
-**Important:** Gemini Tutor shows **zero** video game UI, points, or game buttons **unless** you install **[Fists of Doom: Toronto](https://github.com/wacunn/toronto-fight-game)** and/or **Minecraft Java Edition** locally on the same computer.
+**Important:** Gemini Tutor shows **zero** video game UI, points, or game buttons **unless** you install **[Fists of Doom: Toronto](https://github.com/wacunn/toronto-fight-game)**, **Minecraft Bedrock Edition** (*Minecraft for Windows*), and/or **Minecraft Java Edition** locally on the same computer. When multiple games are installed, they **share the same earned game-time bank** so your child can choose whichever one they want to play!
 
 ### Option A — Add *Fists of Doom: Toronto* (Local Install + In-Tutor Arcade)
 Kids earn play time through verified writing and launch *Fists of Doom* right inside Gemini Tutor (with a live countdown and auto-close at `0:00`):
@@ -64,14 +64,14 @@ Kids earn play time through verified writing and launch *Fists of Doom* right in
   curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash
   ```
 
-### Option B — Add *Minecraft Java Edition* (Auto-Setup + OS Time-Gating)
-Each one-line script installs **Prism Launcher** (+ Java 21 where needed), links OS shortcuts & a silent login watchdog to Gemini Tutor's earned-time bank, and opens **Parent Setup** for your one-time Microsoft account sign-in (full details in **[MINECRAFT_SETUP.md](MINECRAFT_SETUP.md)**):
+### Option B — Add *Minecraft Bedrock &/or Java Edition* (Auto-Setup + OS Time-Gating)
+Each one-line script wires OS shortcuts & a silent login watchdog to Gemini Tutor's earned-time bank, installs **Prism Launcher + Java 21** for Java Edition, and (on Windows) automatically detects & gates **Minecraft Bedrock (`Minecraft for Windows` from Microsoft Store / Xbox App)** alongside **Minecraft Java** (full details in **[MINECRAFT_SETUP.md](MINECRAFT_SETUP.md)**):
 
-- **Windows 11 / 10 (PowerShell):**
+- **Windows 11 / 10 — Bedrock & Java (PowerShell):**
   ```powershell
   irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex
   ```
-  *(Also auto-detects and gates the Official Microsoft Store / Xbox App Minecraft Launcher and Minecraft Bedrock if installed.)*
+  *(Supports **both** Minecraft Bedrock from Microsoft Store / Xbox App and Minecraft Java via Prism / Official Launcher! If you only want Bedrock without installing Java, run `$env:TUTOR_BEDROCK_ONLY="1"; irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex`.)*
 - **macOS (Terminal):**
   ```bash
   curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_mac.sh | bash
@@ -85,16 +85,17 @@ Each one-line script installs **Prism Launcher** (+ Java 21 where needed), links
   curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_linux.sh | bash
   ```
 
-### 👨‍👩‍👦 Parent Controls (`http://localhost:8787/parent`)
+### 👨‍👩‍👦 Parent Controls & Parent Override (`http://localhost:8787/parent`)
 Click the **Parent icon** (person icon in the top-right corner of Gemini Tutor) and scroll to **Video Game Rewards**:
 
 - **Active Solid Writing Only (Never Idle Open-App Time):** Leaving the app open, typing `"idk"`, fragments, or off-task chat earns **0 seconds**. Each turn caps active thinking/writing time (`<= 75s`) and commits credit **only** when a Homework-Standard complete sentence (starting capital, ending punctuation, complete clause, clean spelling/grammar) or Cover-Copy-Compare spelling retrieval succeeds.
-- **Saved Across Sessions:** By default, **15 minutes** of solid writing = **1 Point** (never lost if a child stops after 15 minutes!), and **2 Points (30 minutes of solid writing)** = **15 minutes of game time**.
-- **Customizable Conversion Rules:** Parents set the exact **minutes per point**, **points to unlock**, and **game minutes earned**, toggle rewards on/off anytime, **grant +15m bonus time**, or **reset the bank to `0:00`**.
+- **ADHD-Friendly `1:2` Default (`1 min solid work = 2 min gaming`, Saved Across Sessions):** Because getting **15 minutes** of genuine, verified solid writing often takes ~25–30 minutes at the desk, the default rule rewards **15 minutes of solid writing = 1 Point = 30 minutes of game time** (and partial minutes are always saved across sessions so shorter sittings never lose progress!).
+- **Parent Override (1-Click Free Play Unlock):** Need to let your child play Bedrock with friends or enjoy weekend free play without spending banked points? Click **🔓 Unlock 30m**, **🔓 Unlock 1 hr**, **🔓 Rest of Today**, or **🔓 Until Turned Off** (plus **🔒 End Override Now** anytime).
+- **Customizable Conversion Rules & Independent Edition Gates:** Parents can set any custom **minutes per point**, **points to unlock**, and **game minutes earned** (or pick 1-click presets), gate **Minecraft Bedrock** and **Minecraft Java** independently, **+ Grant 15m / 30m bonus time**, or **reset the bank to `0:00`**.
 - **Automatic Enforcement & 1-Minute Save Warning:**
-  - Launching Minecraft from the Desktop / Start Menu / ChromeOS Shelf when banked time is `0:00` notifies your child and opens **Gemini Tutor** instead; standalone *Fists of Doom* can also be locked at `0:00`.
-  - With **1 minute left**, a native OS notification + chime warns your child to **Save & Quit to Title**, and at **`0:00`** the game closes automatically.
-  - Need to sign in, update Minecraft, or add mods without using banked time? Click **🔧 Open Prism Launcher (Parent Setup)** on `/parent` for an unlocked maintenance session.
+  - Launching Minecraft (Bedrock or Java) from the Desktop / Start Menu / ChromeOS Shelf when banked time is `0:00` notifies your child and opens **Gemini Tutor** instead; standalone *Fists of Doom* can also be locked at `0:00`.
+  - With **1 minute left**, a native OS notification + chime warns your child to **Save & Quit**, and at **`0:00`** the game closes automatically.
+  - Need to sign in, update Minecraft, or add mods/worlds without using banked time? Click **🔧 Open Bedrock (Parent Setup)** or **🔧 Open Prism Launcher (Parent Setup)** on `/parent`.
 
 ---
 

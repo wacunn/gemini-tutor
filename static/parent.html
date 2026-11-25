@@ -588,10 +588,10 @@
           box.innerHTML = `<div class="card">
             <h3>No Local Video Games Installed on This Computer</h3>
             <div class="muted" style="line-height:1.5">
-              Your child sees <b>zero</b> video game UI or points unless <b>Fists of Doom</b> or <b>Minecraft</b> is installed locally on this computer:
+              Your child sees <b>zero</b> video game UI or points unless <b>Fists of Doom</b>, <b>Minecraft Bedrock</b>, or <b>Minecraft Java</b> is installed locally on this computer:
               <ul>
                 <li><b>Windows (PowerShell) — Fists of Doom:</b> <code>irm https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.ps1 | iex</code></li>
-                <li><b>Windows (PowerShell) — Minecraft Java + Time-Gating:</b> <code>irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex</code></li>
+                <li><b>Windows (PowerShell) — Minecraft Bedrock &amp;/or Java + Time-Gating:</b> <code>irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex</code></li>
                 <li><b>Mac (Terminal) — Fists of Doom:</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash</code></li>
                 <li><b>Mac (Terminal) — Minecraft Java + Time-Gating:</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_mac.sh | bash</code></li>
                 <li><b>ChromeOS / Linux (Terminal) — Fists of Doom:</b> <code>curl -fsSL https://raw.githubusercontent.com/wacunn/toronto-fight-game/main/install.sh | bash</code></li>
@@ -603,61 +603,108 @@
         }
 
         const mpp = Number(A.minutes_per_point) || 15;
-        const ptu = Number(A.points_to_unlock) || 2;
-        const rgm = Number(A.reward_game_minutes) || 15;
-        const mcLabel = A.minecraft_label || "Prism Launcher";
+        const ptu = Number(A.points_to_unlock) || 1;
+        const rgm = Number(A.reward_game_minutes) || 30;
+        const javaLabel = A.minecraft_java_label || "Prism Launcher";
         const isWin = A.platform === "windows";
         const isMac = A.platform === "mac";
-        const gateLabel = isWin
-          ? "Gate Minecraft on Windows (silent login watchdog, Desktop shortcut &amp; auto-close at 0:00)"
+        const gateJavaLabel = isWin
+          ? `Gate Minecraft Java (${esc(javaLabel)}) on Windows (silent login watchdog, Desktop shortcut &amp; auto-close at 0:00)`
           : isMac
           ? "Gate Minecraft on Mac (login watchdog &amp; auto-close at 0:00)"
           : "Gate Minecraft on ChromeOS / Linux (launcher wrapper, login watchdog &amp; auto-close at 0:00)";
         const chunkDoneMin = Math.round(((Number(A.committed_work_seconds) || 0) / 60) * 10) / 10;
-        const gameTags = [
-          A.fod_installed ? `<span class="pill ok">🥊 Fists of Doom Installed</span>` : `<span class="pill muted">Fists of Doom not installed</span>`,
-          A.minecraft_installed ? `<span class="pill ok">⛏️ Minecraft (${esc(mcLabel)}) Installed</span>` : `<span class="pill muted">Minecraft not installed</span>`,
-        ].join(" ");
+
+        const tags = [];
+        tags.push(A.fod_installed ? `<span class="pill ok">🥊 Fists of Doom Installed</span>` : `<span class="pill muted">Fists of Doom not installed</span>`);
+        if (isWin || A.minecraft_bedrock_installed) {
+          tags.push(A.minecraft_bedrock_installed ? `<span class="pill ok">🪨 Minecraft Bedrock Installed</span>` : `<span class="pill muted">Minecraft Bedrock not installed</span>`);
+        }
+        tags.push(A.minecraft_java_installed ? `<span class="pill ok">☕ Minecraft Java (${esc(javaLabel)}) Installed</span>` : `<span class="pill muted">Minecraft Java not installed</span>`);
+        const gameTags = tags.join(" ");
 
         const instOpts = (A.minecraft_instances || []).map(i =>
           `<option value="${esc(i.id)}" ${i.id === A.minecraft_instance ? "selected" : ""}>${esc(i.name)} (${esc(i.id)})</option>`
         ).join("");
+
+        const ovActive = !!A.parent_override_active;
+        const ovRem = Number(A.parent_override_remaining_seconds);
+        let ovBannerText = "🔒 Normal Earned-Time Gating Active";
+        if (ovActive) {
+          if (ovRem < 0) ovBannerText = "🔓 Parent Override Active — Free Play Until Turned Off (banked minutes paused)";
+          else if (ovRem > 0) ovBannerText = `🔓 Parent Override Active — ${Math.max(1, Math.ceil(ovRem / 60))} min left (banked minutes paused)`;
+          else ovBannerText = "🔓 Parent Override Active — Free Play (banked minutes paused)";
+        }
 
         const histHtml = (A.history || []).slice(0, 6).map(h => {
           const dt = esc((h.date || "").slice(5, 16).replace("T", " "));
           if (h.kind === "earned") return `<li>${dt} — Earned <b>+${h.minutes} min</b> game time (${h.writing_minutes} min solid writing)</li>`;
           if (h.kind === "parent_bonus") return `<li>${dt} — Parent granted <b>+${h.minutes} min</b> bonus</li>`;
           if (h.kind === "parent_reset") return `<li>${dt} — Parent reset game bank to 0:00</li>`;
+          if (h.kind === "parent_override") return `<li>${dt} — Parent unlocked Free Play override (<b>${h.minutes} min</b>)</li>`;
+          if (h.kind === "parent_override_indefinite") return `<li>${dt} — Parent unlocked Free Play override (until turned off)</li>`;
+          if (h.kind === "parent_override_off") return `<li>${dt} — Parent ended Free Play override</li>`;
+          if (h.kind === "finished_minecraft_bedrock") return `<li>${dt} — Finished Minecraft Bedrock play session</li>`;
+          if (h.kind === "finished_minecraft") return `<li>${dt} — Finished Minecraft play session</li>`;
+          if (h.kind === "finished_fod") return `<li>${dt} — Finished Fists of Doom play session</li>`;
           return `<li>${dt} — Finished earned play session</li>`;
         }).join("");
+
+        const fmtRatio = (m, p, g) => {
+          const r = g / Math.max(1, m * p);
+          return Number.isInteger(r) ? `${r}` : r.toFixed(1).replace(/\.0$/, "");
+        };
 
         box.innerHTML = `
           <div class="grid">
             <div class="card">
-              <h3>Earned Game Bank &amp; Writing Progress</h3>
+              <h3>Earned Game Bank, Writing Progress &amp; Parent Override</h3>
               <div style="margin-bottom:8px">${gameTags}</div>
-              <div class="big">${fmtMinSec(A.game_seconds_available)} <span class="muted" style="font-size:1rem">ready to play</span></div>
+              <div class="big">${fmtMinSec(A.game_seconds_available)} <span class="muted" style="font-size:1rem">shared bank (usable in any installed game)</span></div>
               <div style="margin-top:8px">Points toward next unlock: <b>${A.points ?? 0} / ${ptu}</b> · Current point progress: <b>${chunkDoneMin} / ${mpp} min</b> (saved across sessions)</div>
               <div class="muted" style="margin-top:6px;font-size:.86rem">
                 All-time solid writing: <b>${A.lifetime_work_minutes ?? 0}m</b> (${A.lifetime_sentences_verified ?? 0} verified sentences) · Game time played: <b>${A.lifetime_game_minutes_played ?? 0}m</b>
               </div>
-              <div class="muted" style="margin-top:8px;font-size:.83rem">
+
+              <div style="margin-top:12px;padding:12px 14px;border-radius:14px;background:${ovActive ? "rgba(129,201,149,.13)" : "var(--s2)"};border:1px solid ${ovActive ? "rgba(129,201,149,.45)" : "var(--line)"}">
+                <div style="font-weight:500;color:${ovActive ? "var(--g)" : "var(--t2)"};margin-bottom:8px">${ovBannerText}</div>
+                <div class="muted" style="font-size:.81rem;margin-bottom:8px">
+                  Parent Override lets him play Bedrock, Java, or Fists of Doom freely (e.g., playing with friends or weekend family time) without spending his banked points or closing the game.
+                </div>
+                <div class="row" style="flex-wrap:wrap;gap:6px">
+                  <button type="button" class="ghost" data-arc-override="30m">🔓 Unlock 30m</button>
+                  <button type="button" class="ghost" data-arc-override="60m">🔓 Unlock 1 hr</button>
+                  <button type="button" class="ghost" data-arc-override="tonight">🔓 Rest of Today</button>
+                  <button type="button" class="ghost" data-arc-override="indefinite">🔓 Until Turned Off</button>
+                  ${ovActive ? `<button type="button" data-arc-override="off" style="background:var(--r);color:#131314">🔒 End Override Now</button>` : ""}
+                </div>
+              </div>
+
+              <div class="muted" style="margin-top:10px;font-size:.83rem">
                 <b>What counts as active solid writing:</b> Leaving the app open idle, single-word escapes, or pushback earns 0s. Each turn caps thinking/writing time (&le;75s) and only locks into points when a Homework-Standard complete sentence (capital, end mark, complete clause, clean spelling/grammar) or spelling word retrieval is verified.
               </div>
               <div class="row" style="margin-top:12px;flex-wrap:wrap">
                 <button type="button" class="ghost" id="arcGrant15Btn">+ Grant 15m bonus</button>
+                <button type="button" class="ghost" id="arcGrant30Btn">+ Grant 30m bonus</button>
                 <button type="button" class="ghost" id="arcResetBankBtn">Reset bank to 0:00</button>
-                ${A.minecraft_installed ? `<button type="button" class="ghost" id="arcMcParentBtn">🔧 Open ${esc(mcLabel)} (Parent Setup)</button>` : ""}
+                ${A.minecraft_bedrock_installed ? `<button type="button" class="ghost" id="arcMcBedrockParentBtn">🔧 Open Bedrock (Parent Setup)</button>` : ""}
+                ${A.minecraft_java_installed ? `<button type="button" class="ghost" id="arcMcJavaParentBtn">🔧 Open ${esc(javaLabel)} (Parent Setup)</button>` : ""}
               </div>
               ${histHtml ? `<ul class="muted" style="margin-top:10px;font-size:.84rem">${histHtml}</ul>` : ""}
             </div>
 
             <div class="card">
-              <h3>Parent Conversion Rules</h3>
+              <h3>Parent Conversion Rules &amp; Edition Controls</h3>
               <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
                 <input type="checkbox" id="arcEnabled" style="width:auto" ${A.enabled ? "checked" : ""} />
                 <span>Enable video game points &amp; in-app game access</span>
               </label>
+              <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">
+                <button type="button" class="ghost" data-arc-preset="15,1,30" style="font-size:.8rem;padding:5px 10px">⭐ 2&times; Default (15m &rarr; 30m)</button>
+                <button type="button" class="ghost" data-arc-preset="10,1,20" style="font-size:.8rem;padding:5px 10px">⚡ 2&times; Quick Sprint (10m &rarr; 20m)</button>
+                <button type="button" class="ghost" data-arc-preset="15,2,60" style="font-size:.8rem;padding:5px 10px">🏆 2&times; Two-Point (30m &rarr; 60m)</button>
+                <button type="button" class="ghost" data-arc-preset="15,1,15" style="font-size:.8rem;padding:5px 10px">1&times; Even (15m &rarr; 15m)</button>
+              </div>
               <div class="row" style="flex-wrap:wrap;margin-bottom:10px">
                 <label style="flex:1;min-width:140px">Solid writing per 1 Point (min)
                   <input type="number" id="arcMpp" min="5" max="60" value="${mpp}" />
@@ -666,23 +713,29 @@
                   <input type="number" id="arcPtu" min="1" max="10" value="${ptu}" />
                 </label>
                 <label style="flex:1;min-width:140px">Game time earned (min)
-                  <input type="number" id="arcRgm" min="5" max="120" value="${rgm}" />
+                  <input type="number" id="arcRgm" min="5" max="180" value="${rgm}" />
                 </label>
               </div>
               <div id="arcRulePreview" class="muted" style="font-size:.88rem;margin-bottom:12px">
-                Every <b>${mpp} min</b> of active solid writing earns <b>1 point</b> (saved across sessions). Reaching <b>${ptu} point(s) (${mpp * ptu} min total)</b> unlocks <b>${rgm} min</b> of game time.
+                Every <b>${mpp} min</b> of active solid writing earns <b>1 point</b> (saved across sessions). Reaching <b>${ptu} point${ptu === 1 ? "" : "s"} (${mpp * ptu} min solid work)</b> unlocks <b>${rgm} min</b> of game time (<b>1 min solid work = ${fmtRatio(mpp, ptu, rgm)} min gaming</b>).
               </div>
-              ${A.minecraft_installed ? `
-                ${A.minecraft_flavor !== "official" ? `
-                <label style="display:block;margin-bottom:10px">Minecraft Instance (Prism Launcher)
+              ${A.minecraft_bedrock_installed ? `
+                <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <input type="checkbox" id="arcGateBedrock" style="width:auto" ${A.gate_bedrock !== false ? "checked" : ""} />
+                  <span>Gate Minecraft Bedrock on Windows (silent login watchdog, Desktop shortcut, 1-min save warning &amp; auto-close at 0:00)</span>
+                </label>
+              ` : ""}
+              ${A.minecraft_java_installed ? `
+                ${A.minecraft_java_flavor === "prism" ? `
+                <label style="display:block;margin-bottom:10px">Minecraft Java Instance (Prism Launcher)
                   <select id="arcMcInst">
                     <option value="">Auto (${esc(A.minecraft_default_instance || "Launcher selection")})</option>
                     ${instOpts}
                   </select>
                 </label>` : ""}
                 <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-                  <input type="checkbox" id="arcGateMc" style="width:auto" ${A.gate_minecraft ? "checked" : ""} />
-                  <span>${gateLabel}</span>
+                  <input type="checkbox" id="arcGateMc" style="width:auto" ${A.gate_minecraft !== false ? "checked" : ""} />
+                  <span>${gateJavaLabel}</span>
                 </label>
               ` : ""}
               ${A.fod_installed ? `
@@ -700,13 +753,35 @@
 
         const updatePreview = () => {
           const m = Math.max(5, Number($("arcMpp")?.value) || 15);
-          const p = Math.max(1, Number($("arcPtu")?.value) || 2);
-          const g = Math.max(5, Number($("arcRgm")?.value) || 15);
+          const p = Math.max(1, Number($("arcPtu")?.value) || 1);
+          const g = Math.max(5, Number($("arcRgm")?.value) || 30);
           if ($("arcRulePreview")) {
-            $("arcRulePreview").innerHTML = `Every <b>${m} min</b> of active solid writing earns <b>1 point</b> (saved across sessions). Reaching <b>${p} point(s) (${m * p} min total)</b> unlocks <b>${g} min</b> of game time.`;
+            $("arcRulePreview").innerHTML = `Every <b>${m} min</b> of active solid writing earns <b>1 point</b> (saved across sessions). Reaching <b>${p} point${p === 1 ? "" : "s"} (${m * p} min solid work)</b> unlocks <b>${g} min</b> of game time (<b>1 min solid work = ${fmtRatio(m, p, g)} min gaming</b>).`;
           }
         };
         ["arcMpp", "arcPtu", "arcRgm"].forEach(id => $(id)?.addEventListener("input", updatePreview));
+
+        box.querySelectorAll("[data-arc-preset]").forEach(btn => {
+          btn.onclick = () => {
+            const [m, p, g] = btn.dataset.arcPreset.split(",").map(Number);
+            if ($("arcMpp")) $("arcMpp").value = m;
+            if ($("arcPtu")) $("arcPtu").value = p;
+            if ($("arcRgm")) $("arcRgm").value = g;
+            updatePreview();
+          };
+        });
+
+        box.querySelectorAll("[data-arc-override]").forEach(btn => {
+          btn.onclick = async () => {
+            const mode = btn.dataset.arcOverride;
+            await fetch("/api/arcade/settings", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ override_mode: mode }),
+            });
+            loadAll();
+          };
+        });
 
         $("arcSaveBtn").onclick = async () => {
           await fetch("/api/arcade/settings", {
@@ -715,10 +790,11 @@
             body: JSON.stringify({
               enabled: $("arcEnabled").checked,
               minutes_per_point: Number($("arcMpp").value) || 15,
-              points_to_unlock: Number($("arcPtu").value) || 2,
-              reward_game_minutes: Number($("arcRgm").value) || 15,
+              points_to_unlock: Number($("arcPtu").value) || 1,
+              reward_game_minutes: Number($("arcRgm").value) || 30,
               lock_standalone: $("arcLockFod") ? $("arcLockFod").checked : undefined,
               gate_minecraft: $("arcGateMc") ? $("arcGateMc").checked : undefined,
+              gate_bedrock: $("arcGateBedrock") ? $("arcGateBedrock").checked : undefined,
               minecraft_instance: $("arcMcInst") ? $("arcMcInst").value : undefined,
             }),
           });
@@ -733,6 +809,14 @@
           });
           loadAll();
         };
+        $("arcGrant30Btn").onclick = async () => {
+          await fetch("/api/arcade/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ grant_minutes: 30 }),
+          });
+          loadAll();
+        };
         $("arcResetBankBtn").onclick = async () => {
           if (!confirm("Reset banked video game time to 0:00?")) return;
           await fetch("/api/arcade/settings", {
@@ -742,12 +826,28 @@
           });
           loadAll();
         };
-        if ($("arcMcParentBtn")) {
-          $("arcMcParentBtn").onclick = async () => {
-            const r = await fetch("/api/arcade/minecraft-parent-setup", { method: "POST" });
+        if ($("arcMcBedrockParentBtn")) {
+          $("arcMcBedrockParentBtn").onclick = async () => {
+            const r = await fetch("/api/arcade/minecraft-parent-setup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ edition: "bedrock" }),
+            });
             $("arcMsg").textContent = r.ok
-              ? `Opened ${mcLabel} in Parent Setup mode (unlocked until you close it).`
-              : `Couldn't open ${mcLabel}: ` + (await r.text());
+              ? "Opened Minecraft Bedrock in Parent Setup mode (unlocked until you close it)."
+              : "Couldn't open Minecraft Bedrock: " + (await r.text());
+          };
+        }
+        if ($("arcMcJavaParentBtn")) {
+          $("arcMcJavaParentBtn").onclick = async () => {
+            const r = await fetch("/api/arcade/minecraft-parent-setup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ edition: "java" }),
+            });
+            $("arcMsg").textContent = r.ok
+              ? `Opened ${javaLabel} in Parent Setup mode (unlocked until you close it).`
+              : `Couldn't open ${javaLabel}: ` + (await r.text());
           };
         }
       }

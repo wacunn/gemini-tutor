@@ -1,21 +1,22 @@
-# Setting Up Minecraft Java Edition Rewards & Parent Controls (Windows, Mac, ChromeOS & Linux)
+# Setting Up Minecraft (Bedrock & Java) Rewards & Parent Controls (Windows, Mac, ChromeOS & Linux)
 
-With **Gemini Tutor**, your child can earn **Minecraft Java Edition** play time (and/or **[Fists of Doom](https://github.com/wacunn/toronto-fight-game)** play time) by doing active, high-quality writing—never by leaving the app open idle!
+With **Gemini Tutor**, your child can earn **Minecraft Bedrock Edition** (*Minecraft for Windows*), **Minecraft Java Edition**, and/or **[Fists of Doom](https://github.com/wacunn/toronto-fight-game)** play time by doing active, high-quality writing—never by leaving the app open idle! All installed games **share the same earned game-time bank**, so your child can spend earned minutes on whichever game or edition they feel like playing.
 
-Each one-line setup script below automatically installs or updates **Gemini Tutor**, installs **Prism Launcher** (+ **Java 21** where needed), wires a silent login watchdog + shortcut gating so Minecraft cannot be played at `0:00`, and opens **Parent Setup** for your one-time Microsoft login.
+Each one-line setup script below automatically installs or updates **Gemini Tutor**, wires a silent login watchdog + shortcut gating so Minecraft cannot be played at `0:00`, installs **Prism Launcher** (+ **Java 21** where needed), and on Windows automatically detects & gates **both Minecraft Bedrock and Minecraft Java**.
 
 ---
 
 ## Step 1: Run the One-Line Setup for Your OS
 
-### Option A — Windows 11 / 10 (PowerShell)
-1. Click **Start**, type `PowerShell`, and press `Enter`.
-2. Right-click to paste this line and press `Enter`:
+### Option A — Windows 11 / 10: Minecraft Bedrock &/or Java (PowerShell)
+1. *(Optional, for Bedrock Edition)* Install **Minecraft for Windows** from the **Microsoft Store** or **Xbox App** (either before or after running the script below—Gemini Tutor detects it automatically!).
+2. Click **Start**, type `PowerShell`, and press `Enter`.
+3. Right-click to paste this line and press `Enter`:
    ```powershell
    irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex
    ```
-   * Installs/updates Gemini Tutor (`$HOME\GeminiTutor`), installs **Prism Launcher** + **Eclipse Temurin Java 21** via `winget`, adds a silent `pythonw.exe` login watchdog in Windows `Startup`, and gates the Desktop shortcut.
-   * *(Also auto-detects and gates the Official Microsoft Store / Xbox App Minecraft Launcher & Minecraft Bedrock if installed.)*
+   * Installs/updates Gemini Tutor (`$HOME\GeminiTutor`), links **Minecraft Bedrock** (`Minecraft for Windows`), installs **Prism Launcher** + **Eclipse Temurin Java 21** via `winget`, adds a silent `pythonw.exe` login watchdog in Windows `Startup`, and creates gated Desktop shortcuts for Bedrock & Java.
+   * *(Want **Bedrock only** without installing Java? Run `$env:TUTOR_BEDROCK_ONLY="1"; irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/setup_minecraft_windows.ps1 | iex`.)*
 
 ### Option B — macOS (Apple Silicon & Intel Macs)
 1. Press `⌘ Command` + `Space`, type `Terminal`, and press `Return`.
@@ -54,14 +55,15 @@ If you haven't signed into Minecraft on this computer before, Prism Launcher ope
 
 ---
 
-## Step 3: Parent Controls & How Earned Time Works (`http://localhost:8787/parent`)
+## Step 3: Parent Controls, Parent Override & How Earned Time Works (`http://localhost:8787/parent`)
 
 Open Gemini Tutor and click the **Parent icon** (top-right corner) → **Video Game Rewards**:
 
 - **Active Solid Writing Only:** Leaving Gemini Tutor open idle, typing single words, or pushing back earns **0 seconds**. Time counts **only** when your child actively drafts, revises, and locks verified Homework-Standard complete sentences (capital letter, ending punctuation, complete clause, and checked spelling/grammar) or completes Cover-Copy-Compare spelling retrieval.
-- **Saved Across Sessions:** By default, every **15 minutes** of active solid writing earns **1 Video Game Point** (never lost between sessions!), and **2 Points (30 minutes of solid writing)** unlocks **15 minutes of game time**.
-- **Custom Parent Conversion Ratios:** Adjust **Solid writing per 1 Point (min)**, **Points needed to unlock**, and **Game time earned (min)**, pick which Prism instance launches by default, **+ Grant 15m bonus**, or **Reset bank to 0:00**.
+- **ADHD-Friendly `1:2` Default (`1 min solid work = 2 min gaming`, Saved Across Sessions):** By default, **15 minutes** of active solid writing earns **1 Video Game Point** (saved across sessions!) and immediately unlocks **30 minutes of game time**—usable in **Minecraft Bedrock**, **Minecraft Java**, or **Fists of Doom**.
+- **Parent Override (1-Click Free Play Unlock):** Letting your child play with friends or enjoy weekend free play? Click **🔓 Unlock 30m**, **🔓 Unlock 1 hr**, **🔓 Rest of Today**, or **🔓 Until Turned Off** (and **🔒 End Override Now** anytime) so they can play Bedrock, Java, or Fists of Doom freely without draining banked points.
+- **Custom Parent Conversion Ratios & Per-Edition Toggles:** Adjust **Solid writing per 1 Point (min)**, **Points needed to unlock**, and **Game time earned (min)**, gate **Minecraft Bedrock** and **Minecraft Java** independently, pick which Prism instance launches by default, **+ Grant 15m / 30m bonus**, or **Reset bank to 0:00**.
 - **Automatic Time-Out & 1-Minute Save Warning:**
-  - When game time is earned, a **⛏️ Play Minecraft** button appears right inside Gemini Tutor (and can also be paused mid-session to save remaining minutes for later!).
-  - Launching Minecraft directly from the Desktop, Start Menu, or ChromeOS Shelf when banked time is `0:00` automatically notifies your child and opens **Gemini Tutor** instead.
-  - With **1 minute left**, a native OS notification + chime warns your child to **Press Esc → Save & Quit to Title**, and at **`0:00`** Gemini Tutor closes Minecraft cleanly.
+  - When game time is earned (or Parent Override is active), **🪨 Minecraft Bedrock** and **☕ Minecraft Java** buttons appear right inside Gemini Tutor (and can be paused mid-session to save remaining minutes for later!).
+  - Launching Minecraft Bedrock or Java directly from the Desktop, Start Menu, or ChromeOS Shelf when banked time is `0:00` automatically notifies your child and opens **Gemini Tutor** instead.
+  - With **1 minute left**, a native OS notification + chime warns your child to **Press Esc → Save & Quit**, and at **`0:00`** Gemini Tutor closes Minecraft cleanly.

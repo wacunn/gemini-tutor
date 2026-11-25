@@ -188,6 +188,16 @@ function fmtClock(sec) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+function arcadeTimeLabel(arc) {
+  const avail = Number(arc?.game_seconds_available) || 0;
+  if (arc?.parent_override_active) {
+    const rem = Number(arc.parent_override_remaining_seconds);
+    if (rem > 0 && rem < 12 * 3600) return `Free Play · ${fmtClock(rem)}`;
+    return "Free Play";
+  }
+  return fmtClock(avail);
+}
+
 function renderHeroStarters(savedProjects) {
   const box = $("heroStarters");
   if (!box) return;
@@ -197,11 +207,16 @@ function renderHeroStarters(savedProjects) {
   const arc = state.arcade || {};
   let arcadeHeroPills = "";
   if (arc.visible && arc.can_play) {
-    const tStr = fmtClock(arc.game_seconds_available);
+    const tStr = arcadeTimeLabel(arc);
     if (arc.fod_installed) {
       arcadeHeroPills += `<button type="button" class="hero-pill arcade-hero" data-play-arcade="fod">🥊 Play Fists of Doom (${tStr})</button>`;
     }
-    if (arc.minecraft_installed) {
+    if (arc.minecraft_bedrock_installed && arc.minecraft_java_installed) {
+      arcadeHeroPills += `<button type="button" class="hero-pill arcade-hero" data-play-arcade="minecraft_bedrock">🪨 Play Minecraft Bedrock (${tStr})</button>`;
+      arcadeHeroPills += `<button type="button" class="hero-pill arcade-hero" data-play-arcade="minecraft_java">☕ Play Minecraft Java (${tStr})</button>`;
+    } else if (arc.minecraft_bedrock_installed) {
+      arcadeHeroPills += `<button type="button" class="hero-pill arcade-hero" data-play-arcade="minecraft_bedrock">⛏️ Play Minecraft Bedrock (${tStr})</button>`;
+    } else if (arc.minecraft_installed) {
       arcadeHeroPills += `<button type="button" class="hero-pill arcade-hero" data-play-arcade="minecraft">⛏️ Play Minecraft (${tStr})</button>`;
     }
   }
@@ -223,7 +238,10 @@ function renderHeroStarters(savedProjects) {
   }
   box.querySelectorAll("[data-play-arcade]").forEach((el) => {
     el.onclick = () => {
-      if (el.dataset.playArcade === "minecraft") launchMinecraftArcade();
+      const kind = el.dataset.playArcade;
+      if (kind === "minecraft_bedrock") launchMinecraftArcade("bedrock");
+      else if (kind === "minecraft_java") launchMinecraftArcade("java");
+      else if (kind === "minecraft") launchMinecraftArcade("auto");
       else openFodArcade();
     };
   });
@@ -2226,6 +2244,7 @@ function renderArcadeUI() {
   const arc = state.arcade || {};
   const pill = $("arcadeProgressPill");
   const fodBtn = $("arcadePlayFodBtn");
+  const bedBtn = $("arcadePlayBedrockBtn");
   const mcBtn = $("arcadePlayMcBtn");
   const sideBox = $("arcadeSideBox");
   if (!pill || !fodBtn || !mcBtn || !sideBox) return;
@@ -2233,6 +2252,7 @@ function renderArcadeUI() {
   if (!arc.visible) {
     pill.hidden = true;
     fodBtn.hidden = true;
+    if (bedBtn) bedBtn.hidden = true;
     mcBtn.hidden = true;
     sideBox.hidden = true;
     return;
@@ -2241,68 +2261,103 @@ function renderArcadeUI() {
   const chunkMinDone = Math.floor((Number(arc.committed_work_seconds) || 0) / 60);
   const mpp = Number(arc.minutes_per_point) || 15;
   const pts = Number(arc.points) || 0;
-  const ptu = Number(arc.points_to_unlock) || 2;
+  const ptu = Number(arc.points_to_unlock) || 1;
+  const rgm = Number(arc.reward_game_minutes) || 30;
   const avail = Number(arc.game_seconds_available) || 0;
+  const tStr = arcadeTimeLabel(arc);
 
   pill.hidden = false;
-  pill.textContent = `⭐ ${pts}/${ptu} pts · ${chunkMinDone}/${mpp}m solid writing`;
-  pill.title = `Every ${mpp} min of active, verified writing earns 1 point (saved across sessions). ${ptu} points (${mpp * ptu} min) unlocks ${arc.reward_game_minutes} min of game time!`;
+  pill.textContent = arc.parent_override_active
+    ? `🔓 Free Play · ⭐ ${pts}/${ptu} pts · ${chunkMinDone}/${mpp}m solid writing`
+    : `⭐ ${pts}/${ptu} pts · ${chunkMinDone}/${mpp}m solid writing`;
+  pill.title = `Every ${mpp} min of active, verified writing earns 1 point (saved across sessions). ${ptu === 1 ? `1 point (${mpp} min)` : `${ptu} points (${mpp * ptu} min)`} unlocks ${rgm} min of game time!`;
 
   if (arc.fod_installed && arc.can_play) {
     fodBtn.hidden = false;
-    fodBtn.textContent = `🥊 Play Fists of Doom (${fmtClock(avail)})`;
+    fodBtn.textContent = `🥊 Play Fists of Doom (${tStr})`;
   } else {
     fodBtn.hidden = true;
   }
 
-  if (arc.minecraft_installed && (arc.can_play || arc.minecraft_running)) {
+  if (arc.minecraft_installed && arc.minecraft_running) {
+    if (bedBtn) bedBtn.hidden = true;
     mcBtn.hidden = false;
-    if (arc.minecraft_running) {
-      mcBtn.classList.add("running");
-      mcBtn.textContent = `⏸ Pause Minecraft (${fmtClock(avail)} left)`;
-      ensureMinecraftPoll();
+    mcBtn.classList.add("running");
+    mcBtn.textContent = `⏸ Pause Minecraft (${arc.parent_override_active ? "Free Play" : `${fmtClock(avail)} left`})`;
+    ensureMinecraftPoll();
+  } else if (arc.minecraft_installed && arc.can_play) {
+    mcBtn.classList.remove("running");
+    if (arc.minecraft_bedrock_installed && arc.minecraft_java_installed) {
+      if (bedBtn) {
+        bedBtn.hidden = false;
+        bedBtn.textContent = `🪨 Minecraft Bedrock (${tStr})`;
+      }
+      mcBtn.hidden = false;
+      mcBtn.textContent = `☕ Minecraft Java (${tStr})`;
+    } else if (arc.minecraft_bedrock_installed) {
+      if (bedBtn) {
+        bedBtn.hidden = false;
+        bedBtn.textContent = `⛏️ Play Minecraft Bedrock (${tStr})`;
+      }
+      mcBtn.hidden = true;
     } else {
-      mcBtn.classList.remove("running");
-      mcBtn.textContent = `⛏️ Play Minecraft (${fmtClock(avail)})`;
+      if (bedBtn) bedBtn.hidden = true;
+      mcBtn.hidden = false;
+      mcBtn.textContent = `⛏️ Play Minecraft (${tStr})`;
     }
   } else {
+    if (bedBtn) bedBtn.hidden = true;
     mcBtn.hidden = true;
   }
 
   sideBox.hidden = false;
   let sideBtns = "";
   if (arc.can_play && arc.fod_installed) {
-    sideBtns += `<button type="button" class="arcade-play-btn" data-side-arcade="fod" style="justify-content:center">🥊 Play Fists of Doom (${fmtClock(avail)})</button>`;
+    sideBtns += `<button type="button" class="arcade-play-btn" data-side-arcade="fod" style="justify-content:center">🥊 Play Fists of Doom (${tStr})</button>`;
   }
-  if ((arc.can_play || arc.minecraft_running) && arc.minecraft_installed) {
-    sideBtns += `<button type="button" class="arcade-play-btn mc ${arc.minecraft_running ? "running" : ""}" data-side-arcade="minecraft" style="justify-content:center">${arc.minecraft_running ? `⏸ Pause Minecraft (${fmtClock(avail)})` : `⛏️ Play Minecraft (${fmtClock(avail)})`}</button>`;
+  if (arc.minecraft_installed && arc.minecraft_running) {
+    sideBtns += `<button type="button" class="arcade-play-btn mc running" data-side-arcade="minecraft_pause" style="justify-content:center">⏸ Pause Minecraft (${arc.parent_override_active ? "Free Play" : fmtClock(avail)})</button>`;
+  } else if (arc.can_play && arc.minecraft_installed) {
+    if (arc.minecraft_bedrock_installed && arc.minecraft_java_installed) {
+      sideBtns += `<button type="button" class="arcade-play-btn mc" data-side-arcade="minecraft_bedrock" style="justify-content:center">🪨 Play Minecraft Bedrock (${tStr})</button>`;
+      sideBtns += `<button type="button" class="arcade-play-btn mc" data-side-arcade="minecraft_java" style="justify-content:center">☕ Play Minecraft Java (${tStr})</button>`;
+    } else if (arc.minecraft_bedrock_installed) {
+      sideBtns += `<button type="button" class="arcade-play-btn mc" data-side-arcade="minecraft_bedrock" style="justify-content:center">⛏️ Play Minecraft Bedrock (${tStr})</button>`;
+    } else {
+      sideBtns += `<button type="button" class="arcade-play-btn mc" data-side-arcade="minecraft" style="justify-content:center">⛏️ Play Minecraft (${tStr})</button>`;
+    }
   }
+  const sideSub = arc.parent_override_active
+    ? `🔓 Parent Override active (banked time paused) · ${chunkMinDone} / ${mpp} min toward next point`
+    : `${chunkMinDone} / ${mpp} min toward next point · ${avail >= 1 ? `${fmtClock(avail)} game time ready` : `${Math.max(1, ptu * mpp - (pts * mpp + chunkMinDone))}m solid writing to unlock ${rgm}m`}`;
   sideBox.innerHTML = `
     <div style="font-weight:600;color:#a8dab5">🎮 Video Game Points: ${pts} / ${ptu}</div>
-    <div class="muted" style="font-size:.79rem">${chunkMinDone} / ${mpp} min toward next point · ${avail >= 1 ? `${fmtClock(avail)} game time ready` : `${ptu * mpp - (pts * mpp + chunkMinDone)}m solid writing to unlock ${arc.reward_game_minutes}m`}</div>
+    <div class="muted" style="font-size:.79rem">${sideSub}</div>
     ${sideBtns}`;
   sideBox.querySelectorAll("[data-side-arcade]").forEach((b) => {
     b.onclick = () => {
       toggleSidebar(false);
-      if (b.dataset.sideArcade === "minecraft") {
-        if (state.arcade?.minecraft_running) pauseMinecraftArcade();
-        else launchMinecraftArcade();
-      } else {
-        openFodArcade();
-      }
+      const act = b.dataset.sideArcade;
+      if (act === "minecraft_pause") pauseMinecraftArcade();
+      else if (act === "minecraft_bedrock") launchMinecraftArcade("bedrock");
+      else if (act === "minecraft_java") launchMinecraftArcade("java");
+      else if (act === "minecraft") launchMinecraftArcade("auto");
+      else openFodArcade();
     };
   });
 }
 
 function wireArcade() {
   const fodBtn = $("arcadePlayFodBtn");
+  const bedBtn = $("arcadePlayBedrockBtn");
   const mcBtn = $("arcadePlayMcBtn");
   const closeBtn = $("arcadeCloseBtn");
   if (fodBtn) fodBtn.onclick = () => openFodArcade();
+  if (bedBtn) bedBtn.onclick = () => launchMinecraftArcade("bedrock");
   if (mcBtn) {
     mcBtn.onclick = () => {
       if (state.arcade?.minecraft_running) pauseMinecraftArcade();
-      else launchMinecraftArcade();
+      else launchMinecraftArcade(state.arcade?.minecraft_java_installed ? "java" : "auto");
     };
   }
   if (closeBtn) closeBtn.onclick = () => closeFodArcade(false);
@@ -2311,6 +2366,11 @@ function wireArcade() {
 function updateOverlayBadge() {
   const b = $("arcadeTimerBadge");
   if (!b) return;
+  if (state.arcade?.parent_override_active) {
+    b.textContent = `🔓 ${arcadeTimeLabel(state.arcade)}`;
+    b.classList.remove("low");
+    return;
+  }
   b.textContent = `Time Left: ${fmtClock(fodLocalRem)}`;
   b.classList.toggle("low", fodLocalRem <= 60);
 }
@@ -2344,6 +2404,14 @@ async function openFodArcade() {
   clearInterval(fodTickTimer);
   clearInterval(fodHeartbeatTimer);
   fodTickTimer = setInterval(() => {
+    if (state.arcade?.parent_override_active) {
+      const ovRem = Number(state.arcade.parent_override_remaining_seconds);
+      if (ovRem > 0) {
+        state.arcade.parent_override_remaining_seconds = Math.max(0, ovRem - 1);
+      }
+      updateOverlayBadge();
+      return;
+    }
     fodLocalRem = Math.max(0, fodLocalRem - 1);
     updateOverlayBadge();
     if (fodLocalRem === 60 && !fodWarnedOneMin) {
@@ -2367,7 +2435,9 @@ async function openFodArcade() {
         state.arcade = hd;
         fodLocalRem = Number(hd.game_seconds_available) || 0;
         updateOverlayBadge();
-        if (hd.expired || fodLocalRem <= 0) closeFodArcade(true);
+        if (!hd.parent_override_active && (hd.expired || fodLocalRem <= 0)) {
+          closeFodArcade(true);
+        }
       }
     } catch (_) {}
   }, 5000);
@@ -2413,7 +2483,7 @@ function ensureMinecraftPoll() {
       if (!st.minecraft_running) {
         clearInterval(mcPollTimer);
         mcPollTimer = null;
-        if (wasRunning && (st.game_seconds_available || 0) <= 0) {
+        if (wasRunning && !st.parent_override_active && (st.game_seconds_available || 0) <= 0) {
           toast("⛏️ Minecraft time finished! Do some more solid writing to earn your next session.");
         }
       }
@@ -2421,11 +2491,12 @@ function ensureMinecraftPoll() {
   }, 3000);
 }
 
-async function launchMinecraftArcade() {
+async function launchMinecraftArcade(edition = "auto") {
+  const gameKey = edition === "bedrock" ? "minecraft_bedrock" : (edition === "java" ? "minecraft_java" : "minecraft");
   const r = await fetch(`/api/arcade/start?sandbox=${IS_SANDBOX ? 1 : 0}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ game: "minecraft", sandbox: IS_SANDBOX ? 1 : 0 }),
+    body: JSON.stringify({ game: gameKey, sandbox: IS_SANDBOX ? 1 : 0 }),
   });
   if (!r.ok) {
     toast(await r.text());
@@ -2435,7 +2506,8 @@ async function launchMinecraftArcade() {
   state.arcade = d.arcade || state.arcade;
   renderArcadeUI();
   ensureMinecraftPoll();
-  toast("⛏️ Launching Minecraft! Your timer counts down automatically and warns you 1 minute before closing so you can save your world.");
+  const label = edition === "bedrock" ? "Minecraft Bedrock" : (edition === "java" ? "Minecraft Java" : "Minecraft");
+  toast(`⛏️ Launching ${label}! ${state.arcade?.parent_override_active ? "Parent Free Play override is active." : "Your timer counts down automatically and warns you 1 minute before closing so you can save your world."}`);
 }
 
 async function pauseMinecraftArcade() {

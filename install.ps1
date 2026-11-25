@@ -1,4 +1,4 @@
-﻿# Gemini Tutor installer for Windows PC (PowerShell)
+# Gemini Tutor installer for Windows PC (PowerShell)
 #   irm https://raw.githubusercontent.com/wacunn/gemini-tutor/main/install.ps1 | iex
 # Safe to run again: updates the code while keeping your child's data and API key.
 
@@ -8,7 +8,7 @@ $Dir  = if ($env:TUTOR_DIR)  { $env:TUTOR_DIR }  else { Join-Path $HOME "GeminiT
 
 Write-Host "`nInstalling Gemini Tutor into $Dir..." -ForegroundColor Cyan
 
-# 1) Install uv (brings Python 3.12 automatically—no manual Python install needed)
+# 1) Install uv (brings Python 3.12 automatically--no manual Python install needed)
 $Uv = Get-Command uv -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
 if (-not $Uv) {
     $Candidate = Join-Path $HOME ".local\bin\uv.exe"

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import copy
 import csv
+import datetime
 import json
 import os
 import re
@@ -58,11 +59,14 @@ _WIN_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if os.name 
 
 DEFAULT_ARCADE: dict[str, Any] = {
     "enabled": True,
-    "minutes_per_point": 15,       # Takes 15 min of active solid writing to earn 1 point
-    "points_to_unlock": 2,         # Default: 2 points (30 min solid writing) unlocks game time
-    "reward_game_minutes": 15,     # Default: 15 min of video game time per unlock
+    "minutes_per_point": 15,       # 15 min of active solid writing earns 1 point (saved across sessions)
+    "points_to_unlock": 1,         # ADHD-friendly default: 1 point (15 min solid writing) unlocks gaming
+    "reward_game_minutes": 30,     # ADHD-friendly 1:2 ratio: 1 min solid work = 2 min gaming (15m -> 30m)
+    "rules_customized": False,     # Set True once parent saves custom numbers on /parent
     "lock_standalone": False,      # Optional parent setting: lock standalone Fists of Doom when bank is 0
-    "gate_minecraft": True,        # Gate Chromebook Minecraft shelf icon & background JVM when bank is 0
+    "gate_minecraft": True,        # Gate Minecraft Java edition & launcher when bank is 0
+    "gate_bedrock": True,          # Gate Minecraft Bedrock (Minecraft for Windows) when bank is 0
+    "parent_override_until": 0.0,  # Persistent parent override: 0 = off, -1 = until turned off, >now = epoch
     "minecraft_instance": "",      # Optional specific Prism instance ID ("" = auto / SelectedInstance)
     "committed_work_seconds": 0.0, # Active verified seconds toward next point (persisted across sessions)
     "points_towards_unlock": 0,    # Whole points earned toward next game unlock (persisted across sessions)
@@ -83,9 +87,10 @@ MAX_ORAL_BUFFER_SECONDS = 150.0
 
 _STATE_LOCK = threading.Lock()
 _WATCHDOG_STARTED = False
-_MC_LAUNCHED_AT = 0.0          # Gives up to 30s launcher boot grace before Java starts
+_MC_LAUNCHED_AT = 0.0          # Gives up to 30s launcher boot grace before game window opens
 _MC_WARNED_ONE_MIN = False
 _PARENT_SETUP_UNTIL = 0.0      # Unlocked parent maintenance window for Microsoft login / instance setup
+_APPPKG_BEDROCK_CACHE: tuple[float, bool] = (0.0, False)
 
 
 # ------------------------------------------------------------------ Local Game Discovery
@@ -137,8 +142,86 @@ def _win_prism_exe() -> Path | None:
     return None
 
 
+def _win_bedrock_info() -> dict[str, Any]:
+    """Detects Minecraft Bedrock Edition (`Minecraft for Windows`) via Store/Xbox paths or AppxPackage."""
+    global _APPPKG_BEDROCK_CACHE
+    if (os.environ.get("BEDROCK_FORCE_INSTALLED") or "").strip() == "1":
+        return {
+            "installed": True,
+            "exe": None,
+            "aumid": r"Microsoft.MinecraftUWP_8wekyb3d8bbwe!App",
+        }
+    if not _is_win():
+        return {"installed": False, "exe": None, "aumid": r"Microsoft.MinecraftUWP_8wekyb3d8bbwe!App"}
+
+    home = Path.home()
+    local_app = Path(os.environ.get("LOCALAPPDATA") or (home / "AppData" / "Local"))
+    sys_drive = os.environ.get("SystemDrive") or "C:\\"
+    if len(sys_drive) == 2 and sys_drive[1] == ":":
+        sys_drive = sys_drive + "\\"
+
+    found_exe: str | None = None
+    for drv in (Path(sys_drive), Path("D:\\")):
+        cand = drv / "XboxGames" / "Minecraft for Windows" / "Content" / "Minecraft.Windows.exe"
+        try:
+            if cand.is_file():
+                found_exe = str(cand)
+                break
+        except OSError:
+            continue
+
+    has_pkg_dir = False
+    aumid = r"Microsoft.MinecraftUWP_8wekyb3d8bbwe!App"
+    pkgs_dir = local_app / "Packages"
+    try:
+        if pkgs_dir.is_dir():
+            for child in pkgs_dir.iterdir():
+                nm = child.name
+                if nm.startswith("Microsoft.MinecraftUWP_"):
+                    has_pkg_dir = True
+                    aumid = f"{nm}!App"
+                    break
+                if nm.startswith("Microsoft.MinecraftWindowsBeta_"):
+                    has_pkg_dir = True
+                    aumid = f"{nm}!App"
+    except OSError:
+        pass
+
+    if found_exe or has_pkg_dir:
+        return {"installed": True, "exe": found_exe, "aumid": aumid}
+
+    now = time.time()
+    cached_ts, cached_val = _APPPKG_BEDROCK_CACHE
+    if now - cached_ts < 30.0:
+        return {"installed": cached_val, "exe": None, "aumid": aumid}
+
+    ps = shutil.which("powershell.exe") or None
+    appx_found = False
+    if ps:
+        try:
+            out = subprocess.check_output(
+                [
+                    ps,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "(Get-AppxPackage -Name 'Microsoft.MinecraftUWP*' -ErrorAction SilentlyContinue | Select-Object -First 1).PackageFamilyName",
+                ],
+                text=True,
+                timeout=2.5,
+                creationflags=_WIN_NO_WINDOW,
+            ).strip()
+            if out:
+                appx_found = True
+                aumid = f"{out}!App"
+        except Exception:
+            pass
+    _APPPKG_BEDROCK_CACHE = (now, appx_found)
+    return {"installed": appx_found, "exe": None, "aumid": aumid}
+
+
 def _win_official_minecraft_info() -> dict[str, Any]:
-    """Detects Official Mojang / Xbox App Minecraft Launcher or Minecraft for Windows (Bedrock) on Windows."""
+    """Detects Official Mojang / Xbox App Minecraft Java Launcher on Windows."""
     if not _is_win():
         return {"installed": False, "exe": None, "has_store_launcher": False, "has_bedrock": False}
     home = Path.home()
@@ -166,15 +249,12 @@ def _win_official_minecraft_info() -> dict[str, Any]:
 
     pkgs_dir = local_app / "Packages"
     has_store_launcher = False
-    has_bedrock = False
     try:
         if pkgs_dir.is_dir():
             for child in pkgs_dir.iterdir():
-                nm = child.name
-                if nm.startswith("Microsoft.4297127D64EC6_"):
+                if child.name.startswith("Microsoft.4297127D64EC6_"):
                     has_store_launcher = True
-                elif nm.startswith("Microsoft.MinecraftUWP_") or nm.startswith("Microsoft.MinecraftWindowsBeta_"):
-                    has_bedrock = True
+                    break
     except OSError:
         pass
 
@@ -187,9 +267,11 @@ def _win_official_minecraft_info() -> dict[str, Any]:
     except OSError:
         pass
 
-    installed = bool(found_exe or has_store_launcher or has_bedrock or has_dot_mc)
+    has_bedrock = _win_bedrock_info()["installed"]
+    java_launcher_installed = bool(found_exe or has_store_launcher or has_dot_mc)
     return {
-        "installed": installed,
+        "installed": java_launcher_installed or has_bedrock,
+        "java_installed": java_launcher_installed,
         "exe": found_exe,
         "has_store_launcher": has_store_launcher,
         "has_bedrock": has_bedrock,
@@ -217,8 +299,13 @@ def prism_data_dir() -> Path:
     return flatpak_data
 
 
-def minecraft_flavor() -> str:
-    """Returns `'prism'`, `'official'`, or `''` if Minecraft is not installed on this machine."""
+def is_minecraft_bedrock_installed() -> bool:
+    """True IF AND ONLY IF Minecraft Bedrock Edition (`Minecraft for Windows`) is installed locally."""
+    return bool(_win_bedrock_info()["installed"])
+
+
+def minecraft_java_flavor() -> str:
+    """Returns `'prism'`, `'official'`, or `''` for Minecraft Java Edition specifically."""
     if (os.environ.get("PRISM_FORCE_INSTALLED") or "").strip() == "1":
         return "prism"
     home = Path.home()
@@ -228,7 +315,7 @@ def minecraft_flavor() -> str:
         pdir = prism_data_dir()
         if (pdir / "prismlauncher.cfg").is_file() or (pdir / "instances").is_dir():
             return "prism"
-        if _win_official_minecraft_info()["installed"]:
+        if _win_official_minecraft_info()["java_installed"]:
             return "official"
         return ""
     if sys.platform == "darwin":
@@ -250,9 +337,24 @@ def minecraft_flavor() -> str:
     return ""
 
 
+def is_minecraft_java_installed() -> bool:
+    """True IF AND ONLY IF Minecraft Java Edition (Prism or Official Launcher) is installed locally."""
+    return bool(minecraft_java_flavor())
+
+
+def minecraft_flavor() -> str:
+    """Returns `'prism'`, `'official'`, `'bedrock'`, or `''` if no Minecraft edition is installed."""
+    jf = minecraft_java_flavor()
+    if jf:
+        return jf
+    if is_minecraft_bedrock_installed():
+        return "bedrock"
+    return ""
+
+
 def is_minecraft_installed() -> bool:
-    """True IF AND ONLY IF a supported local Minecraft install (Prism or Official/Bedrock) exists."""
-    return bool(minecraft_flavor())
+    """True IF AND ONLY IF Minecraft Java Edition and/or Bedrock Edition is installed locally."""
+    return is_minecraft_java_installed() or is_minecraft_bedrock_installed()
 
 
 def is_any_game_installed() -> bool:
@@ -319,7 +421,8 @@ def _is_minecraft_java_cmdline(cmdline: str) -> bool:
 def minecraft_process_state() -> dict[str, bool]:
     """Inspects running processes across Windows, Linux/Chromebook, and macOS without console flashes."""
     launcher = False
-    game_jvm = False
+    java_running = False
+    bedrock_running = False
 
     # 1. Native Windows 11/10 (`tasklist` + conditional `Win32_Process` Java CommandLine check)
     if _is_win():
@@ -338,13 +441,13 @@ def minecraft_process_state() -> dict[str, bool]:
                 if img in ("prismlauncher.exe", "minecraftlauncher.exe", "minecraft.exe"):
                     launcher = True
                 elif img == "minecraft.windows.exe":
-                    game_jvm = True
+                    bedrock_running = True
                 elif img in ("javaw.exe", "java.exe"):
                     has_java_proc = True
         except Exception:
             pass
 
-        if has_java_proc and not game_jvm:
+        if has_java_proc:
             ps = shutil.which("powershell.exe") or "powershell"
             try:
                 cmd_out = subprocess.check_output(
@@ -361,12 +464,19 @@ def minecraft_process_state() -> dict[str, bool]:
                 )
                 for line in cmd_out.splitlines():
                     if _is_minecraft_java_cmdline(line):
-                        game_jvm = True
+                        java_running = True
                         break
             except Exception:
                 pass
 
-        return {"launcher": launcher, "game_jvm": game_jvm, "any": launcher or game_jvm}
+        game_jvm = java_running or bedrock_running
+        return {
+            "launcher": launcher,
+            "java_running": java_running,
+            "bedrock_running": bedrock_running,
+            "game_jvm": game_jvm,
+            "any": launcher or game_jvm,
+        }
 
     # 2. Linux / Chromebook Crostini (`/proc`)
     proc_root = Path("/proc")
@@ -385,13 +495,19 @@ def minecraft_process_state() -> dict[str, bool]:
                 if "prism-gated-launch.sh" in joined or "minecraft-gated-launch.py" in joined:
                     continue
                 exe_name = Path(parts[0]).name.lower()
-                if "prismlauncher" in exe_name:
+                if "prismlauncher" in exe_name or "minecraft-launcher" in exe_name:
                     launcher = True
                 elif exe_name.startswith("java") and _is_minecraft_java_cmdline(joined):
-                    game_jvm = True
+                    java_running = True
             except OSError:
                 continue
-        return {"launcher": launcher, "game_jvm": game_jvm, "any": launcher or game_jvm}
+        return {
+            "launcher": launcher,
+            "java_running": java_running,
+            "bedrock_running": False,
+            "game_jvm": java_running,
+            "any": launcher or java_running,
+        }
 
     # 3. macOS fallback
     if sys.platform == "darwin":
@@ -400,13 +516,19 @@ def minecraft_process_state() -> dict[str, bool]:
             for line in out.splitlines():
                 if "minecraft-gated-launch.py" in line:
                     continue
-                if "Prism Launcher.app" in line or "prismlauncher" in line.lower():
+                if "Prism Launcher.app" in line or "prismlauncher" in line.lower() or "Minecraft.app/Contents/MacOS" in line:
                     launcher = True
                 if "java" in line and _is_minecraft_java_cmdline(line):
-                    game_jvm = True
+                    java_running = True
         except Exception:
             pass
-    return {"launcher": launcher, "game_jvm": game_jvm, "any": launcher or game_jvm}
+    return {
+        "launcher": launcher,
+        "java_running": java_running,
+        "bedrock_running": False,
+        "game_jvm": java_running,
+        "any": launcher or java_running,
+    }
 
 
 def _desktop_notify(title: str, body: str, urgent: bool = False) -> None:
@@ -472,19 +594,40 @@ def _desktop_notify(title: str, body: str, urgent: bool = False) -> None:
         pass
 
 
-def stop_minecraft() -> None:
-    """Cleanly closes Minecraft & its launcher (Windows Java/Bedrock/Prism, Linux Flatpak, macOS)."""
+def stop_minecraft(*, close_bedrock: bool = True, close_java: bool = True) -> None:
+    """Cleanly closes Minecraft & its launcher (Windows Bedrock & Java, Linux Flatpak, macOS)."""
     if _is_win():
         ps = shutil.which("powershell.exe") or "powershell"
-        ps_kill = (
+        names: list[str] = []
+        if close_bedrock:
+            names.append("'Minecraft.Windows'")
+        if close_java:
+            names.extend(["'prismlauncher'", "'MinecraftLauncher'", "'Minecraft'"])
+        names_expr = ",".join(names) if names else ""
+        java_block = (
             "$mcJava = Get-CimInstance Win32_Process -Filter \"Name='javaw.exe' OR Name='java.exe'\" | "
             "Where-Object { $_.CommandLine -match 'prismlauncher|net\\.minecraft|\\.minecraft|cpw\\.mods|net\\.fabricmc|mojang' }; "
-            "$mcApps = Get-Process -Name 'Minecraft.Windows','prismlauncher','MinecraftLauncher' -ErrorAction SilentlyContinue; "
-            "foreach ($p in $mcApps) { try { $null = $p.CloseMainWindow() } catch {} }; "
-            "foreach ($j in $mcJava) { try { $gp = Get-Process -Id $j.ProcessId -ErrorAction SilentlyContinue; if ($gp) { $null = $gp.CloseMainWindow() } } catch {} }; "
-            "Start-Sleep -Milliseconds 1200; "
-            "Stop-Process -Name 'Minecraft.Windows','prismlauncher','MinecraftLauncher' -Force -ErrorAction SilentlyContinue; "
-            "foreach ($j in $mcJava) { Stop-Process -Id $j.ProcessId -Force -ErrorAction SilentlyContinue }"
+            if close_java
+            else "$mcJava = @(); "
+        )
+        apps_block = (
+            f"$mcApps = Get-Process -Name {names_expr} -ErrorAction SilentlyContinue; "
+            if names_expr
+            else "$mcApps = @(); "
+        )
+        stop_apps_block = (
+            f"Stop-Process -Name {names_expr} -Force -ErrorAction SilentlyContinue; "
+            if names_expr
+            else ""
+        )
+        ps_kill = (
+            java_block
+            + apps_block
+            + "foreach ($p in $mcApps) { try { $null = $p.CloseMainWindow() } catch {} }; "
+            + "foreach ($j in $mcJava) { try { $gp = Get-Process -Id $j.ProcessId -ErrorAction SilentlyContinue; if ($gp) { $null = $gp.CloseMainWindow() } } catch {} }; "
+            + "Start-Sleep -Milliseconds 1200; "
+            + stop_apps_block
+            + "foreach ($j in $mcJava) { Stop-Process -Id $j.ProcessId -Force -ErrorAction SilentlyContinue }"
         )
         try:
             subprocess.run(
@@ -499,6 +642,8 @@ def stop_minecraft() -> None:
             pass
         return
 
+    if not close_java:
+        return
     fp = shutil.which("flatpak")
     if fp:
         subprocess.run([fp, "kill", PRISM_APP_ID], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
@@ -510,12 +655,30 @@ def stop_minecraft() -> None:
             subprocess.run(["pkill", "-f", pat], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
-def launch_minecraft(*, instance_override: str | None = None, parent_setup: bool = False) -> dict[str, Any]:
-    """Launches Prism Launcher (or Official Minecraft Launcher) directly into an instance or Parent Setup mode."""
+def launch_minecraft(
+    *,
+    edition: str = "auto",
+    instance_override: str | None = None,
+    parent_setup: bool = False,
+) -> dict[str, Any]:
+    """Launches Minecraft Bedrock (`edition='bedrock'`) or Java (`edition='java'`), or auto-selects."""
     global _MC_LAUNCHED_AT, _MC_WARNED_ONE_MIN, _PARENT_SETUP_UNTIL
-    flavor = minecraft_flavor()
-    if not flavor:
+    java_flav = minecraft_java_flavor()
+    has_bedrock = is_minecraft_bedrock_installed()
+    if not java_flav and not has_bedrock:
         raise RuntimeError("Minecraft is not installed on this computer.")
+
+    req_ed = (edition or "auto").strip().lower()
+    if req_ed == "bedrock":
+        if not has_bedrock:
+            raise RuntimeError("Minecraft Bedrock Edition is not installed on this computer.")
+        target_ed = "bedrock"
+    elif req_ed == "java":
+        if not java_flav:
+            raise RuntimeError("Minecraft Java Edition is not installed on this computer.")
+        target_ed = "java"
+    else:
+        target_ed = "java" if java_flav else "bedrock"
 
     if parent_setup:
         _PARENT_SETUP_UNTIL = time.time() + 1800.0
@@ -523,8 +686,19 @@ def launch_minecraft(*, instance_override: str | None = None, parent_setup: bool
         _MC_LAUNCHED_AT = time.time()
         _MC_WARNED_ONE_MIN = False
 
+    # Launch Minecraft Bedrock Edition (`Minecraft for Windows`) directly
+    if target_ed == "bedrock":
+        bed = _win_bedrock_info()
+        aumid = bed.get("aumid") or r"Microsoft.MinecraftUWP_8wekyb3d8bbwe!App"
+        subprocess.Popen(
+            ["explorer.exe", f"shell:AppsFolder\\{aumid}"],
+            creationflags=_WIN_NO_WINDOW,
+        )
+        return {"ok": True, "edition": "bedrock", "instance": None, "parent_setup": parent_setup, "flavor": "bedrock"}
+
+    # Launch Minecraft Java Edition (Prism Launcher or Official Launcher)
     chosen = ""
-    if flavor == "prism":
+    if java_flav == "prism":
         inst_info = list_minecraft_instances()
         valid_ids = {i["id"] for i in inst_info["instances"]}
         if not parent_setup:
@@ -534,7 +708,7 @@ def launch_minecraft(*, instance_override: str | None = None, parent_setup: bool
             elif inst_info["default_id"]:
                 chosen = inst_info["default_id"]
 
-    # 1. Native Windows 11/10
+    # 1. Native Windows 11/10 (Java)
     if _is_win():
         prism_exe = _win_prism_exe()
         if prism_exe is not None:
@@ -542,22 +716,19 @@ def launch_minecraft(*, instance_override: str | None = None, parent_setup: bool
             if chosen:
                 cmd.extend(["--launch", chosen])
             subprocess.Popen(cmd, cwd=str(prism_exe.parent))
-            return {"ok": True, "instance": chosen or None, "parent_setup": parent_setup, "flavor": "prism"}
+            return {"ok": True, "edition": "java", "instance": chosen or None, "parent_setup": parent_setup, "flavor": "prism"}
 
         off = _win_official_minecraft_info()
         if off["exe"]:
             subprocess.Popen([off["exe"]])
-            return {"ok": True, "instance": None, "parent_setup": parent_setup, "flavor": "official"}
+            return {"ok": True, "edition": "java", "instance": None, "parent_setup": parent_setup, "flavor": "official"}
         if off["has_store_launcher"]:
             subprocess.Popen(
                 ["explorer.exe", r"shell:AppsFolder\Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft"],
                 creationflags=_WIN_NO_WINDOW,
             )
-            return {"ok": True, "instance": None, "parent_setup": parent_setup, "flavor": "official"}
-        if off["has_bedrock"] or off["installed"]:
-            subprocess.Popen(["explorer.exe", "minecraft://"], creationflags=_WIN_NO_WINDOW)
-            return {"ok": True, "instance": None, "parent_setup": parent_setup, "flavor": "official"}
-        raise RuntimeError("Could not locate Prism Launcher or Minecraft Launcher executable on Windows.")
+            return {"ok": True, "edition": "java", "instance": None, "parent_setup": parent_setup, "flavor": "official"}
+        raise RuntimeError("Could not locate Prism Launcher or Minecraft Java Launcher executable on Windows.")
 
     # 2. macOS
     if sys.platform == "darwin":
@@ -621,8 +792,99 @@ def launch_minecraft(*, instance_override: str | None = None, parent_setup: bool
     raise RuntimeError("Could not find Prism Launcher or Minecraft Launcher binary on this system.")
 
 
-def sync_minecraft_desktop_gate(gate_enabled: bool) -> None:
-    """Syncs OS-level Minecraft gating across Windows, macOS, ChromeOS, and Desktop Linux."""
+def sync_minecraft_desktop_gate(gate_enabled: bool, gate_bedrock: bool = True) -> None:
+    """Syncs OS-level Minecraft gating across Windows (Java + Bedrock), macOS, ChromeOS, and Linux."""
+    any_gate = bool(gate_enabled or gate_bedrock)
+    if _is_win():
+        ps = shutil.which("powershell.exe") or "powershell"
+        pyw = ROOT / ".venv" / "Scripts" / "pythonw.exe"
+        if not pyw.is_file():
+            cand = Path(sys.executable).with_name("pythonw.exe")
+            pyw = cand if cand.is_file() else Path(sys.executable)
+        launch_py = ROOT / "launch.py"
+        gated_py = ROOT / "bin" / "minecraft-gated-launch.py"
+        prism_exe = _win_prism_exe()
+        bed_info = _win_bedrock_info()
+        tutor_ico = ROOT / "static" / "icon.ico"
+
+        env = dict(os.environ)
+        env["GT_ANY_GATE"] = "1" if any_gate else "0"
+        env["GT_GATE_JAVA"] = "1" if gate_enabled else "0"
+        env["GT_GATE_BEDROCK"] = "1" if (gate_bedrock and bed_info["installed"]) else "0"
+        env["GT_PYW"] = str(pyw)
+        env["GT_ROOT"] = str(ROOT)
+        env["GT_LAUNCH"] = str(launch_py)
+        env["GT_GATED_PY"] = str(gated_py)
+        env["GT_PRISM_EXE"] = str(prism_exe) if prism_exe else ""
+        env["GT_BEDROCK_EXE"] = str(bed_info.get("exe") or "")
+        env["GT_TUTOR_ICO"] = str(tutor_ico) if tutor_ico.is_file() else ""
+
+        ps_sync = (
+            "$wsh = New-Object -ComObject WScript.Shell; "
+            "$startup = [Environment]::GetFolderPath('Startup'); "
+            "$desktop = [Environment]::GetFolderPath('Desktop'); "
+            "$wdLnk = Join-Path $startup 'Gemini Tutor Watchdog.lnk'; "
+            "if ($env:GT_ANY_GATE -eq '1') { "
+            "  if ($startup -and (Test-Path $startup)) { "
+            "    $s = $wsh.CreateShortcut($wdLnk); "
+            "    $s.TargetPath = $env:GT_PYW; "
+            "    $s.Arguments = '\"' + $env:GT_LAUNCH + '\" --no-open'; "
+            "    $s.WorkingDirectory = $env:GT_ROOT; "
+            "    $s.Description = 'Gemini Tutor Background Minecraft Time-Gating Watchdog'; "
+            "    $s.Save(); "
+            "  } "
+            "} else { "
+            "  if (Test-Path $wdLnk) { Remove-Item $wdLnk -Force -ErrorAction SilentlyContinue } "
+            "}; "
+            "if ($desktop -and (Test-Path $desktop) -and (Test-Path $env:GT_GATED_PY)) { "
+            "  $prismLnk = Join-Path $desktop 'Prism Launcher.lnk'; "
+            "  if ($env:GT_GATE_JAVA -eq '1') { "
+            "    if ((Test-Path $prismLnk) -or $env:GT_PRISM_EXE) { "
+            "      $m = $wsh.CreateShortcut($prismLnk); "
+            "      $m.TargetPath = $env:GT_PYW; "
+            "      $m.Arguments = '\"' + $env:GT_GATED_PY + '\" --edition java'; "
+            "      $m.WorkingDirectory = $env:GT_ROOT; "
+            "      $m.Description = 'Minecraft Java (Earned Time via Gemini Tutor)'; "
+            "      if ($env:GT_PRISM_EXE -and (Test-Path $env:GT_PRISM_EXE)) { $m.IconLocation = $env:GT_PRISM_EXE + ',0' }; "
+            "      $m.Save(); "
+            "    } "
+            "  } elseif ((Test-Path $prismLnk) -and $env:GT_PRISM_EXE -and (Test-Path $env:GT_PRISM_EXE)) { "
+            "    $m = $wsh.CreateShortcut($prismLnk); "
+            "    if ($m.Arguments -like '*minecraft-gated-launch.py*') { "
+            "      $m.TargetPath = $env:GT_PRISM_EXE; $m.Arguments = ''; $m.WorkingDirectory = Split-Path $env:GT_PRISM_EXE; "
+            "      $m.IconLocation = $env:GT_PRISM_EXE + ',0'; $m.Save(); "
+            "    } "
+            "  }; "
+            "  $bedLnk = Join-Path $desktop 'Minecraft Bedrock.lnk'; "
+            "  if ($env:GT_GATE_BEDROCK -eq '1') { "
+            "    $b = $wsh.CreateShortcut($bedLnk); "
+            "    $b.TargetPath = $env:GT_PYW; "
+            "    $b.Arguments = '\"' + $env:GT_GATED_PY + '\" --edition bedrock'; "
+            "    $b.WorkingDirectory = $env:GT_ROOT; "
+            "    $b.Description = 'Minecraft Bedrock (Earned Time via Gemini Tutor)'; "
+            "    if ($env:GT_BEDROCK_EXE -and (Test-Path $env:GT_BEDROCK_EXE)) { $b.IconLocation = $env:GT_BEDROCK_EXE + ',0' } "
+            "    elseif ($env:GT_TUTOR_ICO) { $b.IconLocation = $env:GT_TUTOR_ICO }; "
+            "    $b.Save(); "
+            "  } elseif (Test-Path $bedLnk) { "
+            "    $b = $wsh.CreateShortcut($bedLnk); "
+            "    if ($b.Arguments -like '*minecraft-gated-launch.py*') { Remove-Item $bedLnk -Force -ErrorAction SilentlyContinue } "
+            "  } "
+            "}"
+        )
+        try:
+            subprocess.run(
+                [ps, "-NoProfile", "-NonInteractive", "-Command", ps_sync],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=6.0,
+                check=False,
+                creationflags=_WIN_NO_WINDOW,
+            )
+        except Exception:
+            pass
+        return
+
     if sys.platform == "darwin":
         plist_dir = Path.home() / "Library" / "LaunchAgents"
         plist_path = plist_dir / "com.geminitutor.watchdog.plist"
@@ -652,79 +914,6 @@ def sync_minecraft_desktop_gate(gate_enabled: bool) -> None:
             elif plist_path.is_file():
                 plist_path.unlink()
         except OSError:
-            pass
-        return
-
-    if _is_win():
-        ps = shutil.which("powershell.exe") or "powershell"
-        pyw = ROOT / ".venv" / "Scripts" / "pythonw.exe"
-        if not pyw.is_file():
-            cand = Path(sys.executable).with_name("pythonw.exe")
-            pyw = cand if cand.is_file() else Path(sys.executable)
-        launch_py = ROOT / "launch.py"
-        gated_py = ROOT / "bin" / "minecraft-gated-launch.py"
-        prism_exe = _win_prism_exe()
-
-        env = dict(os.environ)
-        env["GT_GATE_ON"] = "1" if gate_enabled else "0"
-        env["GT_PYW"] = str(pyw)
-        env["GT_ROOT"] = str(ROOT)
-        env["GT_LAUNCH"] = str(launch_py)
-        env["GT_GATED_PY"] = str(gated_py)
-        env["GT_PRISM_EXE"] = str(prism_exe) if prism_exe else ""
-
-        ps_sync = (
-            "$wsh = New-Object -ComObject WScript.Shell; "
-            "$startup = [Environment]::GetFolderPath('Startup'); "
-            "$desktop = [Environment]::GetFolderPath('Desktop'); "
-            "$wdLnk = Join-Path $startup 'Gemini Tutor Watchdog.lnk'; "
-            "if ($env:GT_GATE_ON -eq '1') { "
-            "  if ($startup -and (Test-Path $startup)) { "
-            "    $s = $wsh.CreateShortcut($wdLnk); "
-            "    $s.TargetPath = $env:GT_PYW; "
-            "    $s.Arguments = '\"' + $env:GT_LAUNCH + '\" --no-open'; "
-            "    $s.WorkingDirectory = $env:GT_ROOT; "
-            "    $s.Description = 'Gemini Tutor Background Minecraft Time-Gating Watchdog'; "
-            "    $s.Save(); "
-            "  }; "
-            "  if ($desktop -and (Test-Path $desktop) -and (Test-Path $env:GT_GATED_PY)) { "
-            "    $prismLnk = Join-Path $desktop 'Prism Launcher.lnk'; "
-            "    if ((Test-Path $prismLnk) -or $env:GT_PRISM_EXE) { "
-            "      $m = $wsh.CreateShortcut($prismLnk); "
-            "      $m.TargetPath = $env:GT_PYW; "
-            "      $m.Arguments = '\"' + $env:GT_GATED_PY + '\"'; "
-            "      $m.WorkingDirectory = $env:GT_ROOT; "
-            "      $m.Description = 'Prism Launcher (Earned Time via Gemini Tutor)'; "
-            "      if ($env:GT_PRISM_EXE -and (Test-Path $env:GT_PRISM_EXE)) { $m.IconLocation = $env:GT_PRISM_EXE + ',0' }; "
-            "      $m.Save(); "
-            "    } "
-            "  } "
-            "} else { "
-            "  if (Test-Path $wdLnk) { Remove-Item $wdLnk -Force -ErrorAction SilentlyContinue }; "
-            "  $prismLnk = Join-Path $desktop 'Prism Launcher.lnk'; "
-            "  if ((Test-Path $prismLnk) -and $env:GT_PRISM_EXE -and (Test-Path $env:GT_PRISM_EXE)) { "
-            "    $m = $wsh.CreateShortcut($prismLnk); "
-            "    if ($m.Arguments -like '*minecraft-gated-launch.py*') { "
-            "      $m.TargetPath = $env:GT_PRISM_EXE; "
-            "      $m.Arguments = ''; "
-            "      $m.WorkingDirectory = Split-Path $env:GT_PRISM_EXE; "
-            "      $m.IconLocation = $env:GT_PRISM_EXE + ',0'; "
-            "      $m.Save(); "
-            "    } "
-            "  } "
-            "}"
-        )
-        try:
-            subprocess.run(
-                [ps, "-NoProfile", "-NonInteractive", "-Command", ps_sync],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=6.0,
-                check=False,
-                creationflags=_WIN_NO_WINDOW,
-            )
-        except Exception:
             pass
         return
 
@@ -785,21 +974,43 @@ def sync_minecraft_desktop_gate(gate_enabled: bool) -> None:
 # ------------------------------------------------------------------ Persistent Record Helpers
 
 
+def is_parent_override_active(arc: dict[str, Any], now: float | None = None) -> bool:
+    """True when parent free-play override or Parent Setup window is active."""
+    t_now = time.time() if now is None else now
+    if t_now < _PARENT_SETUP_UNTIL:
+        return True
+    ov = float(arc.get("parent_override_until") or 0.0)
+    return ov < 0 or ov > t_now
+
+
 def ensure_arcade(rec: dict[str, Any]) -> dict[str, Any]:
     arc = rec.get("arcade")
     if not isinstance(arc, dict):
         arc = copy.deepcopy(DEFAULT_ARCADE)
         rec["arcade"] = arc
     else:
+        # Migrate untouched v1.7.0 defaults (15m * 2 pts -> 15m) to the ADHD-friendly 1:2 default (15m * 1 pt -> 30m)
+        if (
+            not arc.get("rules_customized", False)
+            and arc.get("minutes_per_point") == 15
+            and arc.get("points_to_unlock") == 2
+            and arc.get("reward_game_minutes") == 15
+        ):
+            arc["points_to_unlock"] = 1
+            arc["reward_game_minutes"] = 30
         for k, v in DEFAULT_ARCADE.items():
             if k not in arc:
                 arc[k] = copy.deepcopy(v)
     arc["minutes_per_point"] = max(5, min(60, int(arc.get("minutes_per_point") or 15)))
-    arc["points_to_unlock"] = max(1, min(10, int(arc.get("points_to_unlock") or 2)))
-    arc["reward_game_minutes"] = max(5, min(120, int(arc.get("reward_game_minutes") or 15)))
+    arc["points_to_unlock"] = max(1, min(10, int(arc.get("points_to_unlock") or 1)))
+    arc["reward_game_minutes"] = max(5, min(180, int(arc.get("reward_game_minutes") or 30)))
     arc["committed_work_seconds"] = max(0.0, float(arc.get("committed_work_seconds") or 0.0))
     arc["points_towards_unlock"] = max(0, int(arc.get("points_towards_unlock") or 0))
     arc["game_seconds_available"] = max(0.0, float(arc.get("game_seconds_available") or 0.0))
+    ov = float(arc.get("parent_override_until") or 0.0)
+    if 0.0 < ov <= time.time():
+        arc["parent_override_until"] = 0.0
+    _apply_thresholds(arc)
     return arc
 
 
@@ -852,8 +1063,11 @@ def _apply_thresholds(arc: dict[str, Any]) -> dict[str, Any]:
 
 def client_status(rec: dict[str, Any] | None = None, *, sandbox: bool = False, pending_seconds: float = 0.0) -> dict[str, Any]:
     fod_ok = is_fod_installed()
-    mc_flavor = minecraft_flavor()
-    mc_ok = bool(mc_flavor)
+    java_flavor = minecraft_java_flavor()
+    java_ok = bool(java_flavor)
+    bedrock_ok = is_minecraft_bedrock_installed()
+    mc_ok = java_ok or bedrock_ok
+    mc_flavor = java_flavor or ("bedrock" if bedrock_ok else "")
     plat = "windows" if _is_win() else ("mac" if sys.platform == "darwin" else "chromebook")
     installed = fod_ok or mc_ok
     if not installed:
@@ -862,6 +1076,8 @@ def client_status(rec: dict[str, Any] | None = None, *, sandbox: bool = False, p
             "platform": plat,
             "fod_installed": False,
             "minecraft_installed": False,
+            "minecraft_java_installed": False,
+            "minecraft_bedrock_installed": False,
             "minecraft_flavor": "",
             "enabled": False,
             "visible": False,
@@ -874,6 +1090,7 @@ def client_status(rec: dict[str, Any] | None = None, *, sandbox: bool = False, p
             rec = load_learner()
         arc = ensure_arcade(rec)
 
+    now = time.time()
     enabled = bool(arc.get("enabled", True))
     mpp = int(arc["minutes_per_point"])
     ptu = int(arc["points_to_unlock"])
@@ -885,17 +1102,42 @@ def client_status(rec: dict[str, Any] | None = None, *, sandbox: bool = False, p
     total_target_min = mpp * ptu
     total_done_sec = pts * chunk_sec + committed
 
-    mc_proc = minecraft_process_state() if mc_ok else {"launcher": False, "game_jvm": False, "any": False}
-    mc_inst = list_minecraft_instances() if mc_flavor == "prism" else {"instances": [], "selected": "", "default_id": ""}
-    mc_label = "Prism Launcher" if mc_flavor == "prism" else ("Minecraft Launcher" if mc_flavor == "official" else "Minecraft")
+    ov_raw = float(arc.get("parent_override_until") or 0.0)
+    override_active = is_parent_override_active(arc, now)
+    if ov_raw < 0:
+        ov_rem_sec: float = -1.0
+    elif ov_raw > now:
+        ov_rem_sec = round(ov_raw - now, 1)
+    elif now < _PARENT_SETUP_UNTIL:
+        ov_rem_sec = round(_PARENT_SETUP_UNTIL - now, 1)
+    else:
+        ov_rem_sec = 0.0
+
+    mc_proc = (
+        minecraft_process_state()
+        if mc_ok
+        else {"launcher": False, "java_running": False, "bedrock_running": False, "game_jvm": False, "any": False}
+    )
+    mc_inst = list_minecraft_instances() if java_flavor == "prism" else {"instances": [], "selected": "", "default_id": ""}
+    java_label = "Prism Launcher" if java_flavor == "prism" else ("Minecraft Launcher" if java_flavor == "official" else "Minecraft Java")
+    if java_ok and bedrock_ok:
+        mc_label = f"Bedrock & Java ({java_label})"
+    elif bedrock_ok:
+        mc_label = "Minecraft Bedrock"
+    else:
+        mc_label = java_label
 
     return {
         "installed": True,
         "platform": plat,
         "fod_installed": fod_ok,
         "minecraft_installed": mc_ok,
+        "minecraft_java_installed": java_ok,
+        "minecraft_bedrock_installed": bedrock_ok,
         "minecraft_flavor": mc_flavor,
+        "minecraft_java_flavor": java_flavor,
         "minecraft_label": mc_label,
+        "minecraft_java_label": java_label,
         "enabled": enabled,
         "visible": enabled,
         "fod_port": FOD_PORT,
@@ -904,14 +1146,21 @@ def client_status(rec: dict[str, Any] | None = None, *, sandbox: bool = False, p
         "points_to_unlock": ptu,
         "total_work_minutes_needed": total_target_min,
         "reward_game_minutes": rgm,
+        "work_to_game_ratio": round(rgm / max(1, total_target_min), 2),
         "lock_standalone": bool(arc.get("lock_standalone", False)),
         "gate_minecraft": bool(arc.get("gate_minecraft", True)),
+        "gate_bedrock": bool(arc.get("gate_bedrock", True)),
+        "parent_override_active": override_active,
+        "parent_override_until": ov_raw,
+        "parent_override_remaining_seconds": ov_rem_sec,
         "minecraft_instance": str(arc.get("minecraft_instance") or ""),
         "minecraft_instances": mc_inst["instances"],
         "minecraft_default_instance": mc_inst["default_id"],
         "minecraft_running": mc_proc["any"],
+        "minecraft_java_running": mc_proc.get("java_running", False) or mc_proc.get("launcher", False),
+        "minecraft_bedrock_running": mc_proc.get("bedrock_running", False),
         "minecraft_jvm_running": mc_proc["game_jvm"],
-        "parent_setup_active": time.time() < _PARENT_SETUP_UNTIL,
+        "parent_setup_active": now < _PARENT_SETUP_UNTIL,
         "points": pts,
         "committed_work_seconds": committed,
         "pending_effort_seconds": round(max(0.0, pending_seconds), 1),
@@ -919,7 +1168,7 @@ def client_status(rec: dict[str, Any] | None = None, *, sandbox: bool = False, p
         "total_progress_seconds": round(total_done_sec, 1),
         "total_target_seconds": total_target_min * 60,
         "game_seconds_available": avail_sec,
-        "can_play": enabled and avail_sec >= 1.0,
+        "can_play": enabled and (avail_sec >= 1.0 or override_active),
         "lifetime_work_minutes": round(float(arc.get("lifetime_work_seconds") or 0.0) / 60.0, 1),
         "lifetime_points_earned": int(arc.get("lifetime_points_earned") or 0),
         "lifetime_sentences_verified": int(arc.get("lifetime_sentences_verified") or 0),
@@ -936,10 +1185,13 @@ def update_parent_settings(
     reward_game_minutes: int | None = None,
     lock_standalone: bool | None = None,
     gate_minecraft: bool | None = None,
+    gate_bedrock: bool | None = None,
+    override_mode: str | None = None,
     minecraft_instance: str | None = None,
     grant_minutes: float | None = None,
     reset_bank: bool = False,
 ) -> dict[str, Any]:
+    global _PARENT_SETUP_UNTIL
     with _STATE_LOCK:
         rec = load_learner()
         arc = ensure_arcade(rec)
@@ -947,36 +1199,83 @@ def update_parent_settings(
             arc["enabled"] = bool(enabled)
         if minutes_per_point is not None:
             arc["minutes_per_point"] = max(5, min(60, int(minutes_per_point)))
+            arc["rules_customized"] = True
         if points_to_unlock is not None:
             arc["points_to_unlock"] = max(1, min(10, int(points_to_unlock)))
+            arc["rules_customized"] = True
         if reward_game_minutes is not None:
-            arc["reward_game_minutes"] = max(5, min(120, int(reward_game_minutes)))
+            arc["reward_game_minutes"] = max(5, min(180, int(reward_game_minutes)))
+            arc["rules_customized"] = True
         if lock_standalone is not None:
             arc["lock_standalone"] = bool(lock_standalone)
+        sync_needed = False
         if gate_minecraft is not None:
             arc["gate_minecraft"] = bool(gate_minecraft)
-            sync_minecraft_desktop_gate(arc["gate_minecraft"])
+            sync_needed = True
+        if gate_bedrock is not None:
+            arc["gate_bedrock"] = bool(gate_bedrock)
+            sync_needed = True
+        if sync_needed:
+            sync_minecraft_desktop_gate(bool(arc.get("gate_minecraft", True)), bool(arc.get("gate_bedrock", True)))
         if minecraft_instance is not None:
             arc["minecraft_instance"] = minecraft_instance.strip()
+
+        if override_mode is not None:
+            mode = override_mode.strip().lower()
+            now = time.time()
+            if mode in ("off", "none", "0"):
+                arc["parent_override_until"] = 0.0
+                _PARENT_SETUP_UNTIL = 0.0
+                arc.setdefault("history", []).append({"date": now_iso(), "kind": "parent_override_off", "minutes": 0})
+                if float(arc.get("game_seconds_available") or 0.0) <= 0.5 and is_minecraft_installed():
+                    stop_minecraft(
+                        close_bedrock=bool(arc.get("gate_bedrock", True)),
+                        close_java=bool(arc.get("gate_minecraft", True)),
+                    )
+            elif mode == "30m":
+                arc["parent_override_until"] = now + 1800.0
+                arc.setdefault("history", []).append({"date": now_iso(), "kind": "parent_override", "minutes": 30})
+            elif mode == "60m":
+                arc["parent_override_until"] = now + 3600.0
+                arc.setdefault("history", []).append({"date": now_iso(), "kind": "parent_override", "minutes": 60})
+            elif mode == "120m":
+                arc["parent_override_until"] = now + 7200.0
+                arc.setdefault("history", []).append({"date": now_iso(), "kind": "parent_override", "minutes": 120})
+            elif mode == "tonight":
+                eod = datetime.datetime.now().replace(hour=23, minute=59, second=59, microsecond=0).timestamp()
+                arc["parent_override_until"] = max(now + 3600.0, eod)
+                arc.setdefault("history", []).append({"date": now_iso(), "kind": "parent_override", "minutes": round((arc["parent_override_until"] - now) / 60)})
+            elif mode == "indefinite":
+                arc["parent_override_until"] = -1.0
+                arc.setdefault("history", []).append({"date": now_iso(), "kind": "parent_override_indefinite", "minutes": 0})
+
         if grant_minutes and grant_minutes > 0:
-            add_m = min(120.0, float(grant_minutes))
+            add_m = min(180.0, float(grant_minutes))
             arc["game_seconds_available"] += add_m * 60.0
             arc.setdefault("history", []).append({"date": now_iso(), "kind": "parent_bonus", "minutes": round(add_m, 1)})
         if reset_bank:
             arc["game_seconds_available"] = 0.0
             arc.setdefault("history", []).append({"date": now_iso(), "kind": "parent_reset", "minutes": 0})
-            if arc.get("gate_minecraft", True) and is_minecraft_installed() and time.time() >= _PARENT_SETUP_UNTIL:
-                stop_minecraft()
+            if is_minecraft_installed() and not is_parent_override_active(arc):
+                stop_minecraft(
+                    close_bedrock=bool(arc.get("gate_bedrock", True)),
+                    close_java=bool(arc.get("gate_minecraft", True)),
+                )
+        arc["history"] = (arc.get("history") or [])[-40:]
         _apply_thresholds(arc)
         save_learner(rec)
         return client_status(rec)
 
 
 def consume_game_seconds(elapsed_seconds: float, *, sandbox: bool = False, source: str = "fod") -> dict[str, Any]:
-    """Deducts active gameplay time (clamped per heartbeat) and returns updated status."""
+    """Deducts active gameplay time (clamped per heartbeat) unless Parent Override is active."""
     use_s = max(0.0, min(12.0, float(elapsed_seconds)))
     with _STATE_LOCK:
         rec, arc = _active_record_and_arc(sandbox=sandbox)
+        if is_parent_override_active(arc):
+            st = client_status(rec, sandbox=sandbox)
+            st["expired"] = False
+            return st
         before = float(arc["game_seconds_available"])
         actual = min(before, use_s)
         arc["game_seconds_available"] = max(0.0, before - actual)
@@ -1010,40 +1309,47 @@ def _minecraft_watchdog_loop() -> None:
         proc = minecraft_process_state()
         if not proc["any"]:
             if was_running and now < _PARENT_SETUP_UNTIL:
-                # Parent closed Prism Launcher after setup — re-arm normal gating immediately!
+                # Parent closed launcher/game after setup — re-arm normal gating immediately!
                 _PARENT_SETUP_UNTIL = 0.0
             was_running = False
             _MC_WARNED_ONE_MIN = False
             continue
 
         was_running = True
-        if now < _PARENT_SETUP_UNTIL:
-            continue
 
         with _STATE_LOCK:
             rec = load_learner()
             arc = ensure_arcade(rec)
-            gate_on = bool(arc.get("gate_minecraft", True))
+            if is_parent_override_active(arc, now):
+                continue
+
+            gate_java = bool(arc.get("gate_minecraft", True))
+            gate_bed = bool(arc.get("gate_bedrock", True))
+            bed_active = bool(proc.get("bedrock_running")) and gate_bed
+            java_active = bool(proc.get("java_running") or proc.get("launcher")) and gate_java
+
+            if not bed_active and not java_active:
+                continue
+
             enabled = bool(arc.get("enabled", True))
             avail = float(arc.get("game_seconds_available") or 0.0)
 
             if not enabled:
-                if gate_on:
-                    stop_minecraft()
+                stop_minecraft(close_bedrock=bed_active, close_java=java_active)
                 continue
 
             if avail <= 0.5:
-                if gate_on:
-                    _desktop_notify(
-                        "Minecraft Time Finished!",
-                        "Open Gemini Tutor and do some solid writing to earn your next Minecraft session.",
-                        urgent=True,
-                    )
-                    stop_minecraft()
+                _desktop_notify(
+                    "Minecraft Time Finished!",
+                    "Open Gemini Tutor and do some solid writing to earn your next Minecraft session.",
+                    urgent=True,
+                )
+                stop_minecraft(close_bedrock=bed_active, close_java=java_active)
                 continue
 
-            # Give up to 30s of asset/launcher boot grace before the Java game window opens
-            in_boot_grace = (not proc["game_jvm"]) and (now - _MC_LAUNCHED_AT < 30.0)
+            # Give up to 30s of asset/launcher boot grace before the Java/Bedrock game window opens
+            active_game_window = bool(proc.get("bedrock_running") and gate_bed) or bool(proc.get("java_running") and gate_java)
+            in_boot_grace = (not active_game_window) and (now - _MC_LAUNCHED_AT < 30.0)
             if not in_boot_grace:
                 actual = min(avail, dt)
                 avail = max(0.0, avail - actual)
@@ -1054,28 +1360,29 @@ def _minecraft_watchdog_loop() -> None:
                     _MC_WARNED_ONE_MIN = True
                     _desktop_notify(
                         "⏱ 1 Minute of Minecraft Left!",
-                        "Press Esc → Save & Quit to Title now so your world is saved!",
+                        "Press Esc → Save & Quit now so your world is safely saved!",
                         urgent=True,
                     )
 
                 if avail <= 0.5:
                     arc["game_seconds_available"] = 0.0
-                    arc.setdefault("history", []).append({"date": now_iso(), "kind": "finished_minecraft", "minutes": 0})
+                    kind_tag = "finished_minecraft_bedrock" if bed_active and not java_active else "finished_minecraft"
+                    arc.setdefault("history", []).append({"date": now_iso(), "kind": kind_tag, "minutes": 0})
                     arc["history"] = arc["history"][-40:]
                     save_learner(rec)
                     _desktop_notify(
                         "⛏️ Minecraft Time Is Up!",
-                        "Great playing! Head back to Gemini Tutor to earn more points.",
+                        "Great playing! Head back to Gemini Tutor to earn more gaming time.",
                         urgent=True,
                     )
-                    stop_minecraft()
+                    stop_minecraft(close_bedrock=bed_active, close_java=java_active)
                     continue
 
                 save_learner(rec)
 
 
 def start_background_watchdog() -> None:
-    """Starts the singleton daemon watchdog for Chromebook Minecraft time-enforcement."""
+    """Starts the singleton daemon watchdog for Minecraft (Bedrock & Java) time-enforcement."""
     global _WATCHDOG_STARTED
     if _WATCHDOG_STARTED:
         return
@@ -1084,7 +1391,7 @@ def start_background_watchdog() -> None:
         if is_minecraft_installed():
             rec = load_learner()
             arc = ensure_arcade(rec)
-            sync_minecraft_desktop_gate(bool(arc.get("gate_minecraft", True)))
+            sync_minecraft_desktop_gate(bool(arc.get("gate_minecraft", True)), bool(arc.get("gate_bedrock", True)))
     except Exception:
         pass
     t = threading.Thread(target=_minecraft_watchdog_loop, name="minecraft-watchdog", daemon=True)
