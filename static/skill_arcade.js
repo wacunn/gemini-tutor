@@ -1,4 +1,4 @@
-// Skill Arcade — 6 Next-Gen Ontario Grade 3-4 Interactive Games (OLED Canvas2D + Yoga Stylus + WebAudio)
+// Skill Arcade v2.1 — Critic-Hardened 60fps 2x-DPR OLED Canvas2D + Lenovo Yoga Stylus Games
 
 const PARAMS = new URLSearchParams(location.search);
 const IS_SANDBOX = PARAMS.get("sandbox") === "1";
@@ -14,6 +14,119 @@ function esc(s) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+
+// --------------------------------------------------------------------------- Crisp 2x DPR Canvas & Geometry Helpers
+
+function fitCanvas(cv, ctx, fallbackW = 300, fallbackH = 140) {
+  const host = cv.parentElement || cv;
+  const r = host.getBoundingClientRect();
+  const W = Math.max(fallbackW, Math.floor(r.width));
+  const H = Math.max(fallbackH, Math.floor(r.height));
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const bw = Math.floor(W * dpr);
+  const bh = Math.floor(H * dpr);
+  if (cv.width !== bw || cv.height !== bh) {
+    cv.width = bw;
+    cv.height = bh;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { W, H, dpr };
+}
+
+function segmentHitsRect(x1, y1, x2, y2, rect, pad = 6) {
+  const minX = rect.left - pad;
+  const maxX = rect.right + pad;
+  const minY = rect.top - pad;
+  const maxY = rect.bottom + pad;
+  // Cohen-Sutherland / Liang-Barsky parametric clipping for exact segment-box intersection
+  let t0 = 0, t1 = 1;
+  const dx = x2 - x1, dy = y2 - y1;
+  const checks = [
+    [-dx, x1 - minX],
+    [dx, maxX - x1],
+    [-dy, y1 - minY],
+    [dy, maxY - y1],
+  ];
+  for (const [p, q] of checks) {
+    if (Math.abs(p) < 1e-8) {
+      if (q < 0) return false;
+    } else {
+      const t = q / p;
+      if (p < 0) {
+        if (t > t1) return false;
+        if (t > t0) t0 = t;
+      } else {
+        if (t < t0) return false;
+        if (t < t1) t1 = t;
+      }
+    }
+  }
+  return t0 <= t1;
+}
+
+function setFeedback(el, kind, html, btn = null) {
+  if (!el) return;
+  el.className = `sa-feedback ${kind}`;
+  el.innerHTML = `<span class="sa-fb-msg">${html}</span>${
+    btn ? `<button type="button" class="sa-btn ${btn.cls || "emerald"}" id="${btn.id}">${esc(btn.label)}</button>` : ""
+  }`;
+  if (btn && btn.onClick && $(btn.id)) {
+    $(btn.id).onclick = btn.onClick;
+  }
+}
+
+// --------------------------------------------------------------------------- Spoken Voice Narration (Web Speech API)
+
+const VOICE = (() => {
+  let enabled = true;
+  let cachedVoice = null;
+  function pickVoice() {
+    if (!("speechSynthesis" in window)) return null;
+    const vs = window.speechSynthesis.getVoices() || [];
+    if (!vs.length) return null;
+    const pref = [
+      /Microsoft Aria/i, /Microsoft Guy/i, /Microsoft Jenny/i, /Microsoft Zira/i,
+      /Samantha/i, /Google US English/i, /Daniel/i, /Alex/i,
+    ];
+    for (const rx of pref) {
+      const m = vs.find((v) => rx.test(v.name) && /^en/i.test(v.lang));
+      if (m) return m;
+    }
+    return vs.find((v) => /^en/i.test(v.lang)) || vs[0];
+  }
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.onvoiceschanged = () => { cachedVoice = pickVoice(); };
+    cachedVoice = pickVoice();
+  }
+  return {
+    get enabled() { return enabled; },
+    toggle() {
+      enabled = !enabled;
+      if (!enabled) this.stop();
+      return enabled;
+    },
+    stop() {
+      if ("speechSynthesis" in window) {
+        try { window.speechSynthesis.cancel(); } catch (_) {}
+      }
+    },
+    speak(text, { force = false, rate = 0.94 } = {}) {
+      if (!("speechSynthesis" in window)) return;
+      if (!enabled && !force) return;
+      const clean = String(text || "").replace(/\s+/g, " ").trim();
+      if (!clean) return;
+      try {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(clean);
+        u.rate = rate;
+        u.pitch = 1.0;
+        const v = cachedVoice || pickVoice();
+        if (v) u.voice = v;
+        window.speechSynthesis.speak(u);
+      } catch (_) {}
+    },
+  };
+})();
 
 // --------------------------------------------------------------------------- Procedural WebAudio SFX
 
@@ -54,27 +167,35 @@ const SFX = (() => {
       tone(659.25, 0.14, "triangle", 0.14, null, 0.07);
       tone(783.99, 0.2, "sine", 0.12, null, 0.14);
     },
-    bad() {
-      tone(210, 0.18, "sawtooth", 0.1, 130);
-    },
+    bad() { tone(210, 0.18, "sawtooth", 0.1, 125); },
+    shieldBounce() { tone(180, 0.22, "sawtooth", 0.12, 90); tone(310, 0.14, "triangle", 0.08, 190, 0.03); },
     slice() {
-      tone(980, 0.16, "sawtooth", 0.12, 240);
-      tone(1320, 0.14, "sine", 0.1, 1760, 0.05);
+      tone(1040, 0.16, "sawtooth", 0.12, 220);
+      tone(1320, 0.14, "sine", 0.1, 1820, 0.05);
     },
     hammer() {
-      tone(220, 0.22, "triangle", 0.18, 95);
-      tone(880, 0.28, "sine", 0.11, 660, 0.01);
-      tone(1318, 0.22, "sine", 0.07, null, 0.03);
+      tone(180, 0.24, "triangle", 0.2, 75);
+      tone(920, 0.3, "sine", 0.12, 620, 0.01);
+      tone(1480, 0.24, "sine", 0.08, 1100, 0.025);
     },
     laser() {
-      tone(840, 0.14, "square", 0.09, 190);
-      tone(420, 0.12, "triangle", 0.1, 120, 0.04);
+      tone(880, 0.14, "square", 0.08, 180);
+      tone(440, 0.13, "triangle", 0.11, 110, 0.04);
+    },
+    hyperbeam() {
+      tone(220, 0.55, "sawtooth", 0.14, 1280);
+      tone(440, 0.55, "triangle", 0.12, 1760, 0.05);
+      tone(110, 0.65, "sine", 0.16, 55, 0.25);
+    },
+    stamp() {
+      tone(145, 0.2, "triangle", 0.22, 55);
+      tone(660, 0.16, "sine", 0.1, 880, 0.07);
     },
     powerup() {
       [440, 554.37, 659.25, 880].forEach((f, i) => tone(f, 0.18, "triangle", 0.12, null, i * 0.055));
     },
-    keyTick() { tone(620, 0.035, "triangle", 0.05, 500); },
-    keyErr() { tone(165, 0.09, "sawtooth", 0.08, 120); },
+    keyTick() { tone(640, 0.032, "triangle", 0.05, 510); },
+    keyErr() { tone(160, 0.09, "sawtooth", 0.08, 115); },
     highlight() { tone(587.33, 0.12, "sine", 0.11, 880); },
     victory() {
       [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) => tone(f, 0.26, "triangle", 0.13, null, i * 0.08));
@@ -90,6 +211,8 @@ const FX = (() => {
   const bgCtx = bg.getContext("2d");
   const fxCtx = fx.getContext("2d");
   let W = 0, H = 0;
+  let fxDirty = false;
+  let lastBgTick = 0;
   const stars = [];
   const particles = [];
   const trails = [];
@@ -111,97 +234,86 @@ const FX = (() => {
   resize();
   window.addEventListener("resize", resize);
 
-  for (let i = 0; i < 65; i++) {
+  for (let i = 0; i < 60; i++) {
     stars.push({
-      x: Math.random() * 1800,
-      y: Math.random() * 1100,
-      r: 0.7 + Math.random() * 1.8,
-      vx: (Math.random() - 0.5) * 0.16,
-      vy: -0.06 - Math.random() * 0.18,
-      hue: [195, 270, 160, 38][i % 4],
-      a: 0.2 + Math.random() * 0.5,
+      x: Math.random() * 1800, y: Math.random() * 1100,
+      r: 0.7 + Math.random() * 1.8, vx: (Math.random() - 0.5) * 0.15,
+      vy: -0.06 - Math.random() * 0.17, hue: [195, 270, 160, 38][i % 4],
+      a: 0.2 + Math.random() * 0.45,
     });
   }
 
-  function loop() {
-    // Subtle dark nebula backdrop
-    bgCtx.fillStyle = "#060913";
-    bgCtx.fillRect(0, 0, W, H);
-    const g1 = bgCtx.createRadialGradient(W * 0.18, H * 0.14, 10, W * 0.18, H * 0.14, W * 0.5);
-    g1.addColorStop(0, "rgba(56, 189, 248, 0.08)");
-    g1.addColorStop(1, "transparent");
-    bgCtx.fillStyle = g1;
-    bgCtx.fillRect(0, 0, W, H);
+  function loop(ts) {
+    // Battery-friendly: throttle ambient nebula to ~30fps while a 60fps game canvas is running
+    const bgInterval = App.currentGameId ? 33 : 16;
+    if (ts - lastBgTick >= bgInterval) {
+      lastBgTick = ts;
+      bgCtx.fillStyle = "#060913";
+      bgCtx.fillRect(0, 0, W, H);
+      const g1 = bgCtx.createRadialGradient(W * 0.18, H * 0.14, 10, W * 0.18, H * 0.14, W * 0.5);
+      g1.addColorStop(0, "rgba(56, 189, 248, 0.08)"); g1.addColorStop(1, "transparent");
+      bgCtx.fillStyle = g1; bgCtx.fillRect(0, 0, W, H);
 
-    const g2 = bgCtx.createRadialGradient(W * 0.85, H * 0.78, 10, W * 0.85, H * 0.78, W * 0.45);
-    g2.addColorStop(0, "rgba(168, 85, 247, 0.08)");
-    g2.addColorStop(1, "transparent");
-    bgCtx.fillStyle = g2;
-    bgCtx.fillRect(0, 0, W, H);
+      const g2 = bgCtx.createRadialGradient(W * 0.85, H * 0.78, 10, W * 0.85, H * 0.78, W * 0.45);
+      g2.addColorStop(0, "rgba(168, 85, 247, 0.08)"); g2.addColorStop(1, "transparent");
+      bgCtx.fillStyle = g2; bgCtx.fillRect(0, 0, W, H);
 
-    for (const s of stars) {
-      s.x += s.vx;
-      s.y += s.vy;
-      if (s.y < -10) { s.y = H + 10; s.x = Math.random() * W; }
-      if (s.x < -10) s.x = W + 10;
-      if (s.x > W + 10) s.x = -10;
-      bgCtx.fillStyle = `hsla(${s.hue}, 90%, 72%, ${s.a})`;
-      bgCtx.beginPath();
-      bgCtx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-      bgCtx.fill();
+      for (const s of stars) {
+        s.x += s.vx; s.y += s.vy;
+        if (s.y < -10) { s.y = H + 10; s.x = Math.random() * W; }
+        if (s.x < -10) s.x = W + 10;
+        if (s.x > W + 10) s.x = -10;
+        bgCtx.fillStyle = `hsla(${s.hue}, 90%, 72%, ${s.a})`;
+        bgCtx.beginPath(); bgCtx.arc(s.x, s.y, s.r, 0, Math.PI * 2); bgCtx.fill();
+      }
     }
 
-    // Active FX layer
-    fxCtx.clearRect(0, 0, W, H);
-    for (let i = particles.length - 1; i >= 0; i--) {
-      const p = particles[i];
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vy += p.g;
-      p.life -= p.decay;
-      if (p.life <= 0) { particles.splice(i, 1); continue; }
-      fxCtx.save();
-      fxCtx.globalAlpha = Math.max(0, p.life);
-      fxCtx.fillStyle = p.color;
-      fxCtx.shadowColor = p.color;
-      fxCtx.shadowBlur = 10;
-      fxCtx.beginPath();
-      fxCtx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
-      fxCtx.fill();
-      fxCtx.restore();
-    }
+    // Skip FX redraw completely when idle!
+    const hasFx = particles.length || trails.length || floats.length;
+    if (hasFx || fxDirty) {
+      fxCtx.clearRect(0, 0, W, H);
+      fxDirty = hasFx > 0;
 
-    for (let i = trails.length - 1; i >= 0; i--) {
-      const tr = trails[i];
-      tr.life -= 0.06;
-      if (tr.life <= 0) { trails.splice(i, 1); continue; }
-      fxCtx.save();
-      fxCtx.globalAlpha = tr.life;
-      fxCtx.strokeStyle = tr.color;
-      fxCtx.lineWidth = 6 * tr.life;
-      fxCtx.lineCap = "round";
-      fxCtx.shadowColor = tr.color;
-      fxCtx.shadowBlur = 18;
-      fxCtx.beginPath();
-      tr.pts.forEach((pt, idx) => idx === 0 ? fxCtx.moveTo(pt.x, pt.y) : fxCtx.lineTo(pt.x, pt.y));
-      fxCtx.stroke();
-      fxCtx.restore();
-    }
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx; p.y += p.vy; p.vy += p.g; p.life -= p.decay;
+        if (p.life <= 0) { particles.splice(i, 1); continue; }
+        fxCtx.save();
+        fxCtx.globalAlpha = Math.max(0, p.life);
+        fxCtx.fillStyle = p.color; fxCtx.shadowColor = p.color; fxCtx.shadowBlur = 10;
+        fxCtx.beginPath(); fxCtx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2); fxCtx.fill();
+        fxCtx.restore();
+      }
 
-    for (let i = floats.length - 1; i >= 0; i--) {
-      const f = floats[i];
-      f.y -= 1.3;
-      f.life -= 0.022;
-      if (f.life <= 0) { floats.splice(i, 1); continue; }
-      fxCtx.save();
-      fxCtx.globalAlpha = Math.min(1, f.life * 1.4);
-      fxCtx.font = "700 20px 'Google Sans', sans-serif";
-      fxCtx.textAlign = "center";
-      fxCtx.fillStyle = f.color;
-      fxCtx.shadowColor = "rgba(0,0,0,0.85)";
-      fxCtx.shadowBlur = 8;
-      fxCtx.fillText(f.text, f.x, f.y);
-      fxCtx.restore();
+      for (let i = trails.length - 1; i >= 0; i--) {
+        const tr = trails[i];
+        tr.life -= 0.055;
+        if (tr.life <= 0) { trails.splice(i, 1); continue; }
+        fxCtx.save();
+        fxCtx.globalAlpha = tr.life;
+        fxCtx.strokeStyle = tr.color;
+        fxCtx.lineWidth = (tr.width || 6) * tr.life;
+        fxCtx.lineCap = "round";
+        fxCtx.shadowColor = tr.color; fxCtx.shadowBlur = 18;
+        fxCtx.beginPath();
+        tr.pts.forEach((pt, idx) => idx === 0 ? fxCtx.moveTo(pt.x, pt.y) : fxCtx.lineTo(pt.x, pt.y));
+        fxCtx.stroke();
+        fxCtx.restore();
+      }
+
+      for (let i = floats.length - 1; i >= 0; i--) {
+        const f = floats[i];
+        f.y -= 1.3; f.life -= 0.022;
+        if (f.life <= 0) { floats.splice(i, 1); continue; }
+        fxCtx.save();
+        fxCtx.globalAlpha = Math.min(1, f.life * 1.4);
+        fxCtx.font = "700 20px 'Google Sans', sans-serif";
+        fxCtx.textAlign = "center";
+        fxCtx.fillStyle = f.color;
+        fxCtx.shadowColor = "rgba(0,0,0,0.85)"; fxCtx.shadowBlur = 8;
+        fxCtx.fillText(f.text, f.x, f.y);
+        fxCtx.restore();
+      }
     }
     requestAnimationFrame(loop);
   }
@@ -209,18 +321,13 @@ const FX = (() => {
 
   return {
     burst(x, y, color = "#38bdf8", count = 26) {
+      fxDirty = true;
       for (let i = 0; i < count; i++) {
         const ang = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.4;
         const spd = 2.4 + Math.random() * 6.5;
         particles.push({
-          x, y,
-          vx: Math.cos(ang) * spd,
-          vy: Math.sin(ang) * spd - 1.5,
-          g: 0.14,
-          r: 2.5 + Math.random() * 4,
-          color,
-          life: 1,
-          decay: 0.02 + Math.random() * 0.02,
+          x, y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd - 1.5,
+          g: 0.14, r: 2.5 + Math.random() * 4, color, life: 1, decay: 0.02 + Math.random() * 0.02,
         });
       }
     },
@@ -229,10 +336,11 @@ const FX = (() => {
       const r = el.getBoundingClientRect();
       this.burst(r.left + r.width / 2, r.top + r.height / 2, color, count);
     },
-    slash(pts, color = "#38bdf8") {
-      if (pts.length >= 2) trails.push({ pts: pts.slice(), color, life: 1 });
+    slash(pts, color = "#38bdf8", width = 6) {
+      if (pts.length >= 2) { fxDirty = true; trails.push({ pts: pts.slice(), color, width, life: 1 }); }
     },
     floatText(x, y, text, color = "#facc15") {
+      fxDirty = true;
       floats.push({ x, y, text, color, life: 1 });
     },
     floatEl(el, text, color = "#facc15") {
@@ -243,27 +351,69 @@ const FX = (() => {
   };
 })();
 
-// --------------------------------------------------------------------------- Global Arcade State & Lifecycle
+// --------------------------------------------------------------------------- Global State, Anti-AFK Clock & Safe Timers
 
 const App = {
   hubData: null,
   currentGameId: null,
   cleanups: [],
+  timers: new Set(),
   score: 0,
   combo: 0,
-  startedAt: 0,
+  penDetected: false,   // Persists across all games & rounds on Lenovo Yoga!
+  forgeUsePen: false,   // Remembers Yoga Pen tab choice across words in Word Forge!
+  activeSeconds: 0,
+  stepStartedAt: 0,
+  hiddenAt: 0,
 };
 
+document.addEventListener("visibilitychange", () => {
+  if (!App.currentGameId) return;
+  if (document.hidden) {
+    App.hiddenAt = performance.now();
+  } else if (App.hiddenAt) {
+    const pausedMs = performance.now() - App.hiddenAt;
+    App.stepStartedAt += pausedMs;
+    App.hiddenAt = 0;
+  }
+});
+
+function beginStepClock() {
+  App.stepStartedAt = performance.now();
+  App.hiddenAt = 0;
+}
+
+function commitStepClock(capSeconds = 40) {
+  if (!App.stepStartedAt) return;
+  const now = document.hidden && App.hiddenAt ? App.hiddenAt : performance.now();
+  const dt = Math.max(0, (now - App.stepStartedAt) / 1000);
+  App.activeSeconds += Math.min(capSeconds, dt);
+  App.stepStartedAt = performance.now();
+}
+
 function addCleanup(fn) { App.cleanups.push(fn); }
+function safeTimeout(fn, ms) {
+  const id = setTimeout(() => {
+    App.timers.delete(id);
+    fn();
+  }, ms);
+  App.timers.add(id);
+  return id;
+}
+
 function runCleanups() {
+  VOICE.stop();
+  for (const id of App.timers) clearTimeout(id);
+  App.timers.clear();
   while (App.cleanups.length) {
     try { App.cleanups.pop()(); } catch (_) {}
   }
 }
 
-function setHud({ visible = false, step = 1, total = 6, score = 0, combo = 0, title = "Skill Arcade" }) {
+function setHud({ visible = false, step = 1, total = 6, score = 0, combo = 0, title = "Skill Arcade", aiPack = false }) {
   $("saHudCenter").hidden = !visible;
-  $("saBrandTitle").innerHTML = `<span class="sa-brand-dot"></span><span>${esc(title)}</span>`;
+  const aiChip = aiPack ? ` <span class="sa-tag" style="color:#e9d5ff;background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.45)">✨ AI Pack</span>` : "";
+  $("saBrandTitle").innerHTML = `<span class="sa-brand-dot"></span><span>${esc(title)}</span>${aiChip}`;
   $("saBackBtn").textContent = visible ? "← All 6 Games" : (IS_EMBEDDED ? "← Return to Tutor" : "← Back to Studio");
   if (!visible) return;
   const pct = Math.max(0, Math.min(100, (step / Math.max(1, total)) * 100));
@@ -317,6 +467,15 @@ function renderBankPill(arc) {
 
 // --------------------------------------------------------------------------- Hub Loading & Rendering
 
+const BANK_UNIT_LABEL = {
+  sentence_surgery: "cases",
+  word_forge: "words",
+  homophone_asteroids: "waves",
+  sentence_stretch: "labs",
+  typing_arena: "laps",
+  clue_detective: "cases",
+};
+
 async function loadHub() {
   runCleanups();
   App.currentGameId = null;
@@ -325,8 +484,22 @@ async function loadHub() {
   $("saHubView").hidden = false;
   setHud({ visible: false, title: "Skill Arcade" });
 
-  const r = await fetch(`/api/skill-games/hub?sandbox=${IS_SANDBOX ? 1 : 0}`);
-  const d = await r.json();
+  let d;
+  try {
+    const r = await fetch(`/api/skill-games/hub?sandbox=${IS_SANDBOX ? 1 : 0}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    d = await r.json();
+  } catch (e) {
+    $("saGameGrid").innerHTML = `
+      <div class="sa-panel" style="grid-column:1/-1;text-align:center;padding:28px">
+        <div style="font-size:1.1rem;font-weight:700;margin-bottom:8px">Couldn’t load Skill Arcade right now</div>
+        <div style="color:var(--muted);margin-bottom:14px">Make sure Gemini Tutor is running locally, then tap Retry.</div>
+        <button type="button" class="sa-btn primary" id="saHubRetryBtn">Retry Loading</button>
+      </div>`;
+    const rb = $("saHubRetryBtn");
+    if (rb) rb.onclick = () => loadHub();
+    return;
+  }
   App.hubData = d;
 
   $("saSandboxTag").hidden = !IS_SANDBOX;
@@ -341,9 +514,10 @@ async function loadHub() {
 
   $("saGameGrid").innerHTML = d.games.map((g) => {
     const stars = [1, 2, 3].map((n) => `<span class="${g.mastery_stars >= n ? "" : "off"}">★</span>`).join("");
+    const unit = BANK_UNIT_LABEL[g.id] || "items";
     const best = g.id === "typing_arena" && g.best_wpm > 0
       ? `Best: ${g.best_wpm} WPM`
-      : (g.best_score > 0 ? `Best: ${g.best_score} pts (${g.best_accuracy}%)` : g.est_minutes);
+      : (g.best_score > 0 ? `${g.best_score} pts (${g.best_accuracy}%)` : `${g.bank_size} ${unit}`);
     return `
       <button type="button" class="sa-card ${g.recommended ? "recommended" : ""}" data-launch="${esc(g.id)}"
         style="--card-accent:${g.accent};--card-glow:${g.glow}">
@@ -357,7 +531,7 @@ async function loadHub() {
         <div class="sa-card-tags">${(g.skill_badges || []).map((b) => `<span class="sa-tag">${esc(b)}</span>`).join("")}</div>
         <div class="sa-card-foot">
           <span>${esc(g.controls)}</span>
-          <span style="display:flex;align-items:center;gap:8px"><span class="sa-stars">${stars}</span><span>${esc(best)}</span></span>
+          <span class="sa-card-foot-right"><span class="sa-stars">${stars}</span><span>${esc(best)}</span></span>
         </div>
       </button>`;
   }).join("");
@@ -372,7 +546,8 @@ async function startGame(gameId, useAi = false) {
   App.currentGameId = gameId;
   App.score = 0;
   App.combo = 0;
-  App.startedAt = performance.now();
+  App.activeSeconds = 0;
+  beginStepClock();
 
   $("saSummaryModal").hidden = true;
   $("saLoadingText").textContent = useAi
@@ -386,12 +561,13 @@ async function startGame(gameId, useAi = false) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ game_id: gameId, use_ai: useAi, sandbox: IS_SANDBOX ? 1 : 0 }),
     });
+    if (!r.ok) throw new Error(await r.text());
     const pack = await r.json();
     $("saLoading").hidden = true;
     $("saHubView").hidden = true;
     $("saGameStage").hidden = false;
     $("saGameStage").innerHTML = "";
-    setHud({ visible: true, step: 1, total: pack.items.length, score: 0, combo: 0, title: pack.game.title });
+    setHud({ visible: true, step: 1, total: pack.items.length, score: 0, combo: 0, title: pack.game.title, aiPack: !!pack.ai_generated });
 
     if (gameId === "sentence_surgery") runSentenceSurgery(pack);
     else if (gameId === "word_forge") runWordForge(pack);
@@ -407,14 +583,16 @@ async function startGame(gameId, useAi = false) {
 }
 
 async function finishGame(result) {
+  commitStepClock(40);
+  const gameId = App.currentGameId;
   runCleanups();
-  const elapsedSec = Math.max(5, Math.round((performance.now() - App.startedAt) / 1000));
+  const activeSec = Math.max(5, Math.round(result.active_seconds || App.activeSeconds));
   const payload = {
-    game_id: App.currentGameId,
+    game_id: gameId,
     score: App.score,
     correct: result.correct,
     total: result.total,
-    active_seconds: elapsedSec,
+    active_seconds: activeSec,
     wpm: result.wpm || 0,
     cpm: result.cpm || 0,
     production_passed: !!result.production_passed,
@@ -424,29 +602,43 @@ async function finishGame(result) {
     sandbox: IS_SANDBOX ? 1 : 0,
   };
 
-  const r = await fetch("/api/skill-games/complete", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const d = await r.json();
-  SFX.victory();
-  FX.burst(window.innerWidth * 0.5, window.innerHeight * 0.3, "#facc15", 45);
-  FX.burst(window.innerWidth * 0.35, window.innerHeight * 0.35, "#38bdf8", 32);
-  FX.burst(window.innerWidth * 0.65, window.innerHeight * 0.35, "#10b981", 32);
+  let d;
+  try {
+    const r = await fetch("/api/skill-games/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    d = await r.json();
+  } catch (err) {
+    d = { ok: false, stars: 0, accuracy: Math.round((100 * payload.correct) / Math.max(1, payload.total)), score: payload.score, srs_updates: [], skills_boosted: [], mastery_tier: 1, arcade_reward: null };
+  }
 
-  renderBankPill(d.arcade);
+  // Honest fanfare: celebrate big on real >= 65% passes; calm encouraging wrap-up on warm-up misses!
+  if (d.accuracy >= 65) {
+    SFX.victory();
+    FX.burst(window.innerWidth * 0.5, window.innerHeight * 0.3, "#facc15", 45);
+    FX.burst(window.innerWidth * 0.32, window.innerHeight * 0.35, "#38bdf8", 32);
+    FX.burst(window.innerWidth * 0.68, window.innerHeight * 0.35, "#10b981", 32);
+  } else {
+    SFX.ok();
+  }
+
+  if (d.arcade) renderBankPill(d.arcade);
   if (IS_EMBEDDED) {
     try { window.parent.postMessage({ __skillArcadeUpdated: d }, "*"); } catch (_) {}
   }
 
   const stars = [1, 2, 3].map((n) => `<span style="opacity:${d.stars >= n ? 1 : 0.22}">★</span>`).join("");
   $("saSumStars").innerHTML = stars;
-  $("saSumTitle").textContent = d.stars === 3 ? "Flawless Mastery!" : (d.stars === 2 ? "Strong Mission!" : "Good Practice Run!");
+  $("saSumTitle").textContent = d.stars === 3
+    ? "Flawless Mastery!"
+    : (d.stars === 2 ? "Strong Mission!" : (d.accuracy >= 65 ? "Good Practice Run!" : "Warm-Up Complete — Aim for 65%+!"));
 
   const m3 = payload.wpm > 0
     ? `<div class="sa-sum-metric"><div class="v">${payload.wpm} WPM</div><div class="k">Speed</div></div>`
-    : `<div class="sa-sum-metric"><div class="v">${payload.correct}/${payload.total}</div><div class="k">Hits</div></div>`;
+    : `<div class="sa-sum-metric"><div class="v">${payload.correct}/${payload.total}</div><div class="k">First-Try Hits</div></div>`;
   $("saSumMetrics").innerHTML = `
     <div class="sa-sum-metric"><div class="v">${d.score}</div><div class="k">Score</div></div>
     <div class="sa-sum-metric"><div class="v">${d.accuracy}%</div><div class="k">Accuracy</div></div>
@@ -472,16 +664,18 @@ async function finishGame(result) {
     lines.push(`<div>✍️ <b>Your Boss Sentence:</b> “${esc(payload.production_sentence)}”</div>`);
   }
   if (!lines.length) {
-    lines.push(`<div>📊 Progress saved to your Ontario Grade 3–4 Report Card (Tier ${d.mastery_tier}).</div>`);
+    lines.push(d.accuracy >= 65
+      ? `<div>📊 Progress saved to your Ontario Grade 3–4 Report Card (Tier ${d.mastery_tier}).</div>`
+      : `<div>💡 Hit 65%+ accuracy on your next run to boost Ontario Report Card skills and bank game minutes!</div>`);
   }
   $("saSumDetails").innerHTML = lines.join("");
 
-  $("saPlayAiBtn").hidden = !(App.hubData?.ai_available && ["homophone_asteroids", "typing_arena", "sentence_stretch", "clue_detective"].includes(App.currentGameId));
+  $("saPlayAiBtn").hidden = !App.hubData?.ai_available;
   $("saSummaryModal").hidden = false;
 }
 
 // ===========================================================================
-// GAME 1: ⚔️ SENTENCE SURGERY (Stylus Slash Run-Ons + Fragments + Dialogue)
+// GAME 1: ⚔️ SENTENCE SURGERY (2x DPR Cyber Bay + True Segment-Intersect Stylus Slash & Tap!)
 // ===========================================================================
 
 function runSentenceSurgery(pack) {
@@ -489,7 +683,90 @@ function runSentenceSurgery(pack) {
   const items = pack.items;
   let idx = 0;
   let correct = 0;
+  let repairedCases = 0;
+  let caseHealthy = false;
+  let laserFlash = 0;
   const skillHits = {};
+
+  stage.innerHTML = `
+    <div class="sa-scene-wrap" style="border-color:rgba(56,189,248,0.4)"><canvas id="ssSceneCv"></canvas></div>
+    <div id="ssStepHost" style="display:flex;flex-direction:column;gap:12px"></div>`;
+
+  const scv = $("ssSceneCv");
+  const sctx = scv.getContext("2d");
+  let active = true;
+  let rafId = 0;
+  let t0 = 0;
+
+  function drawCyberBay() {
+    if (!active) return;
+    const { W, H } = fitCanvas(scv, sctx, 300, 110);
+    t0 += 0.04;
+
+    const bgG = sctx.createLinearGradient(0, 0, 0, H);
+    bgG.addColorStop(0, "#050b18"); bgG.addColorStop(1, "#0a172c");
+    sctx.fillStyle = bgG; sctx.fillRect(0, 0, W, H);
+
+    sctx.strokeStyle = "rgba(56, 189, 248, 0.09)";
+    sctx.lineWidth = 1;
+    const stepG = 28;
+    const offX = (t0 * 10) % stepG;
+    for (let x = -offX; x < W; x += stepG) { sctx.beginPath(); sctx.moveTo(x, 0); sctx.lineTo(x, H); sctx.stroke(); }
+    for (let y = 0; y < H; y += stepG) { sctx.beginPath(); sctx.moveTo(0, y); sctx.lineTo(W, y); sctx.stroke(); }
+
+    // Crisp 2x DPR Sentence Integrity EKG Waveform
+    sctx.save();
+    const waveColor = caseHealthy ? "#10b981" : "#fb7185";
+    sctx.strokeStyle = waveColor; sctx.shadowColor = waveColor; sctx.shadowBlur = 12; sctx.lineWidth = 2.4;
+    sctx.beginPath();
+    for (let x = 20; x < W - 20; x += 5) {
+      const p = x * 0.03 - t0 * 2.4;
+      const y = caseHealthy
+        ? H * 0.58 + Math.sin(p) * 13
+        : H * 0.58 + Math.sin(p * 1.9) * 10 + ((Math.sin(p * 7.3) > 0.85) ? -20 : 0);
+      if (x === 20) sctx.moveTo(x, y); else sctx.lineTo(x, y);
+    }
+    sctx.stroke();
+    sctx.restore();
+
+    // Overhead Laser Scalpel Arm
+    const armX = W * 0.5 + Math.sin(t0 * 0.9) * (W * 0.24);
+    sctx.save();
+    sctx.fillStyle = "#1e293b"; sctx.strokeStyle = "#38bdf8"; sctx.lineWidth = 2;
+    sctx.fillRect(armX - 18, 0, 36, 22); sctx.strokeRect(armX - 18, 0, 36, 22);
+    sctx.beginPath(); sctx.moveTo(armX - 10, 22); sctx.lineTo(armX + 10, 22); sctx.lineTo(armX, 38); sctx.closePath();
+    sctx.fillStyle = "#38bdf8"; sctx.fill();
+
+    if (laserFlash > 0.04) {
+      sctx.strokeStyle = `rgba(56, 189, 248, ${laserFlash})`;
+      sctx.shadowColor = "#38bdf8"; sctx.shadowBlur = 24; sctx.lineWidth = 8 * laserFlash;
+      sctx.beginPath(); sctx.moveTo(armX, 38); sctx.lineTo(W * 0.5, H); sctx.stroke();
+    }
+    sctx.restore();
+
+    sctx.font = "700 12px 'JetBrains Mono', monospace";
+    sctx.fillStyle = caseHealthy ? "#6ee7b7" : "#fda4af";
+    sctx.textAlign = "left";
+    sctx.fillText(caseHealthy ? "STATUS: SYNTAX STABILIZED ✓" : "STATUS: SYNTAX FAULT DETECTED", 18, 22);
+
+    sctx.textAlign = "right";
+    sctx.fillStyle = "#7dd3fc";
+    sctx.fillText(`REPAIRED: ${repairedCases} / ${items.length}`, W - 18, 22);
+
+    for (let i = 0; i < items.length; i++) {
+      const cx = W - 18 - (items.length - 1 - i) * 20;
+      sctx.fillStyle = i < repairedCases ? "#10b981" : "rgba(148,163,184,0.25)";
+      sctx.beginPath(); sctx.arc(cx - 5, 38, 5.5, 0, Math.PI * 2); sctx.fill();
+    }
+
+    laserFlash *= 0.88;
+    rafId = requestAnimationFrame(drawCyberBay);
+  }
+  rafId = requestAnimationFrame(drawCyberBay);
+  addCleanup(() => { active = false; cancelAnimationFrame(rafId); });
+
+  let stepCleanup = null;
+  addCleanup(() => { if (stepCleanup) { stepCleanup(); stepCleanup = null; } });
 
   function trackSkill(sid, ok) {
     skillHits[sid] = skillHits[sid] || { correct: 0, total: 0 };
@@ -498,19 +775,29 @@ function runSentenceSurgery(pack) {
   }
 
   function renderStep() {
+    VOICE.stop();
+    if (stepCleanup) { stepCleanup(); stepCleanup = null; }
     if (idx >= items.length) {
-      finishGame({ correct, total: items.length, skill_hits: skillHits, production_passed: true });
+      finishGame({ correct, total: items.length, skill_hits: skillHits, production_passed: false });
       return;
     }
+    beginStepClock();
+    caseHealthy = false;
     const it = items[idx];
-    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Sentence Surgery" });
+    const host = $("ssStepHost");
+    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Sentence Surgery", aiPack: !!pack.ai_generated });
+
+    // Clean TTS: Mechanics mode reads the fixed natural English sentence so contractions sound right ("didn't", not "didnt")!
+    const spokenSample = it.mode === "runon"
+      ? it.words.join(" ")
+      : (it.mode === "fragment" ? it.broken : it.tokens.map((t) => t.fix).join(" "));
 
     if (it.mode === "runon") {
-      stage.innerHTML = `
+      host.innerHTML = `
         <div class="sa-panel">
           <div class="sa-mission-banner">
-            <span class="sa-mission-tag">✂️ STYLUS SLASH · RUN-ON REPAIR</span>
-            <span class="sa-tag">Swipe your Lenovo pen or tap a glowing gap!</span>
+            <span class="sa-mission-tag">✂️ STYLUS LASER SLASH · RUN-ON REPAIR</span>
+            <button type="button" class="sa-speak-btn" id="ssSpeakBtn">🔊 Read Sentence</button>
           </div>
           <div class="sa-prompt-text">${esc(it.prompt)}</div>
         </div>
@@ -518,9 +805,12 @@ function runSentenceSurgery(pack) {
           <canvas class="ss-slash-canvas" id="ssSlashCanvas"></canvas>
           <div class="ss-word-row" id="ssWordRow"></div>
         </div>
-        <div class="sa-feedback idle" id="ssFb">Drag a slash right across the spot where Sentence 1 ends and Sentence 2 begins!</div>`;
+        <div class="sa-feedback idle" id="ssFb"><span class="sa-fb-msg">Drag your Lenovo pen (or mouse) right across the gap between Sentence 1 and Sentence 2 — or tap any glowing divider!</span></div>`;
+
+      $("ssSpeakBtn").onclick = () => VOICE.speak(spokenSample, { force: true });
 
       const row = $("ssWordRow");
+      const gapEls = [];
       it.words.forEach((w, wi) => {
         const sp = document.createElement("span");
         sp.className = "ss-word";
@@ -528,14 +818,12 @@ function runSentenceSurgery(pack) {
         sp.dataset.wi = wi;
         row.appendChild(sp);
         if (wi < it.words.length - 1) {
-          const gap = document.createElement("button");
-          gap.type = "button";
+          const gap = document.createElement("span");
           gap.className = "ss-gap";
           gap.dataset.gap = wi;
-          gap.title = "Slash or tap here";
           gap.textContent = "┆";
-          gap.onclick = () => checkSlice(wi, gap);
           row.appendChild(gap);
+          gapEls.push(gap);
         }
       });
 
@@ -546,9 +834,18 @@ function runSentenceSurgery(pack) {
         if (locked) return;
         if (gapIdx === it.split_after) {
           locked = true;
+          commitStepClock(40);
+          caseHealthy = true;
+          repairedCases += 1;
+          laserFlash = 1.0;
           SFX.slice();
+          gapEl.classList.remove("hot");
           gapEl.classList.add("sliced");
-          gapEl.textContent = ". |";
+          gapEl.textContent = ".  |";
+          row.querySelectorAll(".ss-word").forEach((el) => {
+            const wi = Number(el.dataset.wi);
+            el.style.transform = wi <= gapIdx ? "translateX(-8px)" : "translateX(8px)";
+          });
           const nextWord = row.querySelector(`[data-wi="${gapIdx + 1}"]`);
           if (nextWord) {
             nextWord.textContent = nextWord.textContent.charAt(0).toUpperCase() + nextWord.textContent.slice(1);
@@ -558,109 +855,130 @@ function runSentenceSurgery(pack) {
           if (!missed) correct += 1;
           trackSkill(it.skill, !missed);
           addPoints(missed ? 60 : 120, gapEl, "#38bdf8");
-          const fb = $("ssFb");
-          fb.className = "sa-feedback ok";
-          fb.innerHTML = `<span>✂️ <b>Clean slice!</b> ${esc(it.fixed)} — ${esc(it.explain)}</span><button type="button" class="sa-btn emerald" id="ssNextBtn">Next →</button>`;
-          $("ssNextBtn").onclick = () => { idx += 1; renderStep(); };
+          setFeedback($("ssFb"), "ok", `✂️ <b>Clean laser slice!</b> ${esc(it.fixed)} — ${esc(it.explain)}`, {
+            id: "ssNextBtn", label: "Next Case →", onClick: () => { idx += 1; renderStep(); },
+          });
         } else {
           missed = true;
           resetCombo();
           SFX.bad();
           gapEl.style.borderColor = "#fb7185";
-          setTimeout(() => { gapEl.style.borderColor = ""; }, 400);
-          const fb = $("ssFb");
-          fb.className = "sa-feedback bad";
-          fb.textContent = "Not quite there — read the first part out loud to hear where the first complete thought finishes!";
+          safeTimeout(() => { gapEl.style.borderColor = ""; }, 420);
+          setFeedback($("ssFb"), "bad", "Not quite there — tap <b>🔊 Read Sentence</b> to hear where the first complete thought finishes!");
         }
       }
 
-      // Wire real PointerEvent stylus / mouse slash gesture across the arena!
       const arena = $("ssArena");
       const cv = $("ssSlashCanvas");
       const c2 = cv.getContext("2d");
-      function sizeCv() {
-        const r = arena.getBoundingClientRect();
-        cv.width = Math.max(1, Math.floor(r.width));
-        cv.height = Math.max(1, Math.floor(r.height));
-      }
-      sizeCv();
-      let drawing = false;
+      let dims = fitCanvas(cv, c2, 240, 80);
+      const ro = new ResizeObserver(() => { dims = fitCanvas(cv, c2, 240, 80); });
+      ro.observe(arena);
+      stepCleanup = () => ro.disconnect();
+
+      let activePid = null;
       let pts = [];
       let screenPts = [];
 
-      const onDown = (e) => {
+      const findHoveredGap = (cx, cy) => {
+        let best = null, bestD = 32;
+        for (const g of gapEls) {
+          const gr = g.getBoundingClientRect();
+          const gx = gr.left + gr.width / 2, gy = gr.top + gr.height / 2;
+          const d = Math.hypot(cx - gx, cy - gy);
+          if (d < bestD) { bestD = d; best = g; }
+        }
+        return best;
+      };
+
+      cv.addEventListener("pointerdown", (e) => {
         if (locked) return;
-        drawing = true;
+        if (e.pointerType === "pen") App.penDetected = true;
+        if (App.penDetected && e.pointerType === "touch") return; // Palm rejection
+        if (activePid !== null) return;
+        activePid = e.pointerId;
+        cv.setPointerCapture?.(e.pointerId);
         const r = arena.getBoundingClientRect();
         pts = [{ x: e.clientX - r.left, y: e.clientY - r.top }];
         screenPts = [{ x: e.clientX, y: e.clientY }];
-        cv.setPointerCapture?.(e.pointerId);
-      };
-      const onMove = (e) => {
-        if (!drawing || locked) return;
+      });
+
+      cv.addEventListener("pointermove", (e) => {
+        if (locked) return;
+        // Hover highlight for mouse/stylus before pressing
+        if (activePid === null) {
+          const hg = findHoveredGap(e.clientX, e.clientY);
+          gapEls.forEach((g) => g.classList.toggle("hot", g === hg));
+          return;
+        }
+        if (e.pointerId !== activePid) return;
         const r = arena.getBoundingClientRect();
         const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
         for (const ev of evts) {
           pts.push({ x: ev.clientX - r.left, y: ev.clientY - r.top });
           screenPts.push({ x: ev.clientX, y: ev.clientY });
         }
-        c2.clearRect(0, 0, cv.width, cv.height);
+        c2.clearRect(0, 0, dims.W, dims.H);
         c2.strokeStyle = "#38bdf8";
-        c2.lineWidth = 4;
-        c2.lineCap = "round";
-        c2.shadowColor = "#38bdf8";
-        c2.shadowBlur = 14;
+        c2.lineWidth = 4.5; c2.lineCap = "round";
+        c2.shadowColor = "#38bdf8"; c2.shadowBlur = 16;
         c2.beginPath();
         pts.forEach((p, i) => i === 0 ? c2.moveTo(p.x, p.y) : c2.lineTo(p.x, p.y));
         c2.stroke();
-      };
-      const onUp = () => {
-        if (!drawing) return;
-        drawing = false;
-        c2.clearRect(0, 0, cv.width, cv.height);
-        if (screenPts.length >= 2) {
-          FX.slash(screenPts, "#38bdf8");
-          // Find which gap bounding box the slash crossed (or tapped closest to)
-          const gaps = [...row.querySelectorAll(".ss-gap")];
-          let bestGap = null;
-          let bestDist = 42;
-          for (const g of gaps) {
-            const gr = g.getBoundingClientRect();
-            const gx = gr.left + gr.width / 2;
-            const gy = gr.top + gr.height / 2;
-            for (const sp of screenPts) {
-              const d = Math.hypot(sp.x - gx, sp.y - gy);
-              if (d < bestDist) { bestDist = d; bestGap = g; }
+      });
+
+      const onUp = (e) => {
+        if (e.pointerId !== activePid) return;
+        activePid = null;
+        c2.clearRect(0, 0, dims.W, dims.H);
+        gapEls.forEach((g) => g.classList.remove("hot"));
+
+        if (screenPts.length >= 1) {
+          let hitGap = null;
+          if (screenPts.length >= 2) {
+            FX.slash(screenPts, "#38bdf8", 7);
+            // Exact geometric line-segment-to-gap-rect intersection so fast stylus slashes NEVER miss!
+            for (let i = 0; i < screenPts.length - 1 && !hitGap; i++) {
+              const p1 = screenPts[i], p2 = screenPts[i + 1];
+              for (const g of gapEls) {
+                if (segmentHitsRect(p1.x, p1.y, p2.x, p2.y, g.getBoundingClientRect(), 8)) {
+                  hitGap = g;
+                  break;
+                }
+              }
             }
           }
-          if (bestGap) checkSlice(Number(bestGap.dataset.gap), bestGap);
+          // Single-tap or near-gap fallback — makes tapping ANY divider work 100% reliably!
+          if (!hitGap) {
+            const last = screenPts[screenPts.length - 1];
+            hitGap = findHoveredGap(last.x, last.y);
+          }
+          if (hitGap) checkSlice(Number(hitGap.dataset.gap), hitGap);
         }
         pts = [];
         screenPts = [];
       };
-
-      cv.addEventListener("pointerdown", onDown);
-      cv.addEventListener("pointermove", onMove);
       cv.addEventListener("pointerup", onUp);
       cv.addEventListener("pointercancel", onUp);
+      cv.addEventListener("pointerleave", () => { if (activePid === null) gapEls.forEach((g) => g.classList.remove("hot")); });
     } else if (it.mode === "fragment") {
-      stage.innerHTML = `
+      host.innerHTML = `
         <div class="sa-panel">
           <div class="sa-mission-banner">
-            <span class="sa-mission-tag">🔧 FRAGMENT CIRCUIT REPAIR</span>
-            <span class="sa-tag">Missing: ${esc(it.missing)}</span>
+            <span class="sa-mission-tag">🔧 FRAGMENT CIRCUIT REPAIR · MISSING ${esc(it.missing)}</span>
+            <button type="button" class="sa-speak-btn" id="ssSpeakBtn">🔊 Read Aloud</button>
           </div>
           <div class="sa-prompt-text">${esc(it.prompt)}</div>
-          <div style="margin-top:14px;padding:16px 18px;border-radius:14px;background:rgba(251,113,133,0.12);border:1.5px dashed #fb7185;font-size:1.25rem;font-weight:700;color:#fecdd3">
+          <div style="margin-top:12px;padding:14px 18px;border-radius:14px;background:rgba(251,113,133,0.12);border:1.5px dashed #fb7185;font-size:1.18rem;font-weight:700;color:#fecdd3">
             ⚠️ “${esc(it.broken)}”
           </div>
         </div>
         <div class="sa-choice-list" id="ssChoices"></div>
-        <div class="sa-feedback idle" id="ssFb">Choose the repair that creates a full Who + Does What sentence!</div>`;
+        <div class="sa-feedback idle" id="ssFb"><span class="sa-fb-msg">Pick the repair module that builds a full Who + Does What sentence!</span></div>`;
 
+      $("ssSpeakBtn").onclick = () => VOICE.speak(spokenSample, { force: true });
       let locked = false;
       let missed = false;
-      const box = $("ssChoices");
       it.choices.forEach((ch) => {
         const b = document.createElement("button");
         b.type = "button";
@@ -670,44 +988,44 @@ function runSentenceSurgery(pack) {
           if (locked) return;
           if (ch.ok) {
             locked = true;
+            commitStepClock(40);
+            caseHealthy = true;
+            repairedCases += 1;
+            laserFlash = 1.0;
             b.classList.add("ok");
             SFX.ok();
             if (!missed) correct += 1;
             trackSkill(it.skill, !missed);
             addPoints(missed ? 60 : 120, b, "#10b981");
-            const fb = $("ssFb");
-            fb.className = "sa-feedback ok";
-            fb.innerHTML = `<span>⚡ <b>Circuit Repaired!</b> ${esc(it.explain)}</span><button type="button" class="sa-btn emerald" id="ssNextBtn">Next →</button>`;
-            $("ssNextBtn").onclick = () => { idx += 1; renderStep(); };
+            setFeedback($("ssFb"), "ok", `⚡ <b>Circuit Repaired!</b> ${esc(it.explain)}`, {
+              id: "ssNextBtn", label: "Next Case →", onClick: () => { idx += 1; renderStep(); },
+            });
           } else {
             missed = true;
             resetCombo();
             b.classList.add("bad");
             SFX.bad();
-            const fb = $("ssFb");
-            fb.className = "sa-feedback bad";
-            fb.textContent = ch.why || "Still a fragment — check who is doing what!";
+            setFeedback($("ssFb"), "bad", esc(ch.why || "Still a fragment — check who is doing what!"));
           }
         };
-        box.appendChild(b);
+        $("ssChoices").appendChild(b);
       });
     } else {
-      // Mechanics / Dialogue token tap repair
       const bugTotal = it.tokens.filter((t) => t.bug).length;
       let bugsFixed = 0;
       let cleanTaps = 0;
-      stage.innerHTML = `
+      host.innerHTML = `
         <div class="sa-panel">
           <div class="sa-mission-banner">
-            <span class="sa-mission-tag">💬 MECHANICS &amp; DIALOGUE STAMP</span>
-            <span class="sa-tag" id="ssBugCount">Bugs left: ${bugTotal}</span>
+            <span class="sa-mission-tag">💬 MECHANICS &amp; DIALOGUE STAMP · <span id="ssBugCount">${bugTotal} BUGS LEFT</span></span>
+            <button type="button" class="sa-speak-btn" id="ssSpeakBtn">🔊 Read Aloud</button>
           </div>
           <div class="sa-prompt-text">${esc(it.prompt)}</div>
         </div>
-        <div class="sa-panel" style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;padding:28px 20px" id="ssTokenWrap"></div>
-        <div class="sa-feedback idle" id="ssFb">Tap each word that needs a capital letter, apostrophe, quotation mark, comma, or end mark!</div>`;
+        <div class="sa-panel" style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;padding:24px 20px" id="ssTokenWrap"></div>
+        <div class="sa-feedback idle" id="ssFb"><span class="sa-fb-msg">Tap each word that needs a capital letter, apostrophe, quotation mark, comma, or end mark!</span></div>`;
 
-      const wrap = $("ssTokenWrap");
+      $("ssSpeakBtn").onclick = () => VOICE.speak(spokenSample, { force: true });
       it.tokens.forEach((tk) => {
         const b = document.createElement("button");
         b.type = "button";
@@ -719,34 +1037,35 @@ function runSentenceSurgery(pack) {
           if (tk.bug) {
             done = true;
             bugsFixed += 1;
+            laserFlash = 0.8;
             b.textContent = tk.fix;
             b.classList.add("fixed");
             SFX.ok();
             addPoints(50, b, "#10b981");
-            $("ssBugCount").textContent = `Bugs left: ${bugTotal - bugsFixed}`;
-            const fb = $("ssFb");
-            fb.className = "sa-feedback ok";
+            $("ssBugCount").textContent = `${bugTotal - bugsFixed} BUG${bugTotal - bugsFixed === 1 ? "" : "S"} LEFT`;
             if (bugsFixed >= bugTotal) {
+              commitStepClock(40);
+              caseHealthy = true;
+              repairedCases += 1;
               const cleanRun = cleanTaps === 0;
               if (cleanRun) correct += 1;
               trackSkill(it.skill, cleanRun);
-              fb.innerHTML = `<span>✅ <b>All bugs stamped!</b> ${esc(it.explain)}</span><button type="button" class="sa-btn emerald" id="ssNextBtn">Next →</button>`;
-              $("ssNextBtn").onclick = () => { idx += 1; renderStep(); };
+              setFeedback($("ssFb"), "ok", `✅ <b>All bugs stamped!</b> ${esc(it.explain)}`, {
+                id: "ssNextBtn", label: "Next Case →", onClick: () => { idx += 1; renderStep(); },
+              });
             } else {
-              fb.textContent = `Fixed! ${tk.hint || ""} (${bugTotal - bugsFixed} bug${bugTotal - bugsFixed === 1 ? "" : "s"} left!)`;
+              setFeedback($("ssFb"), "ok", `Fixed! ${esc(tk.hint || "")} (${bugTotal - bugsFixed} left!)`);
             }
           } else {
             cleanTaps += 1;
             resetCombo();
             SFX.bad();
             b.classList.add("shake");
-            setTimeout(() => b.classList.remove("shake"), 360);
-            const fb = $("ssFb");
-            fb.className = "sa-feedback bad";
-            fb.textContent = `"${tk.raw}" is already clean! Check capitals, contractions, quotes, or the end of the sentence.`;
+            safeTimeout(() => b.classList.remove("shake"), 360);
+            setFeedback($("ssFb"), "bad", `“${esc(tk.raw)}” is already clean! Check capitals, contractions, quotes, commas, or end marks.`);
           }
         };
-        wrap.appendChild(b);
+        $("ssTokenWrap").appendChild(b);
       });
     }
   }
@@ -754,7 +1073,7 @@ function runSentenceSurgery(pack) {
 }
 
 // ===========================================================================
-// GAME 2: 🔥 WORD FORGE (Obsidian Anvil + Morphology + Cover-Copy-Compare SRS)
+// GAME 2: 🔥 WORD FORGE (Right-Side-Up Swinging Hammer + No Spoilers + Yoga Pen!)
 // ===========================================================================
 
 function runWordForge(pack) {
@@ -764,104 +1083,192 @@ function runWordForge(pack) {
   let correct = 0;
   const wordResults = [];
   let forgedCount = 0;
-  let hammerFlash = 0;
+  let hammerPhase = 0;
+  let shake = 0;
+  const forgeSparks = [];
 
   stage.innerHTML = `
     <div class="wf-canvas-wrap"><canvas id="wfCanvas"></canvas></div>
     <div class="sa-panel" id="wfBody"></div>
-    <div class="sa-feedback idle" id="wfFb">Snap the right Prefix + Base + Suffix runes onto the anvil!</div>`;
+    <div class="sa-feedback idle" id="wfFb"><span class="sa-fb-msg">Listen to the sentence, then snap the matching runes onto the anvil!</span></div>`;
 
-  // Animated 60fps Canvas2D Obsidian Forge + Relic Assembly
   const cv = $("wfCanvas");
   const ctx = cv.getContext("2d");
-  const embers = Array.from({ length: 34 }, () => ({
-    x: Math.random(),
-    y: Math.random(),
-    vy: 0.004 + Math.random() * 0.008,
-    r: 1.5 + Math.random() * 2.8,
-    a: 0.4 + Math.random() * 0.6,
+  const embers = Array.from({ length: 38 }, () => ({
+    x: Math.random(), y: Math.random(),
+    vy: 0.004 + Math.random() * 0.008, r: 1.4 + Math.random() * 2.6, a: 0.35 + Math.random() * 0.65,
   }));
   let rafId = 0;
-  function drawForge() {
-    const r = cv.parentElement.getBoundingClientRect();
-    if (cv.width !== Math.floor(r.width) || cv.height !== Math.floor(r.height)) {
-      cv.width = Math.max(1, Math.floor(r.width));
-      cv.height = Math.max(1, Math.floor(r.height));
+  let active = true;
+  let dims = { W: 800, H: 196 };
+
+  function triggerHammerStrike(big = false) {
+    hammerPhase = 1.0;
+    shake = big ? 10 : 5;
+    const { W, H } = dims;
+    const cnt = big ? 48 : 24;
+    for (let i = 0; i < cnt; i++) {
+      const a = -Math.PI * 0.1 - Math.random() * Math.PI * 0.8;
+      const sp = (big ? 4 : 2.5) + Math.random() * (big ? 7.5 : 4.5);
+      forgeSparks.push({
+        x: W * 0.5, y: H - 56,
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: 1, color: i % 3 === 0 ? "#fef08a" : (i % 3 === 1 ? "#fb923c" : "#38bdf8"),
+      });
     }
-    const W = cv.width, H = cv.height;
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, "#0b0914");
-    g.addColorStop(0.65, "#1a0e14");
-    g.addColorStop(1, "#3b130a");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, W, H);
+  }
 
-    // Molten furnace glow
-    const glow = ctx.createRadialGradient(W * 0.5, H * 0.95, 10, W * 0.5, H * 0.95, W * 0.42);
-    glow.addColorStop(0, `rgba(249, 115, 22, ${0.45 + hammerFlash * 0.4})`);
-    glow.addColorStop(1, "transparent");
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, W, H);
+  function drawEnchantedBlade(cx, cy, stages, timeS) {
+    const x0 = cx - 145;
+    ctx.save();
+    // Crisp holographic blueprint silhouette so even stage 0 looks intentional and cool!
+    ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+    ctx.fillStyle = "rgba(56, 189, 248, 0.05)";
+    ctx.setLineDash([5, 5]);
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(x0 + 82, cy - 13); ctx.lineTo(x0 + 270, cy - 13); ctx.lineTo(x0 + 302, cy);
+    ctx.lineTo(x0 + 270, cy + 13); ctx.lineTo(x0 + 82, cy + 13); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.setLineDash([]);
 
-    // Rising embers
-    for (const e of embers) {
-      e.y -= e.vy * (1 + hammerFlash * 3);
-      if (e.y < 0) { e.y = 1.05; e.x = 0.15 + Math.random() * 0.7; }
-      ctx.fillStyle = `rgba(251, 146, 60, ${e.a * e.y})`;
-      ctx.beginPath();
-      ctx.arc(e.x * W, e.y * H, e.r, 0, Math.PI * 2);
-      ctx.fill();
+    if (stages >= 1) {
+      ctx.fillStyle = "#475569"; ctx.strokeStyle = "#cbd5e1"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x0 + 10, cy, 12, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#38bdf8"; ctx.beginPath(); ctx.arc(x0 + 10, cy, 4.5, 0, Math.PI * 2); ctx.fill();
     }
-
-    // Enchanted Diamond Pickaxe / Relic progress segments
-    const segs = items.length;
-    const cx = W * 0.5, cy = H * 0.48;
-    const barW = Math.min(460, W - 80);
-    const sx = cx - barW / 2;
-    ctx.font = "700 13px 'JetBrains Mono', monospace";
-    ctx.fillStyle = "#fdba74";
-    ctx.textAlign = "center";
-    ctx.fillText(`ENCHANTED RELIC FORGE · ${forgedCount} / ${segs} RUNES LOCKED`, cx, 26);
-
-    for (let i = 0; i < segs; i++) {
-      const sw = (barW - (segs - 1) * 10) / segs;
-      const bx = sx + i * (sw + 10);
-      const lit = i < forgedCount;
-      ctx.save();
-      ctx.fillStyle = lit ? "#22d3ee" : "rgba(51, 65, 85, 0.55)";
-      ctx.strokeStyle = lit ? "#a5f3fc" : "rgba(148, 163, 184, 0.3)";
-      ctx.lineWidth = 2;
-      if (lit) { ctx.shadowColor = "#22d3ee"; ctx.shadowBlur = 18; }
+    if (stages >= 2) {
+      ctx.fillStyle = "#78350f"; ctx.strokeStyle = "#d97706"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(x0 + 22, cy - 7, 52, 14, 4); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = "#f59e0b";
+      for (let gx = x0 + 29; gx < x0 + 70; gx += 10) { ctx.beginPath(); ctx.moveTo(gx, cy - 6); ctx.lineTo(gx + 5, cy + 6); ctx.stroke(); }
+    }
+    if (stages >= 3) {
+      ctx.fillStyle = "#f59e0b"; ctx.strokeStyle = "#fef08a"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(x0 + 72, cy - 26, 16, 52, 5); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#10b981"; ctx.shadowColor = "#10b981"; ctx.shadowBlur = 12;
+      ctx.beginPath(); ctx.arc(x0 + 80, cy, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+    if (stages >= 4) {
+      const bg = ctx.createLinearGradient(x0 + 88, cy - 13, x0 + 88, cy + 13);
+      bg.addColorStop(0, "#bae6fd"); bg.addColorStop(0.5, "#38bdf8"); bg.addColorStop(1, "#0284c7");
+      ctx.fillStyle = bg; ctx.strokeStyle = "#e0f2fe"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(x0 + 88, cy - 13, 95, 26, 2); ctx.fill(); ctx.stroke();
+    }
+    if (stages >= 5) {
+      const bg2 = ctx.createLinearGradient(x0 + 183, cy - 13, x0 + 183, cy + 13);
+      bg2.addColorStop(0, "#e0f2fe"); bg2.addColorStop(0.5, "#22d3ee"); bg2.addColorStop(1, "#0369a1");
+      ctx.fillStyle = bg2; ctx.strokeStyle = "#f0f9ff"; ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.roundRect(bx, cy - 18, sw, 36, 10);
-      ctx.fill();
+      ctx.moveTo(x0 + 183, cy - 13); ctx.lineTo(x0 + 268, cy - 13); ctx.lineTo(x0 + 302, cy);
+      ctx.lineTo(x0 + 268, cy + 13); ctx.lineTo(x0 + 183, cy + 13); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
+    if (stages >= 6) {
+      ctx.strokeStyle = `rgba(192, 132, 252, ${0.55 + Math.sin(timeS * 6) * 0.35})`;
+      ctx.shadowColor = "#a855f7"; ctx.shadowBlur = 24; ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(x0 + 86, cy - 16); ctx.lineTo(x0 + 270, cy - 16); ctx.lineTo(x0 + 308, cy);
+      ctx.lineTo(x0 + 270, cy + 16); ctx.lineTo(x0 + 86, cy + 16); ctx.closePath();
       ctx.stroke();
-      ctx.fillStyle = lit ? "#060913" : "#64748b";
-      ctx.font = "700 15px 'Google Sans', sans-serif";
-      ctx.fillText(lit ? "💎" : `${i + 1}`, bx + sw / 2, cy + 5);
+    }
+    ctx.restore();
+  }
+
+  function drawForge() {
+    if (!active) return;
+    dims = fitCanvas(cv, ctx, 300, 160);
+    const { W, H } = dims;
+    const nowS = performance.now() * 0.001;
+    const sx = shake > 0.2 ? (Math.random() - 0.5) * shake : 0;
+    const sy = shake > 0.2 ? (Math.random() - 0.5) * shake : 0;
+    shake *= 0.84;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#0b0813"); g.addColorStop(0.55, "#1d1016"); g.addColorStop(1, "#451408");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.045)"; ctx.lineWidth = 1;
+    for (let row = 0; row < 7; row++) {
+      const y = row * 30; const off = (row % 2) * 30;
+      for (let x = -off; x < W; x += 60) ctx.strokeRect(x, y, 60, 30);
+    }
+
+    const pulse = 0.44 + Math.sin(nowS * 5) * 0.08 + hammerPhase * 0.35;
+    const glow = ctx.createRadialGradient(W * 0.5, H * 0.96, 12, W * 0.5, H * 0.96, W * 0.44);
+    glow.addColorStop(0, `rgba(251, 146, 60, ${Math.min(0.95, pulse)})`);
+    glow.addColorStop(0.5, "rgba(234, 88, 12, 0.22)"); glow.addColorStop(1, "transparent");
+    ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+
+    for (const e of embers) {
+      e.y -= e.vy * (1 + hammerPhase * 2.5);
+      if (e.y < 0) { e.y = 1.05; e.x = 0.1 + Math.random() * 0.8; }
+      ctx.fillStyle = `rgba(253, 186, 116, ${e.a * e.y})`;
+      ctx.beginPath(); ctx.arc(e.x * W, e.y * H, e.r, 0, Math.PI * 2); ctx.fill();
+    }
+
+    ctx.font = "700 12px 'JetBrains Mono', monospace";
+    ctx.fillStyle = "#fdba74"; ctx.textAlign = "center";
+    ctx.fillText(`OBSIDIAN WORD FORGE · ENCHANTED BLADE ${forgedCount}/${items.length}`, W * 0.5, 20);
+
+    drawEnchantedBlade(W * 0.5, H * 0.36, forgedCount, nowS);
+
+    // Anvil + Glowing Hot Metal Ingot Billet on top!
+    const cx = W * 0.5;
+    ctx.save();
+    ctx.fillStyle = "#fb923c"; ctx.shadowColor = "#f97316"; ctx.shadowBlur = 18;
+    ctx.beginPath(); ctx.roundRect(cx - 28, H - 64, 56, 12, 4); ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = "#1e293b";
+    ctx.strokeStyle = hammerPhase > 0.1 ? "#facc15" : "rgba(251, 146, 60, 0.55)";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(cx - 82, H - 8); ctx.lineTo(cx + 82, H - 8);
+    ctx.lineTo(cx + 54, H - 32); ctx.lineTo(cx + 106, H - 52);
+    ctx.lineTo(cx - 98, H - 52); ctx.lineTo(cx - 54, H - 32);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // FIXED HAMMER TRIG: handle extends in -X, so POSITIVE angle lifts the hammer UP above the anvil!
+    // Rest = +0.58 rad (cocked UP in the air), Slam swings DOWN to -0.02 rad right onto the glowing ingot!
+    const restAngle = 0.58;
+    const slamAngle = hammerPhase > 0
+      ? restAngle - Math.sin(hammerPhase * Math.PI) * 0.62
+      : restAngle + Math.sin(nowS * 2.2) * 0.05;
+    ctx.save();
+    ctx.translate(cx + 124, H - 58);
+    ctx.rotate(slamAngle);
+    ctx.fillStyle = "#92400e"; ctx.strokeStyle = "#f59e0b"; ctx.lineWidth = 1.6;
+    ctx.fillRect(-108, -5, 108, 10); ctx.strokeRect(-108, -5, 108, 10);
+    ctx.fillStyle = "#475569"; ctx.strokeStyle = hammerPhase > 0.2 ? "#fef08a" : "#cbd5e1"; ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.roundRect(-128, -22, 34, 44, 5); ctx.fill(); ctx.stroke();
+    ctx.restore();
+
+    for (let i = forgeSparks.length - 1; i >= 0; i--) {
+      const sp = forgeSparks[i];
+      sp.x += sp.vx; sp.y += sp.vy; sp.vy += 0.24; sp.life -= 0.032;
+      if (sp.life <= 0) { forgeSparks.splice(i, 1); continue; }
+      ctx.save();
+      ctx.globalAlpha = sp.life;
+      ctx.fillStyle = sp.color; ctx.shadowColor = sp.color; ctx.shadowBlur = 10;
+      ctx.fillRect(sp.x - 2, sp.y - 2, 4.5, 4.5);
       ctx.restore();
     }
 
-    // Anvil silhouette at bottom
-    ctx.fillStyle = "#1e293b";
-    ctx.beginPath();
-    ctx.moveTo(cx - 80, H - 12);
-    ctx.lineTo(cx + 80, H - 12);
-    ctx.lineTo(cx + 55, H - 34);
-    ctx.lineTo(cx + 95, H - 52);
-    ctx.lineTo(cx - 95, H - 52);
-    ctx.lineTo(cx - 55, H - 34);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = hammerFlash > 0.05 ? "#facc15" : "rgba(249, 115, 22, 0.45)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    hammerFlash *= 0.9;
+    ctx.restore();
+    if (hammerPhase > 0) hammerPhase = Math.max(0, hammerPhase - 0.07);
     rafId = requestAnimationFrame(drawForge);
   }
   rafId = requestAnimationFrame(drawForge);
-  addCleanup(() => cancelAnimationFrame(rafId));
+  addCleanup(() => { active = false; cancelAnimationFrame(rafId); });
+
+  let penCleanup = null;
+  addCleanup(() => { if (penCleanup) { penCleanup(); penCleanup = null; } });
 
   const RULES = [
     { id: "keep", label: "Keep Base Clean" },
@@ -871,16 +1278,20 @@ function runWordForge(pack) {
   ];
 
   function renderWord() {
+    VOICE.stop();
+    if (penCleanup) { penCleanup(); penCleanup = null; }
     if (idx >= items.length) {
       finishGame({ correct, total: items.length, word_results: wordResults, production_passed: true });
       return;
     }
+    beginStepClock();
     const it = items[idx];
-    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Word Forge" });
+    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Word Forge", aiPack: !!pack.ai_generated });
     const body = $("wfBody");
     const fb = $("wfFb");
-    fb.className = "sa-feedback idle";
-    fb.textContent = "Step 1: Snap the glowing morpheme runes together!";
+
+    // Auto-speak the word + context sentence immediately so Step 1 is NEVER blind guessing!
+    VOICE.speak(`${it.word}. ${it.context_sentence || ""}`);
 
     const neededParts = [];
     if (it.prefix) neededParts.push({ part: "prefix", label: "Prefix" });
@@ -891,11 +1302,25 @@ function runWordForge(pack) {
     body.innerHTML = `
       <div class="sa-mission-banner">
         <span class="sa-mission-tag">🔥 ${esc(it.unit)}</span>
-        ${it.from_deck ? `<span class="sa-tag" style="color:#fdba74;border:1px solid rgba(249,115,22,0.4)">Leitner Box ${it.box}/5</span>` : ""}
+        <div style="display:flex;gap:8px;align-items:center">
+          ${it.from_deck ? `<span class="sa-tag" style="color:#fdba74;border:1px solid rgba(249,115,22,0.4)">Leitner Box ${it.box}/5</span>` : ""}
+          <button type="button" class="sa-speak-btn" id="wfHearBtn">🔊 Hear Word</button>
+        </div>
       </div>
+      <div class="wf-context-bar">“${esc(it.blanked_sentence || it.context_sentence || "")}”</div>
       <div class="wf-anvil-slots" id="wfSlots"></div>
       <div class="wf-rune-tray" id="wfTray"></div>
       <div id="wfStep2" hidden></div>`;
+
+    $("wfHearBtn").onclick = () => VOICE.speak(`${it.word}. ${it.context_sentence || ""}`, { force: true });
+
+    // Direct-memory irregular Leitner cards go straight to Memory Forge cleanly
+    if (it.direct_memory || !it.tiles?.length) {
+      showMemoryStrike();
+      return;
+    }
+
+    setFeedback(fb, "idle", "Step 1: Listen to the word & sentence above, then snap the matching runes onto the anvil!");
 
     function drawSlots() {
       $("wfSlots").innerHTML = neededParts.map((p, pi) => {
@@ -905,7 +1330,7 @@ function runWordForge(pack) {
     }
     drawSlots();
 
-    const tray = $("wfTray");
+    const runeBtns = [];
     it.tiles.forEach((tile) => {
       const b = document.createElement("button");
       b.type = "button";
@@ -916,36 +1341,37 @@ function runWordForge(pack) {
           resetCombo();
           SFX.bad();
           b.style.borderColor = "#fb7185";
-          fb.className = "sa-feedback bad";
-          fb.textContent = `Not '${tile.text}' — look at the other ${tile.part} rune!`;
+          setFeedback(fb, "bad", `Not '${esc(tile.text)}' — tap <b>🔊 Hear Word</b> and pick the matching ${esc(tile.part)} rune!`);
           return;
         }
         filled[tile.part] = tile.text;
         b.classList.add("used");
         SFX.hammer();
-        hammerFlash = 0.7;
+        triggerHammerStrike(false);
         FX.burstEl(b, "#f97316", 16);
         drawSlots();
         if (neededParts.every((p) => filled[p.part])) {
+          // Disable all remaining distractor runes immediately!
+          runeBtns.forEach((rb) => { rb.disabled = true; rb.classList.add("used"); });
           showRulePick();
         }
       };
-      tray.appendChild(b);
+      runeBtns.push(b);
+      $("wfTray").appendChild(b);
     });
 
     function showRulePick() {
       const s2 = $("wfStep2");
       s2.hidden = false;
-      fb.className = "sa-feedback idle";
-      fb.textContent = "Step 2: Which spelling rule fuses these runes?";
+      setFeedback(fb, "idle", "Step 2: Which spelling rule fuses these runes?");
       s2.innerHTML = `
-        <div style="text-align:center;font-weight:600;color:#fed7aa;margin-bottom:8px">Choose the Forge Rule before we drop the furnace shield:</div>
+        <div style="text-align:center;font-weight:600;color:#fed7aa;margin-bottom:8px">Choose the Forge Rule before the furnace shutter drops:</div>
         <div class="wf-rule-row" id="wfRuleRow"></div>`;
       RULES.forEach((rl) => {
         const rb = document.createElement("button");
         rb.type = "button";
         rb.className = "sa-btn ghost";
-        rb.style.padding = "12px";
+        rb.style.padding = "11px";
         rb.textContent = rl.label;
         rb.onclick = () => {
           if (rl.id === it.rule) {
@@ -956,8 +1382,7 @@ function runWordForge(pack) {
             resetCombo();
             SFX.bad();
             rb.style.borderColor = "#fb7185";
-            fb.className = "sa-feedback bad";
-            fb.textContent = `Hint: ${it.note}`;
+            setFeedback(fb, "bad", esc(it.memory_hint || "Check how the base word ends before adding this suffix!"));
           }
         };
         $("wfRuleRow").appendChild(rb);
@@ -965,45 +1390,87 @@ function runWordForge(pack) {
     }
 
     function showMemoryStrike() {
-      // Cover-Copy-Compare: hide the runes and spell the fused word from memory!
       $("wfSlots").hidden = true;
       $("wfTray").hidden = true;
+      const canPen = !!App.hubData?.ai_available;
+      const startInPen = canPen && App.forgeUsePen;
       const s2 = $("wfStep2");
+      s2.hidden = false;
+      // ZERO SPOILERS: show non-spoiling `memory_hint`, NEVER `it.note` until AFTER forging!
       s2.innerHTML = `
-        <div class="wf-memory-box">
-          <div style="font-weight:700;color:#fdba74">🔒 MEMORY FORGE — Runes Hidden!</div>
-          <div style="font-size:0.9rem;color:#cbd5e1;text-align:center">${esc(it.note)}</div>
-          <input type="text" id="wfMemInput" class="wf-input" placeholder="Type fused word…" autocomplete="off" spellcheck="false" />
+        <div class="wf-memory-box" style="padding:14px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center">
+            <span style="font-weight:700;color:#fdba74">🔒 MEMORY FORGE — Spell From Memory!</span>
+            <button type="button" class="sa-speak-btn" id="wfSpeakWord">🔊 Word</button>
+            <button type="button" class="sa-speak-btn" id="wfSpeakSent">🔊 Sentence</button>
+          </div>
+          <div style="font-size:0.86rem;color:#cbd5e1;text-align:center">${esc(it.memory_hint || "Spell cleanly from memory!")}</div>
+          ${canPen ? `
+          <div class="wf-mode-tabs">
+            <button type="button" class="wf-mode-tab ${!startInPen ? "on" : ""}" id="wfTabType">⌨️ Type It</button>
+            <button type="button" class="wf-mode-tab ${startInPen ? "on" : ""}" id="wfTabPen">✏️ Write with Yoga Pen</button>
+          </div>` : ""}
+          <div id="wfTypePane" ${startInPen ? "hidden" : ""} style="display:flex;flex-direction:column;align-items:center;gap:8px;width:100%">
+            <input type="text" id="wfMemInput" class="wf-input" placeholder="Type fused word…" autocomplete="off" spellcheck="false" />
+            <button type="button" class="sa-btn primary" id="wfStrikeBtn">⚒️ Strike the Anvil!</button>
+          </div>
+          <div id="wfPenPane" ${!startInPen ? "hidden" : ""} style="display:flex;flex-direction:column;align-items:center;gap:6px;width:100%">
+            <div class="wf-pen-stage" id="wfPenStage">
+              <canvas id="wfPenGuide"></canvas>
+              <canvas id="wfPenInk"></canvas>
+            </div>
+            <div class="wf-pen-legend">
+              <span style="color:#38bdf8">Sky</span> · <span style="color:#94a3b8">Fence</span> ·
+              <span style="color:#34d399">Grass</span> · <span style="color:#d97706">Worm</span>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+              <button type="button" class="sa-btn ghost" id="wfPenClear">Clear Pad</button>
+              <button type="button" class="sa-btn primary" id="wfPenStrike">⚒️ Read Pen &amp; Strike!</button>
+            </div>
+          </div>
           <div class="wf-diff" id="wfDiff"></div>
-          <button type="button" class="sa-btn primary" id="wfStrikeBtn">⚒️ Strike the Anvil!</button>
         </div>`;
-      fb.className = "sa-feedback idle";
-      fb.textContent = "Step 3: Type the fused word cleanly from memory to lock it in your Leitner deck!";
+
+      setFeedback(fb, "idle", canPen
+        ? "Listen to the word, then type it OR write it with your Lenovo pen from memory!"
+        : "Listen to the word, then type the fused spelling cleanly from memory!");
+
+      VOICE.speak(`Forge the word: ${it.word}. ${it.context_sentence || ""}`);
+      $("wfSpeakWord").onclick = () => VOICE.speak(it.word, { force: true, rate: 0.86 });
+      $("wfSpeakSent").onclick = () => VOICE.speak(it.context_sentence || it.word, { force: true, rate: 0.92 });
 
       const inp = $("wfMemInput");
-      inp.focus();
+      if (!startInPen) inp.focus();
       let hadMiss = false;
+      let wordDone = false;
 
-      const submitWord = () => {
-        const typed = inp.value.trim().toLowerCase();
+      function evaluateAttempt(typedRaw) {
+        if (wordDone) return;
+        const typed = String(typedRaw || "").trim().toLowerCase();
         if (!typed) return;
         if (typed === it.word.toLowerCase()) {
+          wordDone = true;
+          commitStepClock(40);
           SFX.hammer();
-          hammerFlash = 1.0;
+          triggerHammerStrike(true);
           forgedCount += 1;
           if (!hadMiss) correct += 1;
-          wordResults.push({ word: it.word, first_try: !hadMiss, wrote: typed });
-          addPoints(hadMiss ? 60 : 140, inp, "#22d3ee");
-          fb.className = "sa-feedback ok";
-          fb.innerHTML = `<span>💎 <b>FORGED: ${esc(it.word)}!</b> ${!hadMiss ? "First-try mastery — Leitner box upgraded!" : "Clean fix — locked in for review!"}</span><button type="button" class="sa-btn emerald" id="wfNextBtn">Next Rune →</button>`;
+          const partsStr = [it.prefix, it.base, it.suffix].filter(Boolean).join(" + ") || it.word;
+          wordResults.push({
+            word: it.word, first_try: !hadMiss, wrote: typed,
+            parts: partsStr, note: it.note || "", unit: it.unit || "Word Forge",
+          });
+          addPoints(hadMiss ? 65 : 150, s2, "#22d3ee");
+          setFeedback(fb, "ok",
+            `💎 <b>FORGED: ${esc(it.word)}!</b> ${esc(it.note || "")} ${!hadMiss ? "(Leitner box upgraded!)" : "(Queued for tomorrow's review!)"}`,
+            { id: "wfNextBtn", label: "Next Rune →", onClick: () => { idx += 1; renderWord(); } });
           $("wfStrikeBtn").disabled = true;
           inp.disabled = true;
-          $("wfNextBtn").onclick = () => { idx += 1; renderWord(); };
+          if ($("wfPenStrike")) $("wfPenStrike").disabled = true;
         } else {
           hadMiss = true;
           resetCombo();
           SFX.bad();
-          // Show exact letter-by-letter comparison so the child learns the exact letter!
           const target = it.word.toLowerCase();
           let diffHtml = "";
           for (let i = 0; i < target.length; i++) {
@@ -1011,24 +1478,157 @@ function runWordForge(pack) {
             diffHtml += `<span class="${okChar ? "ok" : "miss"}">${esc(target[i])}</span>`;
           }
           $("wfDiff").innerHTML = diffHtml;
-          fb.className = "sa-feedback bad";
-          fb.textContent = "Look at the underlined letter(s) above, then type the full word cleanly!";
+          setFeedback(fb, "bad", `Read “${esc(typed)}” — check the underlined letter(s) above and re-forge cleanly!`);
           inp.value = "";
-          inp.focus();
+          if (!App.forgeUsePen) inp.focus();
         }
-      };
+      }
 
-      $("wfStrikeBtn").onclick = submitWord;
-      inp.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") { e.preventDefault(); submitWord(); }
-      });
+      $("wfStrikeBtn").onclick = () => evaluateAttempt(inp.value);
+      inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); evaluateAttempt(inp.value); } });
+
+      if (canPen) {
+        let penInited = false;
+        let hasInk = false;
+        let penDims = { W: 520, H: 128 };
+
+        const initPenPad = () => {
+          if (penInited) return;
+          penInited = true;
+          const stEl = $("wfPenStage");
+          const gCv = $("wfPenGuide");
+          const iCv = $("wfPenInk");
+          const gc = gCv.getContext("2d");
+          const ic = iCv.getContext("2d");
+
+          const paintGuides = () => {
+            penDims = fitCanvas(gCv, gc, 300, 110);
+            fitCanvas(iCv, ic, 300, 110);
+            const { W: pw, H: ph } = penDims;
+            gc.fillStyle = "#fbfaf5";
+            gc.fillRect(0, 0, pw, ph);
+            const drawLine = (y, col, dash = []) => {
+              gc.save(); gc.strokeStyle = col; gc.lineWidth = 1.5; gc.setLineDash(dash);
+              gc.beginPath(); gc.moveTo(0, y); gc.lineTo(pw, y); gc.stroke(); gc.restore();
+            };
+            drawLine(ph * 0.22, "#60a5fa");
+            drawLine(ph * 0.50, "#94a3b8", [7, 7]);
+            drawLine(ph * 0.78, "#22c55e");
+            drawLine(ph * 0.93, "#b45309", [3, 5]);
+          };
+          paintGuides();
+
+          const ro = new ResizeObserver(() => {
+            if (!hasInk) paintGuides();
+          });
+          ro.observe(stEl);
+          penCleanup = () => ro.disconnect();
+
+          let activePid = null;
+          let last = null;
+          iCv.addEventListener("pointerdown", (e) => {
+            if (e.pointerType === "pen") App.penDetected = true;
+            if (App.penDetected && e.pointerType === "touch") return; // Persistent 360° palm rejection
+            if (activePid !== null) return;
+            activePid = e.pointerId;
+            iCv.setPointerCapture?.(e.pointerId);
+            const br = iCv.getBoundingClientRect();
+            last = { x: e.clientX - br.left, y: e.clientY - br.top };
+          });
+          iCv.addEventListener("pointermove", (e) => {
+            if (e.pointerId !== activePid) return;
+            const br = iCv.getBoundingClientRect();
+            const isErase = e.button === 5 || (e.buttons & 32);
+            const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+            for (const ev of evts) {
+              const nx = ev.clientX - br.left;
+              const ny = ev.clientY - br.top;
+              const press = ev.pressure > 0 ? ev.pressure : 0.5;
+              ic.save();
+              if (isErase) {
+                ic.globalCompositeOperation = "destination-out";
+                ic.lineWidth = 22;
+              } else {
+                ic.strokeStyle = "#0f172a";
+                ic.lineWidth = 2.4 + press * 3.6;
+                hasInk = true;
+              }
+              ic.lineCap = "round";
+              ic.beginPath();
+              if (last) ic.moveTo(last.x, last.y); else ic.moveTo(nx, ny);
+              ic.lineTo(nx, ny);
+              ic.stroke();
+              ic.restore();
+              last = { x: nx, y: ny };
+            }
+          });
+          const endStroke = (e) => {
+            if (e.pointerId !== activePid) return; // Palm lift NEVER cancels active stylus stroke!
+            activePid = null;
+            last = null;
+          };
+          iCv.addEventListener("pointerup", endStroke);
+          iCv.addEventListener("pointercancel", endStroke);
+
+          $("wfPenClear").onclick = () => { ic.clearRect(0, 0, penDims.W, penDims.H); hasInk = false; };
+          $("wfPenStrike").onclick = async () => {
+            if (!hasInk) {
+              setFeedback(fb, "bad", "Write the word on the paper first with your Lenovo pen!");
+              return;
+            }
+            const btn = $("wfPenStrike");
+            btn.disabled = true;
+            btn.textContent = "Reading pen…";
+            const outCv = document.createElement("canvas");
+            outCv.width = gCv.width; outCv.height = gCv.height;
+            const oc = outCv.getContext("2d");
+            oc.drawImage(gCv, 0, 0);
+            oc.drawImage(iCv, 0, 0);
+            try {
+              const r = await fetch("/api/skill-games/read-handwriting", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ image_b64: outCv.toDataURL("image/png"), expected_word: it.word }),
+              });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              const res = await r.json();
+              btn.disabled = false;
+              btn.textContent = "⚒️ Read Pen & Strike!";
+              if (res.ok && res.text) {
+                evaluateAttempt(res.text);
+                if (!wordDone) { ic.clearRect(0, 0, penDims.W, penDims.H); hasInk = false; }
+              } else {
+                setFeedback(fb, "bad", esc(res.error || "Could not read handwriting — try writing bigger on the grass line!"));
+              }
+            } catch (err) {
+              btn.disabled = false;
+              btn.textContent = "⚒️ Read Pen & Strike!";
+              setFeedback(fb, "bad", "Couldn't read handwriting right now — try again or switch to Type It!");
+            }
+          };
+        };
+
+        $("wfTabType").onclick = () => {
+          App.forgeUsePen = false;
+          $("wfTabType").classList.add("on"); $("wfTabPen").classList.remove("on");
+          $("wfTypePane").hidden = false; $("wfPenPane").hidden = true;
+          inp.focus();
+        };
+        $("wfTabPen").onclick = () => {
+          App.forgeUsePen = true;
+          $("wfTabPen").classList.add("on"); $("wfTabType").classList.remove("on");
+          $("wfTypePane").hidden = true; $("wfPenPane").hidden = false;
+          requestAnimationFrame(initPenPad);
+        };
+        if (startInPen) requestAnimationFrame(initPenPad);
+      }
     }
   }
   renderWord();
 }
 
 // ===========================================================================
-// GAME 3: ☄️ HOMOPHONE & VERB ASTEROIDS (60fps Canvas2D Turret + Boss Sentence)
+// GAME 3: ☄️ HOMOPHONE & VERB ASTEROIDS (2x DPR + Unclipped Asteroids + Live Boss!)
 // ===========================================================================
 
 function runHomophoneAsteroids(pack) {
@@ -1041,81 +1641,94 @@ function runHomophoneAsteroids(pack) {
   const skillHits = {};
 
   stage.innerHTML = `
-    <div class="ast-hud" id="astHud">Loading radar…</div>
+    <div class="ast-hud" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div id="astHud" style="flex:1;text-align:center">Loading radar…</div>
+      <button type="button" class="sa-speak-btn" id="astSpeakBtn" style="flex-shrink:0">🔊 Read</button>
+    </div>
     <div class="ast-canvas-wrap" id="astWrap"><canvas id="astCanvas"></canvas></div>
     <div id="astBossArea" hidden></div>
-    <div class="sa-feedback idle" id="astFb">Tap the right asteroid or press <b>1</b>, <b>2</b>, or <b>3</b> to fire the orbital plasma cannon!</div>`;
+    <div class="sa-feedback idle" id="astFb"><span class="sa-fb-msg">Tap the right asteroid or press <b>1</b>, <b>2</b>, or <b>3</b> to fire the orbital plasma cannon!</span></div>`;
 
   const cv = $("astCanvas");
   const ctx = cv.getContext("2d");
-  let W = 800, H = 390;
+  let W = 800, H = 370;
   let rocks = [];
   let beams = [];
   let shards = [];
+  let rings = [];
   let turretAngle = -Math.PI / 2;
+  let recoil = 0;
   let shieldFlash = 0;
+  let shake = 0;
   let rafId = 0;
   let active = true;
-  let bossMode = false;
+  let currentSpoken = "";
 
-  const starField = Array.from({ length: 70 }, () => ({
-    x: Math.random(), y: Math.random(), s: 0.8 + Math.random() * 1.8, v: 0.0008 + Math.random() * 0.0018,
+  const boss = { active: false, y: -70, hp: 100, dying: false, hyperbeam: 0 };
+
+  $("astSpeakBtn").onclick = () => VOICE.speak(currentSpoken, { force: true });
+
+  const starField = Array.from({ length: 85 }, (_, i) => ({
+    x: Math.random(), y: Math.random(),
+    s: 0.7 + (i % 3) * 0.75, v: 0.0005 + (i % 3) * 0.0007, a: 0.35 + (i % 4) * 0.16,
   }));
 
-  function sizeCanvas() {
-    const r = $("astWrap").getBoundingClientRect();
-    W = Math.max(300, Math.floor(r.width));
-    H = Math.max(280, Math.floor(r.height));
-    cv.width = W;
-    cv.height = H;
+  function syncSize() {
+    const d = fitCanvas(cv, ctx, 300, 240);
+    W = d.W; H = d.H;
   }
-  sizeCanvas();
+  syncSize();
 
   function spawnWave() {
+    if (!active) return;
     if (wave >= items.length) {
       enterBossWave();
       return;
     }
+    beginStepClock();
     waveMissed = false;
     const it = items[wave];
-    setHud({ visible: true, step: wave + 1, total: items.length + 1, score: App.score, combo: App.combo, title: "Homophone & Verb Asteroids" });
+    currentSpoken = it.sentence.replace("___", "blank");
+    setHud({ visible: true, step: wave + 1, total: items.length + 1, score: App.score, combo: App.combo, title: "Homophone & Verb Asteroids", aiPack: !!pack.ai_generated });
     const parts = it.sentence.split("___");
     $("astHud").innerHTML = `${esc(parts[0] || "")}<span class="ast-blank">?</span>${esc(parts[1] || "")}`;
 
-    const lanes = [W * 0.22, W * 0.5, W * 0.78];
+    const lanes = [W * 0.21, W * 0.5, W * 0.79];
+    // Spawn cleanly inside canvas (y = 64 / 58 / 64, r = 44) -> ZERO top clipping!
     rocks = it.options.map((opt, i) => ({
-      idx: i,
-      word: opt,
-      ok: opt === it.answer,
-      x: lanes[i],
-      y: 44 + (i === 1 ? -18 : 8),
-      r: 46,
-      vy: 0.36 + Math.min(0.28, wave * 0.03),
-      rot: Math.random() * Math.PI * 2,
-      vrot: (Math.random() - 0.5) * 0.015,
-      verts: Array.from({ length: 9 }, (_, vi) => 0.82 + ((vi * 17 + i * 7) % 5) * 0.06),
-      alive: true,
-      redFlash: 0,
+      idx: i, word: opt, ok: opt === it.answer,
+      x: lanes[i], y: i === 1 ? 58 : 66, r: 44,
+      vy: 0.33 + Math.min(0.24, wave * 0.025),
+      rot: Math.random() * Math.PI * 2, vrot: (Math.random() - 0.5) * 0.012,
+      verts: Array.from({ length: 11 }, (_, vi) => 0.84 + ((vi * 13 + i * 5) % 5) * 0.05),
+      craters: [{ a: 0.8 + i, d: 0.45, r: 7 }, { a: 2.9 + i, d: 0.38, r: 5.5 }, { a: 4.7 + i, d: 0.48, r: 4.5 }],
+      alive: true, redFlash: 0,
     }));
   }
 
   function shootRock(rockIdx) {
-    if (!active || bossMode) return;
+    if (!active || boss.active) return;
     const rock = rocks[rockIdx];
     if (!rock || !rock.alive) return;
     const it = items[wave];
-    const tx = W / 2, ty = H - 36;
+    const tx = W / 2, ty = H - 38;
     turretAngle = Math.atan2(rock.y - ty, rock.x - tx);
-    beams.push({ x1: tx, y1: ty, x2: rock.x, y2: rock.y, color: rock.ok ? "#38bdf8" : "#fb7185", life: 1 });
+    recoil = 10;
+    beams.push({ x1: tx, y1: ty, x2: rock.x, y2: rock.y, color: rock.ok ? "#38bdf8" : "#fb7185", life: 1, w: 7 });
 
     if (rock.ok) {
       rock.alive = false;
+      commitStepClock(35);
+      shake = 7;
       SFX.laser();
-      // Shatter into neon shards
-      for (let k = 0; k < 22; k++) {
+      rings.push({ x: rock.x, y: rock.y, r: 14, maxR: 84, color: "#c084fc", life: 1 });
+      for (let k = 0; k < 28; k++) {
         const a = Math.random() * Math.PI * 2;
-        const sp = 2 + Math.random() * 5.5;
-        shards.push({ x: rock.x, y: rock.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: 3 + Math.random() * 5, color: "#c084fc", life: 1 });
+        const sp = 2 + Math.random() * 6.5;
+        shards.push({
+          x: rock.x, y: rock.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          r: 3 + Math.random() * 5.5, color: k % 2 ? "#c084fc" : "#38bdf8", life: 1,
+        });
       }
       if (!waveMissed) correct += 1;
       else trickyWords.push(it.answer);
@@ -1124,110 +1737,235 @@ function runHomophoneAsteroids(pack) {
       if (!waveMissed) skillHits[it.skill].correct += 1;
 
       addPoints(waveMissed ? 60 : 120, $("astHud"), "#a855f7");
-      const fb = $("astFb");
-      fb.className = "sa-feedback ok";
-      fb.textContent = `💥 Direct Hit! ${it.explain}`;
+      setFeedback($("astFb"), "ok", `💥 <b>Direct Hit!</b> ${esc(it.explain)}`);
       const parts = it.sentence.split("___");
       $("astHud").innerHTML = `${esc(parts[0] || "")}<span class="ast-blank" style="border-color:#10b981;color:#6ee7b7">${esc(it.answer)}</span>${esc(parts[1] || "")}`;
       rocks.forEach((r) => { r.alive = false; });
-      setTimeout(() => { wave += 1; spawnWave(); }, 950);
+      safeTimeout(() => { wave += 1; spawnWave(); }, 900);
     } else {
       waveMissed = true;
       rock.redFlash = 1;
       resetCombo();
       SFX.bad();
-      const fb = $("astFb");
-      fb.className = "sa-feedback bad";
-      fb.textContent = `Shield deflection! "${rock.word}" doesn't fit here — read the sentence clues carefully!`;
+      setFeedback($("astFb"), "bad", `Shield deflection! “${esc(rock.word)}” doesn't fit here — read the sentence clues carefully!`);
     }
   }
 
   function enterBossWave() {
-    bossMode = true;
+    beginStepClock();
+    boss.active = true;
+    boss.y = -65;
+    boss.hp = 100;
     const bossWord = trickyWords[0] || items[items.length - 1].answer;
-    setHud({ visible: true, step: items.length + 1, total: items.length + 1, score: App.score, combo: App.combo, title: "BOSS WAVE · Dreadnought" });
-    $("astWrap").hidden = true;
-    $("astHud").innerHTML = `👾 <b>DREADNOUGHT BOSS SHIELD ACTIVE!</b> Use the word <span class="ast-blank">${esc(bossWord)}</span> in your own complete sentence!`;
-    const boss = $("astBossArea");
-    boss.hidden = false;
-    boss.innerHTML = `
-      <div class="boss-box">
-        <div style="font-weight:700;color:#e9d5ff;font-size:1.05rem">⚡ Type 1 Homework-Standard sentence (Capital letter + end mark + “${esc(bossWord)}”) to vaporize the Boss!</div>
-        <input type="text" id="astBossInput" class="sa-sentence-input" placeholder="Write your boss counter-attack sentence here…" autocomplete="off" />
-        <div style="display:flex;gap:10px;justify-content:flex-end">
-          <button type="button" class="sa-btn primary" id="astBossFire">🚀 Fire Orbital Cannon!</button>
+    currentSpoken = `Dreadnought Boss incoming! Write one complete sentence using the word ${bossWord} to fire the hyperbeam.`;
+    setHud({ visible: true, step: items.length + 1, total: items.length + 1, score: App.score, combo: App.combo, title: "BOSS WAVE · Dreadnought", aiPack: !!pack.ai_generated });
+    $("astWrap").style.height = "255px";
+    $("astHud").innerHTML = `👾 <b>DREADNOUGHT BOSS INCOMING!</b> Write 1 real sentence using <span class="ast-blank">${esc(bossWord)}</span> to charge the Hyperbeam!`;
+    const bossArea = $("astBossArea");
+    bossArea.hidden = false;
+    bossArea.innerHTML = `
+      <div class="boss-box" style="padding:14px 18px">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="astBossInput" class="sa-sentence-input" style="flex:1;min-width:240px"
+            placeholder="Type a complete sentence using '${esc(bossWord)}' (Capital + . ! ?)…" autocomplete="off" />
+          <button type="button" class="sa-btn primary" id="astBossFire">🚀 Fire Hyperbeam!</button>
         </div>
       </div>`;
     const inp = $("astBossInput");
     inp.focus();
+
     const fire = async () => {
       const txt = inp.value.trim();
-      if (!txt) return;
-      const r = await fetch("/api/skill-games/check-sentence", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: txt, required_word: bossWord, require_because: false }),
-      });
-      const chk = await r.json();
-      const fb = $("astFb");
-      if (chk.ok) {
-        SFX.powerup();
-        addPoints(250, inp, "#a855f7");
-        fb.className = "sa-feedback ok";
-        fb.textContent = "💥 BOSS VAPORIZED! Awesome original sentence!";
-        setTimeout(() => {
-          finishGame({
-            correct: correct + 1,
-            total: items.length + 1,
-            production_passed: true,
-            production_sentence: txt,
-            skill_hits: skillHits,
-          });
-        }, 700);
-      } else {
+      if (!txt || boss.dying) return;
+      const fireBtn = $("astBossFire");
+      fireBtn.disabled = true;
+      fireBtn.textContent = "Charging…";
+      try {
+        const r = await fetch("/api/skill-games/check-sentence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: txt,
+            required_word: bossWord,
+            require_because: false,
+            context_prompt: `Homophone/verb boss wave: student must use '${bossWord}' with its correct meaning and grammar.`,
+          }),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const chk = await r.json();
+        if (chk.ok) {
+          boss.dying = true;
+          boss.hyperbeam = 1.0;
+          boss.hp = 0;
+          shake = 16;
+          SFX.hyperbeam();
+          rings.push({ x: W / 2, y: boss.y, r: 20, maxR: 165, color: "#38bdf8", life: 1 });
+          rings.push({ x: W / 2, y: boss.y, r: 10, maxR: 125, color: "#facc15", life: 1 });
+          for (let k = 0; k < 110; k++) {
+            const a = Math.random() * Math.PI * 2;
+            const sp = 2 + Math.random() * 9;
+            shards.push({
+              x: W / 2 + (Math.random() - 0.5) * 90,
+              y: boss.y + (Math.random() - 0.5) * 35,
+              vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+              r: 3 + Math.random() * 6,
+              color: ["#facc15", "#a855f7", "#38bdf8", "#fb7185"][k % 4],
+              life: 1.1,
+            });
+          }
+          addPoints(250, $("astHud"), "#a855f7");
+          setFeedback($("astFb"), "ok", "💥 <b>DREADNOUGHT VAPORIZED!</b> Awesome Homework-Standard sentence!");
+          safeTimeout(() => {
+            finishGame({
+              correct: correct + 1,
+              total: items.length + 1,
+              production_passed: true,
+              production_sentence: txt,
+              skill_hits: skillHits,
+            });
+          }, 1150);
+        } else {
+          fireBtn.disabled = false;
+          fireBtn.textContent = "🚀 Fire Hyperbeam!";
+          SFX.bad();
+          setFeedback($("astFb"), "bad", esc(chk.feedback));
+        }
+      } catch (err) {
+        fireBtn.disabled = false;
+        fireBtn.textContent = "🚀 Fire Hyperbeam!";
         SFX.bad();
-        fb.className = "sa-feedback bad";
-        fb.textContent = chk.feedback;
+        setFeedback($("astFb"), "bad", "Network hiccup checking your sentence — click Fire Hyperbeam to try again!");
       }
     };
     $("astBossFire").onclick = fire;
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); fire(); } });
   }
 
+  function drawDreadnought(cx, cy, nowS) {
+    ctx.save();
+    ctx.translate(cx, cy + Math.sin(nowS * 3) * 5);
+    if (!boss.dying) {
+      ctx.strokeStyle = `rgba(192, 132, 252, ${0.45 + Math.sin(nowS * 6) * 0.25})`;
+      ctx.shadowColor = "#a855f7"; ctx.shadowBlur = 22; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(0, 0, 128, 48, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+    ctx.fillStyle = "#1e1b4b"; ctx.strokeStyle = "#f43f5e"; ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(-108, -10); ctx.lineTo(-54, -32); ctx.lineTo(54, -32); ctx.lineTo(108, -10);
+    ctx.lineTo(82, 22); ctx.lineTo(28, 30); ctx.lineTo(-28, 30); ctx.lineTo(-82, 22);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    const cg = ctx.createRadialGradient(0, 2, 2, 0, 2, 22);
+    cg.addColorStop(0, "#fef08a"); cg.addColorStop(0.5, "#f43f5e"); cg.addColorStop(1, "transparent");
+    ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0, 2, 22, 0, Math.PI * 2); ctx.fill();
+
+    ctx.fillStyle = "rgba(15, 23, 42, 0.88)"; ctx.fillRect(-75, -50, 150, 10);
+    ctx.fillStyle = "#f43f5e"; ctx.fillRect(-75, -50, 150 * (boss.hp / 100), 10);
+    ctx.strokeStyle = "#fda4af"; ctx.lineWidth = 1.2; ctx.strokeRect(-75, -50, 150, 10);
+    ctx.restore();
+  }
+
   function loop() {
     if (!active) return;
-    sizeCanvas();
-    ctx.fillStyle = "#040610";
-    ctx.fillRect(0, 0, W, H);
+    syncSize();
+    const nowS = performance.now() * 0.001;
+    const sx = shake > 0.2 ? (Math.random() - 0.5) * shake : 0;
+    const sy = shake > 0.2 ? (Math.random() - 0.5) * shake : 0;
+    shake *= 0.85;
+    recoil *= 0.82;
 
-    // Parallax stars
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    const spG = ctx.createLinearGradient(0, 0, 0, H);
+    spG.addColorStop(0, "#030510"); spG.addColorStop(0.75, "#0b0f26"); spG.addColorStop(1, "#121b38");
+    ctx.fillStyle = spG; ctx.fillRect(0, 0, W, H);
+
+    // Ringed gas-giant planet
+    ctx.save();
+    const px = W * 0.85, py = H * 0.28;
+    const pg = ctx.createRadialGradient(px - 16, py - 16, 6, px, py, 48);
+    pg.addColorStop(0, "#6366f1"); pg.addColorStop(0.65, "#1e1b4b"); pg.addColorStop(1, "#090a1a");
+    ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(px, py, 44, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(165, 180, 252, 0.38)"; ctx.lineWidth = 4.5;
+    ctx.beginPath(); ctx.ellipse(px, py, 78, 17, -0.25, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+
     for (const s of starField) {
       s.y += s.v;
       if (s.y > 1) { s.y = 0; s.x = Math.random(); }
-      ctx.fillStyle = "rgba(226, 232, 240, 0.55)";
+      ctx.fillStyle = `rgba(226, 232, 240, ${s.a})`;
       ctx.fillRect(s.x * W, s.y * H, s.s, s.s);
     }
 
-    // Shield dome at bottom
+    // Illuminated Toronto Skyline + CN Tower under a proportional wide orbital shield dome!
+    const baseY = H;
+    const bldgs = [0.16, 0.22, 0.31, 0.38, 0.60, 0.67, 0.74, 0.81];
+    bldgs.forEach((bx, bi) => {
+      const bh = 26 + ((bi * 17) % 30);
+      const x = W * bx;
+      ctx.fillStyle = "#0f172a";
+      ctx.fillRect(x, baseY - bh, 26, bh);
+      // Glowing miniature skyscraper windows
+      ctx.fillStyle = bi % 2 === 0 ? "rgba(250, 204, 21, 0.45)" : "rgba(56, 189, 248, 0.45)";
+      for (let wy = baseY - bh + 5; wy < baseY - 4; wy += 7) {
+        ctx.fillRect(x + 4, wy, 4, 3); ctx.fillRect(x + 12, wy, 4, 3); ctx.fillRect(x + 19, wy, 3, 3);
+      }
+    });
+    // CN Tower with glowing sky-pod rim
+    const cnx = W * 0.27;
+    ctx.fillStyle = "#1e293b";
+    ctx.fillRect(cnx - 2.5, baseY - 76, 5, 76);
+    ctx.beginPath(); ctx.ellipse(cnx, baseY - 52, 11, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#38bdf8";
+    ctx.fillRect(cnx - 8, baseY - 53, 16, 2);
+    ctx.fillRect(cnx - 1, baseY - 82, 2, 7);
+
+    // Wide Proportional Orbital Shield Dome protecting the full skyline!
     ctx.save();
-    ctx.strokeStyle = shieldFlash > 0.05 ? "#fb7185" : "rgba(56, 189, 248, 0.45)";
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = shieldFlash > 0.05 ? "#fb7185" : "rgba(56, 189, 248, 0.52)";
+    ctx.shadowColor = shieldFlash > 0.05 ? "#fb7185" : "#38bdf8";
+    ctx.shadowBlur = 16; ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(W / 2, H + 110, 185, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.ellipse(W / 2, H + 12, W * 0.42, 102, 0, Math.PI, 0);
     ctx.stroke();
     ctx.restore();
-    shieldFlash *= 0.92;
+    shieldFlash *= 0.9;
 
-    // Asteroids
+    if (boss.active) {
+      if (boss.y < H * 0.38) boss.y += 2.6;
+      if (!boss.dying) drawDreadnought(W / 2, boss.y, nowS);
+      if (boss.hyperbeam > 0.02) {
+        ctx.save();
+        ctx.strokeStyle = `rgba(56, 189, 248, ${boss.hyperbeam})`;
+        ctx.shadowColor = "#38bdf8"; ctx.shadowBlur = 35; ctx.lineWidth = 40 * boss.hyperbeam;
+        ctx.beginPath(); ctx.moveTo(W / 2, H - 36); ctx.lineTo(W / 2, boss.y); ctx.stroke();
+        ctx.strokeStyle = `rgba(255, 255, 255, ${boss.hyperbeam})`; ctx.lineWidth = 14 * boss.hyperbeam;
+        ctx.beginPath(); ctx.moveTo(W / 2, H - 36); ctx.lineTo(W / 2, boss.y); ctx.stroke();
+        ctx.restore();
+        boss.hyperbeam *= 0.93;
+      }
+    }
+
+    // Shaded Cratered Rocky Asteroids
     for (const rk of rocks) {
       if (!rk.alive) continue;
       rk.y += rk.vy;
       rk.rot += rk.vrot;
-      if (rk.y > H - 72) {
-        // Bounce safely back to top so ADHD focus isn't punished by sudden game-over!
-        rk.y = 32;
-        shieldFlash = 0.85;
+      if (rk.y > H - 78) {
+        rk.y = 58;
+        shieldFlash = 0.95;
+        SFX.shieldBounce();
       }
+
+      const tailG = ctx.createLinearGradient(rk.x, rk.y - rk.r * 1.5, rk.x, rk.y);
+      tailG.addColorStop(0, "transparent"); tailG.addColorStop(1, "rgba(168, 85, 247, 0.25)");
+      ctx.fillStyle = tailG;
+      ctx.beginPath();
+      ctx.moveTo(rk.x - 14, rk.y - rk.r * 1.5); ctx.lineTo(rk.x + 14, rk.y - rk.r * 1.5);
+      ctx.lineTo(rk.x + 26, rk.y); ctx.lineTo(rk.x - 26, rk.y); ctx.closePath(); ctx.fill();
+
       ctx.save();
       ctx.translate(rk.x, rk.y);
       ctx.save();
@@ -1235,143 +1973,228 @@ function runHomophoneAsteroids(pack) {
       ctx.beginPath();
       rk.verts.forEach((v, vi) => {
         const a = (Math.PI * 2 * vi) / rk.verts.length;
-        const px = Math.cos(a) * rk.r * v;
-        const py = Math.sin(a) * rk.r * v;
-        if (vi === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        const px2 = Math.cos(a) * rk.r * v, py2 = Math.sin(a) * rk.r * v;
+        if (vi === 0) ctx.moveTo(px2, py2); else ctx.lineTo(px2, py2);
       });
       ctx.closePath();
-      ctx.fillStyle = rk.redFlash > 0.1 ? "rgba(251,113,133,0.32)" : "rgba(30, 27, 75, 0.92)";
+      const rg = ctx.createRadialGradient(-10, -12, 6, 0, 0, rk.r);
+      if (rk.redFlash > 0.1) { rg.addColorStop(0, "#9f1239"); rg.addColorStop(1, "#3b0712"); }
+      else { rg.addColorStop(0, "#4c1d95"); rg.addColorStop(0.55, "#1e1b4b"); rg.addColorStop(1, "#0f172a"); }
+      ctx.fillStyle = rg;
       ctx.strokeStyle = rk.redFlash > 0.1 ? "#fb7185" : "#a855f7";
-      ctx.lineWidth = 2.5;
-      ctx.shadowColor = rk.redFlash > 0.1 ? "#fb7185" : "#a855f7";
-      ctx.shadowBlur = 14;
-      ctx.fill();
-      ctx.stroke();
-      ctx.restore();
-      rk.redFlash *= 0.9;
+      ctx.lineWidth = 2.4; ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 14;
+      ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
 
-      // Keycap badge & word label
+      ctx.fillStyle = "rgba(10, 12, 26, 0.48)";
+      for (const cr of rk.craters) {
+        ctx.beginPath(); ctx.arc(Math.cos(cr.a) * rk.r * cr.d, Math.sin(cr.a) * rk.r * cr.d, cr.r, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+      rk.redFlash *= 0.88;
+
       ctx.font = "700 18px 'Google Sans', sans-serif";
-      ctx.fillStyle = "#f8fafc";
-      ctx.textAlign = "center";
-      ctx.fillText(rk.word, 0, 5);
+      ctx.fillStyle = "#ffffff"; ctx.textAlign = "center";
+      ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 6;
+      ctx.fillText(rk.word, 0, 6);
       ctx.font = "700 11px 'JetBrains Mono', monospace";
-      ctx.fillStyle = "#c084fc";
-      ctx.fillText(`[${rk.idx + 1}]`, 0, -20);
+      ctx.fillStyle = "#e9d5ff";
+      ctx.fillText(`[${rk.idx + 1}]`, 0, -18);
       ctx.restore();
     }
 
-    // Plasma beams
+    for (let i = rings.length - 1; i >= 0; i--) {
+      const rg = rings[i];
+      rg.r += (rg.maxR - rg.r) * 0.16; rg.life -= 0.045;
+      if (rg.life <= 0) { rings.splice(i, 1); continue; }
+      ctx.save(); ctx.globalAlpha = rg.life; ctx.strokeStyle = rg.color; ctx.lineWidth = 4 * rg.life;
+      ctx.beginPath(); ctx.arc(rg.x, rg.y, rg.r, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    }
     for (let i = beams.length - 1; i >= 0; i--) {
       const bm = beams[i];
       bm.life -= 0.1;
       if (bm.life <= 0) { beams.splice(i, 1); continue; }
-      ctx.save();
-      ctx.globalAlpha = bm.life;
-      ctx.strokeStyle = bm.color;
-      ctx.lineWidth = 6 * bm.life;
-      ctx.shadowColor = bm.color;
-      ctx.shadowBlur = 20;
-      ctx.beginPath();
-      ctx.moveTo(bm.x1, bm.y1);
-      ctx.lineTo(bm.x2, bm.y2);
-      ctx.stroke();
-      ctx.restore();
+      ctx.save(); ctx.globalAlpha = bm.life; ctx.strokeStyle = bm.color; ctx.lineWidth = bm.w * bm.life;
+      ctx.shadowColor = bm.color; ctx.shadowBlur = 20;
+      ctx.beginPath(); ctx.moveTo(bm.x1, bm.y1); ctx.lineTo(bm.x2, bm.y2); ctx.stroke();
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5 * bm.life;
+      ctx.beginPath(); ctx.moveTo(bm.x1, bm.y1); ctx.lineTo(bm.x2, bm.y2); ctx.stroke(); ctx.restore();
     }
-
-    // Explosion shards
     for (let i = shards.length - 1; i >= 0; i--) {
       const sh = shards[i];
-      sh.x += sh.vx;
-      sh.y += sh.vy;
-      sh.life -= 0.035;
+      sh.x += sh.vx; sh.y += sh.vy; sh.life -= 0.028;
       if (sh.life <= 0) { shards.splice(i, 1); continue; }
-      ctx.save();
-      ctx.globalAlpha = sh.life;
-      ctx.fillStyle = sh.color;
-      ctx.fillRect(sh.x - sh.r / 2, sh.y - sh.r / 2, sh.r, sh.r);
-      ctx.restore();
+      ctx.save(); ctx.globalAlpha = Math.min(1, sh.life); ctx.fillStyle = sh.color;
+      ctx.shadowColor = sh.color; ctx.shadowBlur = 8;
+      ctx.fillRect(sh.x - sh.r / 2, sh.y - sh.r / 2, sh.r, sh.r); ctx.restore();
     }
 
-    // Turret
     ctx.save();
     ctx.translate(W / 2, H - 32);
     ctx.rotate(turretAngle + Math.PI / 2);
-    ctx.fillStyle = "#38bdf8";
-    ctx.shadowColor = "#38bdf8";
-    ctx.shadowBlur = 14;
-    ctx.fillRect(-6, -30, 12, 28);
-    ctx.beginPath();
-    ctx.arc(0, 0, 18, 0, Math.PI * 2);
-    ctx.fillStyle = "#0f172a";
-    ctx.strokeStyle = "#38bdf8";
-    ctx.lineWidth = 3;
-    ctx.fill();
-    ctx.stroke();
+    ctx.fillStyle = "#38bdf8"; ctx.shadowColor = "#38bdf8"; ctx.shadowBlur = 14;
+    ctx.fillRect(-10, -34 + recoil, 6, 30); ctx.fillRect(4, -34 + recoil, 6, 30);
+    ctx.shadowBlur = 0;
+    ctx.beginPath(); ctx.arc(0, 0, 19, 0, Math.PI * 2);
+    ctx.fillStyle = "#0f172a"; ctx.strokeStyle = "#38bdf8"; ctx.lineWidth = 3;
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#a855f7"; ctx.beginPath(); ctx.arc(0, 0, 6.5, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
 
+    ctx.restore();
     rafId = requestAnimationFrame(loop);
   }
 
   const onPointer = (e) => {
     const r = cv.getBoundingClientRect();
-    const px = e.clientX - r.left;
-    const py = e.clientY - r.top;
+    const px = e.clientX - r.left, py = e.clientY - r.top;
     for (const rk of rocks) {
-      if (rk.alive && Math.hypot(px - rk.x, py - rk.y) <= rk.r + 16) {
-        shootRock(rk.idx);
-        return;
-      }
+      if (rk.alive && Math.hypot(px - rk.x, py - rk.y) <= rk.r + 16) { shootRock(rk.idx); return; }
     }
   };
   const onKey = (e) => {
-    if (bossMode) return;
+    if (boss.active) return;
     if (e.key === "1") shootRock(0);
     else if (e.key === "2") shootRock(1);
     else if (e.key === "3") shootRock(2);
   };
   cv.addEventListener("pointerdown", onPointer);
   window.addEventListener("keydown", onKey);
-  addCleanup(() => {
-    active = false;
-    cancelAnimationFrame(rafId);
-    window.removeEventListener("keydown", onKey);
-  });
+  addCleanup(() => { active = false; cancelAnimationFrame(rafId); window.removeEventListener("keydown", onKey); });
 
   spawnWave();
   rafId = requestAnimationFrame(loop);
 }
 
 // ===========================================================================
-// GAME 4: ⚡ SENTENCE STRETCH LAB (Compound/Complex Bridges + Vivid Verbs)
+// GAME 4: ⚡ SENTENCE STRETCH LAB (2x DPR Plasma Reactor + Dynamic Exact-Verb Fusion!)
 // ===========================================================================
+
+function buildFusedSentence(it, bridgeWord, bridgeKind, vividVerb) {
+  const replaceVerb = (s) => s.replace(new RegExp(`\\b${it.weak_verb.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"), vividVerb);
+  const aRaw = replaceVerb(it.clause_a).trim().replace(/[.!?]+$/, "");
+  const bRaw = replaceVerb(it.clause_b).trim();
+  const lowercaseStart = (s) => {
+    // Lowercase common determiners/pronouns while preserving ANY proper name (including AI World Pack characters!)
+    const first = s.split(/\s+/)[0] || "";
+    const lowerable = new Set([
+      "The", "A", "An", "Our", "My", "His", "Her", "Its", "Their", "Your",
+      "We", "They", "He", "She", "It", "You", "This", "That", "These", "Those",
+      "Every", "All", "Some", "Many", "Few", "Most", "Several", "Both", "No", "One", "Two", "Three",
+    ]);
+    if (!lowerable.has(first)) return s;
+    return s.charAt(0).toLowerCase() + s.slice(1);
+  };
+  if (it.front_connector) {
+    const capB = bridgeWord.charAt(0).toUpperCase() + bridgeWord.slice(1);
+    return `${capB} ${lowercaseStart(aRaw)}, ${lowercaseStart(bRaw)}`;
+  }
+  const sep = bridgeKind === "compound" ? `, ${bridgeWord} ` : ` ${bridgeWord} `;
+  return `${aRaw}${sep}${lowercaseStart(bRaw)}`;
+}
 
 function runSentenceStretch(pack) {
   const stage = $("saGameStage");
   const items = pack.items;
   let idx = 0;
   let correct = 0;
+  let reactorPower = 30;
   const skillHits = {};
 
+  stage.innerHTML = `
+    <div class="sa-scene-wrap" style="border-color:rgba(16,185,129,0.45)"><canvas id="stReactorCv"></canvas></div>
+    <div id="stHost" style="display:flex;flex-direction:column;gap:12px"></div>`;
+
+  const rcv = $("stReactorCv");
+  const rctx = rcv.getContext("2d");
+  let active = true;
+  let rafId = 0;
+  let smoothPwr = 30;
+
+  function drawReactor() {
+    if (!active) return;
+    const { W, H } = fitCanvas(rcv, rctx, 300, 110);
+    const nowS = performance.now() * 0.001;
+    smoothPwr += (reactorPower - smoothPwr) * 0.1;
+
+    rctx.fillStyle = "#060c18"; rctx.fillRect(0, 0, W, H);
+    const cy = H * 0.56;
+    const lx = W * 0.18, rx = W * 0.82, cx = W * 0.5;
+    const over = smoothPwr >= 95;
+    const bridged = smoothPwr >= 65;
+
+    rctx.save();
+    const beamCol = over ? "#facc15" : (bridged ? "#10b981" : "rgba(56,189,248,0.28)");
+    rctx.strokeStyle = beamCol; rctx.shadowColor = beamCol;
+    rctx.shadowBlur = over ? 26 : (bridged ? 16 : 4);
+    rctx.lineWidth = over ? 7 : (bridged ? 4.5 : 2);
+    rctx.beginPath();
+    for (let x = lx; x <= rx; x += 10) {
+      const jit = bridged ? Math.sin(x * 0.08 - nowS * 12) * (over ? 9 : 4) : (Math.random() - 0.5) * 4;
+      if (x === lx) rctx.moveTo(x, cy + jit); else rctx.lineTo(x, cy + jit);
+    }
+    rctx.stroke();
+    rctx.restore();
+
+    for (const [nx, col, lbl] of [[lx, "#38bdf8", "CLAUSE A"], [rx, "#10b981", "CLAUSE B"]]) {
+      rctx.save();
+      rctx.fillStyle = "#0f172a"; rctx.strokeStyle = col; rctx.lineWidth = 3;
+      rctx.shadowColor = col; rctx.shadowBlur = 14;
+      rctx.beginPath(); rctx.arc(nx, cy, 32, 0, Math.PI * 2); rctx.fill(); rctx.stroke();
+      rctx.shadowBlur = 0;
+      rctx.font = "700 9.5px 'JetBrains Mono', monospace"; rctx.fillStyle = col; rctx.textAlign = "center";
+      rctx.fillText(lbl, nx, cy + 3.5);
+      rctx.restore();
+    }
+
+    rctx.save();
+    rctx.translate(cx, cy);
+    rctx.rotate(nowS * (over ? 3.5 : (bridged ? 1.5 : 0.4)));
+    rctx.strokeStyle = over ? "#facc15" : (bridged ? "#34d399" : "#475569");
+    rctx.lineWidth = 3; rctx.setLineDash([13, 9]);
+    rctx.beginPath(); rctx.arc(0, 0, 38, 0, Math.PI * 2); rctx.stroke();
+    rctx.setLineDash([]);
+    rctx.restore();
+
+    rctx.save();
+    const coreG = rctx.createRadialGradient(cx, cy, 4, cx, cy, 28);
+    coreG.addColorStop(0, "#fff"); coreG.addColorStop(0.5, over ? "#facc15" : (bridged ? "#10b981" : "#334155")); coreG.addColorStop(1, "transparent");
+    rctx.fillStyle = coreG; rctx.beginPath(); rctx.arc(cx, cy, 28, 0, Math.PI * 2); rctx.fill();
+    rctx.font = "700 13px 'JetBrains Mono', monospace";
+    rctx.fillStyle = over ? "#fef08a" : (bridged ? "#6ee7b7" : "#94a3b8"); rctx.textAlign = "center";
+    rctx.fillText(over ? "⚡ OVERDRIVE 100%!" : `REACTOR POWER: ${Math.round(smoothPwr)}%`, cx, 20);
+    rctx.restore();
+
+    rafId = requestAnimationFrame(drawReactor);
+  }
+  rafId = requestAnimationFrame(drawReactor);
+  addCleanup(() => { active = false; cancelAnimationFrame(rafId); });
+
   function renderStep() {
+    VOICE.stop();
     if (idx >= items.length) {
-      finishGame({ correct, total: items.length, skill_hits: skillHits, production_passed: true });
+      finishGame({ correct, total: items.length, skill_hits: skillHits, production_passed: false });
       return;
     }
+    beginStepClock();
+    reactorPower = 30;
     const it = items[idx];
-    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Sentence Stretch Lab" });
+    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Sentence Stretch Lab", aiPack: !!pack.ai_generated });
     let hadMiss = false;
     let chosenBridge = null;
+    let chosenKind = "complex";
     let chosenVerb = null;
 
     const hlVerb = (txt) => txt.replace(new RegExp(`\\b(${it.weak_verb.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})\\b`, "i"),
-      '<span class="st-weak-verb" id="stWeakSpan">$1</span>');
+      '<span class="st-weak-verb">$1</span>');
 
-    stage.innerHTML = `
+    $("stHost").innerHTML = `
       <div class="sa-panel">
-        <div class="st-meter-wrap">
-          <div class="st-meter-bar"><div class="st-meter-fill" id="stMeterFill"></div></div>
-          <div class="st-meter-label" id="stMeterLbl">LEVEL 1 · CHOPPY</div>
+        <div class="sa-mission-banner" style="margin-bottom:8px">
+          <div class="st-meter-wrap" style="flex:1;margin:0">
+            <div class="st-meter-bar"><div class="st-meter-fill" id="stMeterFill"></div></div>
+            <div class="st-meter-label" id="stMeterLbl">LEVEL 1 · CHOPPY</div>
+          </div>
+          <button type="button" class="sa-speak-btn" id="stSpeakInit">🔊 Read Clauses</button>
         </div>
         <div class="sa-prompt-text" id="stStepPrompt">Step 1: Snap the right connector bridge to fuse these two choppy sentences!</div>
       </div>
@@ -1385,40 +2208,39 @@ function runSentenceStretch(pack) {
         <div style="text-align:center;color:#94a3b8;font-size:0.9rem">Pick the logical connector:</div>
         <div class="st-pill-row" id="stBridgeRow"></div>
       </div>
-      <div class="sa-feedback idle" id="stFb">Choose a connector that matches the real cause, timing, or contrast!</div>`;
+      <div class="sa-feedback idle" id="stFb"><span class="sa-fb-msg">Choose a connector that matches the real cause, timing, or contrast!</span></div>`;
 
-    const bRow = $("stBridgeRow");
+    $("stSpeakInit").onclick = () => VOICE.speak(`${it.clause_a} ${it.clause_b}`, { force: true });
+
     it.bridges.forEach((br) => {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "sa-btn ghost";
-      b.style.fontSize = "1.05rem";
-      b.style.padding = "11px 22px";
+      b.style.fontSize = "1.05rem"; b.style.padding = "11px 22px";
       b.textContent = it.front_connector ? br.word.charAt(0).toUpperCase() + br.word.slice(1) : br.word;
       b.onclick = () => {
         if (chosenBridge) return;
-        const fb = $("stFb");
         if (br.ok) {
           chosenBridge = br.word;
+          chosenKind = br.kind || "complex";
+          reactorPower = 70;
           SFX.powerup();
           addPoints(75, b, "#10b981");
           $("stBridgeSlot").textContent = it.front_connector ? br.word.charAt(0).toUpperCase() + br.word.slice(1) : br.word;
           $("stBridgeSlot").classList.add("locked");
-          $("stMeterFill").style.width = "68%";
-          $("stMeterLbl").textContent = `LEVEL 2 · ${br.kind.toUpperCase()}`;
-          fb.className = "sa-feedback ok";
-          fb.textContent = `⚡ Nice bridge! ${br.why} Now upgrade the weak yellow verb!`;
+          $("stMeterFill").style.width = "70%";
+          $("stMeterLbl").textContent = `LEVEL 2 · ${chosenKind.toUpperCase()}`;
+          setFeedback($("stFb"), "ok", `⚡ <b>Nice bridge!</b> ${esc(br.why)} Now upgrade the weak yellow verb!`);
           showVerbUpgrade();
         } else {
           hadMiss = true;
           resetCombo();
           SFX.bad();
           b.style.borderColor = "#fb7185";
-          fb.className = "sa-feedback bad";
-          fb.textContent = br.why;
+          setFeedback($("stFb"), "bad", esc(br.why));
         }
       };
-      bRow.appendChild(b);
+      $("stBridgeRow").appendChild(b);
     });
 
     function showVerbUpgrade() {
@@ -1426,19 +2248,18 @@ function runSentenceStretch(pack) {
       $("stControls").innerHTML = `
         <div style="text-align:center;color:#fde68a;font-size:0.95rem;font-weight:600">Pick a vivid upgrade for “${esc(it.weak_verb)}”:</div>
         <div class="st-pill-row" id="stVerbRow"></div>`;
-      const vRow = $("stVerbRow");
       it.verb_upgrades.forEach((vu) => {
         const vb = document.createElement("button");
         vb.type = "button";
         vb.className = "sa-btn ghost";
-        vb.style.fontSize = "1.05rem";
-        vb.style.padding = "11px 22px";
+        vb.style.fontSize = "1.05rem"; vb.style.padding = "11px 22px";
         vb.textContent = vu.word;
         vb.onclick = () => {
           if (chosenVerb) return;
-          const fb = $("stFb");
           if (vu.ok) {
             chosenVerb = vu.word;
+            commitStepClock(40);
+            reactorPower = 100;
             SFX.powerup();
             if (!hadMiss) correct += 1;
             skillHits[it.skill] = skillHits[it.skill] || { correct: 0, total: 0 };
@@ -1451,30 +2272,26 @@ function runSentenceStretch(pack) {
             addPoints(hadMiss ? 60 : 120, vb, "#facc15");
             $("stMeterFill").style.width = "100%";
             $("stMeterLbl").textContent = "⚡ OVERDRIVE 100%!";
-            const ws = $("stWeakSpan");
-            if (ws) {
-              ws.textContent = vu.word;
-              ws.style.borderColor = "#10b981";
-              ws.style.color = "#6ee7b7";
-              ws.style.background = "rgba(16,185,129,0.22)";
-            }
+            // Dynamically fuse the sentence with the EXACT vivid verb the student picked!
+            const fused = buildFusedSentence(it, chosenBridge, chosenKind, chosenVerb);
+            $("stRails").innerHTML = `<div style="font-size:1.22rem;font-weight:700;color:#6ee7b7;text-align:center">⚡ ${esc(fused)}</div>`;
             $("stControls").innerHTML = `
-              <div style="text-align:center;font-size:1.2rem;font-weight:700;color:#6ee7b7">
-                ⚡ ${esc(it.target_example)}
+              <div style="display:flex;justify-content:center;gap:12px;align-items:center">
+                <button type="button" class="sa-speak-btn" id="stHearBtn">🔊 Hear Your Fused Sentence</button>
               </div>`;
-            fb.className = "sa-feedback ok";
-            fb.innerHTML = `<span>🔥 <b>OVERDRIVE UNLOCKED!</b> Look how much stronger that sentence reads!</span><button type="button" class="sa-btn emerald" id="stNextBtn">Next Lab →</button>`;
-            $("stNextBtn").onclick = () => { idx += 1; renderStep(); };
+            $("stHearBtn").onclick = () => VOICE.speak(fused, { force: true });
+            setFeedback($("stFb"), "ok", "🔥 <b>OVERDRIVE UNLOCKED!</b> Two choppy sentences fused into one vivid Grade 4 sentence!", {
+              id: "stNextBtn", label: "Next Lab →", onClick: () => { idx += 1; renderStep(); },
+            });
           } else {
             hadMiss = true;
             resetCombo();
             SFX.bad();
             vb.style.borderColor = "#fb7185";
-            fb.className = "sa-feedback bad";
-            fb.textContent = `"${vu.word}" is still a sleepy weak verb — pick one that creates a sharper picture!`;
+            setFeedback($("stFb"), "bad", `“${esc(vu.word)}” is still a sleepy weak verb — pick one that paints a sharp action!`);
           }
         };
-        vRow.appendChild(vb);
+        $("stVerbRow").appendChild(vb);
       });
     }
   }
@@ -1482,30 +2299,34 @@ function runSentenceStretch(pack) {
 }
 
 // ===========================================================================
-// GAME 5: 🏎️ NEON TURBO TYPING ARENA (60fps Synthwave Highway + Finger Guide)
+// GAME 5: 🏎️ NEON TURBO TYPING (2x DPR Toronto Highway + Full 5-Row Finger Keyboard!)
 // ===========================================================================
 
 const KBD_ROWS = [
+  ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-"],
   ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
   ["A", "S", "D", "F", "G", "H", "J", "K", "L", "'"],
-  ["Z", "X", "C", "V", "B", "N", "M", ",", ".", "!"],
+  ["Z", "X", "C", "V", "B", "N", "M", ",", ".", "?"],
   ["SPACE"],
 ];
-const FINGER_HINT = {
-  Q: "L-Pinky", A: "L-Pinky", Z: "L-Pinky",
-  W: "L-Ring", S: "L-Ring", X: "L-Ring",
-  E: "L-Middle", D: "L-Middle", C: "L-Middle",
-  R: "L-Index", F: "L-Index", V: "L-Index", T: "L-Index", G: "L-Index", B: "L-Index",
-  Y: "R-Index", H: "R-Index", N: "R-Index", U: "R-Index", J: "R-Index", M: "R-Index",
-  I: "R-Middle", K: "R-Middle", ",": "R-Middle",
-  O: "R-Ring", L: "R-Ring", ".": "R-Ring",
-  P: "R-Pinky", "'": "R-Pinky", "!": "R-Pinky", "?": "R-Pinky", "\"": "R-Pinky",
-  " ": "Thumb",
+const FINGER_META = {
+  "1": ["L-Pinky", "f-lp"], "!": ["L-Pinky", "f-lp"], Q: ["L-Pinky", "f-lp"], A: ["L-Pinky", "f-lp"], Z: ["L-Pinky", "f-lp"],
+  "2": ["L-Ring", "f-lr"], W: ["L-Ring", "f-lr"], S: ["L-Ring", "f-lr"], X: ["L-Ring", "f-lr"],
+  "3": ["L-Middle", "f-lm"], E: ["L-Middle", "f-lm"], D: ["L-Middle", "f-lm"], C: ["L-Middle", "f-lm"],
+  "4": ["L-Index", "f-li"], "5": ["L-Index", "f-li"], R: ["L-Index", "f-li"], F: ["L-Index", "f-li"], V: ["L-Index", "f-li"], T: ["L-Index", "f-li"], G: ["L-Index", "f-li"], B: ["L-Index", "f-li"],
+  "6": ["R-Index", "f-ri"], "7": ["R-Index", "f-ri"], Y: ["R-Index", "f-ri"], H: ["R-Index", "f-ri"], N: ["R-Index", "f-ri"], U: ["R-Index", "f-ri"], J: ["R-Index", "f-ri"], M: ["R-Index", "f-ri"],
+  "8": ["R-Middle", "f-rm"], I: ["R-Middle", "f-rm"], K: ["R-Middle", "f-rm"], ",": ["R-Middle", "f-rm"],
+  "9": ["R-Ring", "f-rr"], O: ["R-Ring", "f-rr"], L: ["R-Ring", "f-rr"], ".": ["R-Ring", "f-rr"],
+  "0": ["R-Pinky", "f-rp"], "-": ["R-Pinky", "f-rp"], P: ["R-Pinky", "f-rp"], "'": ["R-Pinky", "f-rp"], "\"": ["R-Pinky", "f-rp"], "?": ["R-Pinky", "f-rp"],
+  SPACE: ["Thumb", "f-th"], " ": ["Thumb", "f-th"],
 };
+// Maps shifted punctuation to its physical base key on KBD_ROWS so EVERY symbol highlights cleanly!
+const SHIFT_KEY_MAP = { "!": "1", "\"": "'", "?": "?" };
 
 function runTypingArena(pack) {
   const stage = $("saGameStage");
   const items = pack.items;
+  const totalCharsAll = items.reduce((acc, it) => acc + it.text.length, 0);
   let idx = 0;
   let pos = 0;
   let totalTyped = 0;
@@ -1518,15 +2339,22 @@ function runTypingArena(pack) {
   let active = true;
   let rafId = 0;
 
+  const rivals = [
+    { lane: -0.55, prog: 0.28, col: "#f43f5e", passed: false },
+    { lane: 0.55, prog: 0.56, col: "#a855f7", passed: false },
+    { lane: -0.32, prog: 0.82, col: "#f59e0b", passed: false },
+  ];
+
   stage.innerHTML = `
     <div class="ty-road-wrap">
       <canvas id="tyCanvas"></canvas>
+      <div class="ty-rank" id="tyRank">POS: 4th / 4</div>
       <div class="ty-telemetry">
         <div class="ty-gauge" id="tyWpm">0 WPM</div>
         <div class="ty-gauge" id="tyAcc">100% ACC</div>
       </div>
     </div>
-    <div class="sa-panel" style="display:flex;flex-direction:column;gap:12px">
+    <div class="sa-panel" style="display:flex;flex-direction:column;gap:10px;padding:16px 20px">
       <div class="sa-mission-banner">
         <span class="sa-mission-tag" id="tyTag">🏎️ RACE LAP 1</span>
         <span class="sa-tag" id="tyFingerTag">Next finger: —</span>
@@ -1534,13 +2362,13 @@ function runTypingArena(pack) {
       <div class="ty-prompt-box" id="tyPrompt" tabindex="0"></div>
       <div class="ty-kbd" id="tyKbd"></div>
     </div>
-    <div class="sa-feedback idle" id="tyFb">Start typing right away! Keep accuracy <b>≥ 94%</b> to ignite golden Turbo Boost!</div>`;
+    <div class="sa-feedback idle" id="tyFb"><span class="sa-fb-msg">Start typing right away! Keep accuracy <b>≥ 94%</b> for golden Turbo Boost and overtake all 3 rival racers!</span></div>`;
 
-  // Build visual keyboard
   $("tyKbd").innerHTML = KBD_ROWS.map((row) =>
-    `<div class="ty-kbd-row">${row.map((k) =>
-      `<span class="ty-key ${k === "SPACE" ? "space" : ""}" data-key="${k}">${k === "SPACE" ? "SPACE" : k}</span>`
-    ).join("")}</div>`
+    `<div class="ty-kbd-row">${row.map((k) => {
+      const fCls = (FINGER_META[k] || ["", "f-rp"])[1];
+      return `<span class="ty-key ${fCls} ${k === "SPACE" ? "space" : ""}" data-key="${esc(k)}">${k === "SPACE" ? "SPACE" : esc(k)}</span>`;
+    }).join("")}</div>`
   ).join("");
 
   const cv = $("tyCanvas");
@@ -1548,90 +2376,111 @@ function runTypingArena(pack) {
 
   function drawRoad() {
     if (!active) return;
-    const r = cv.parentElement.getBoundingClientRect();
-    if (cv.width !== Math.floor(r.width) || cv.height !== Math.floor(r.height)) {
-      cv.width = Math.max(300, Math.floor(r.width));
-      cv.height = Math.max(160, Math.floor(r.height));
-    }
-    const W = cv.width, H = cv.height;
+    const { W, H } = fitCanvas(cv, ctx, 300, 180);
     const horiz = H * 0.44;
     const turbo = currentAcc >= 94 && currentWpm >= 14;
-    const speed = 0.015 + Math.min(0.12, currentWpm * 0.0022);
+    const speed = 0.015 + Math.min(0.14, currentWpm * 0.0026);
     roadOffset = (roadOffset + speed) % 1;
+    const myProg = totalCorrect / Math.max(1, totalCharsAll);
 
-    // Sky gradient
     const sky = ctx.createLinearGradient(0, 0, 0, horiz);
-    sky.addColorStop(0, "#05040f");
-    sky.addColorStop(1, turbo ? "#1e1b4b" : "#0f172a");
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, horiz);
+    sky.addColorStop(0, "#05040f"); sky.addColorStop(1, turbo ? "#2e1065" : "#111834");
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, horiz);
 
-    // Synthwave sun
-    const sunG = ctx.createRadialGradient(W / 2, horiz, 4, W / 2, horiz, 72);
-    sunG.addColorStop(0, turbo ? "#facc15" : "#22d3ee");
-    sunG.addColorStop(0.6, turbo ? "rgba(249,115,22,0.55)" : "rgba(168,85,247,0.45)");
-    sunG.addColorStop(1, "transparent");
-    ctx.fillStyle = sunG;
-    ctx.beginPath();
-    ctx.arc(W / 2, horiz, 72, Math.PI, 0);
-    ctx.fill();
+    const sunR = 58;
+    const sunG = ctx.createLinearGradient(W / 2, horiz - sunR, W / 2, horiz);
+    sunG.addColorStop(0, turbo ? "#fef08a" : "#38bdf8");
+    sunG.addColorStop(0.55, turbo ? "#f97316" : "#a855f7");
+    sunG.addColorStop(1, "#ec4899");
+    ctx.save();
+    ctx.fillStyle = sunG; ctx.beginPath(); ctx.arc(W / 2, horiz, sunR, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = turbo ? "#2e1065" : "#111834";
+    for (let s = 1; s <= 4; s++) ctx.fillRect(W / 2 - sunR, horiz - s * 9, sunR * 2, s * 1.1);
+    ctx.restore();
 
-    // Road floor
-    ctx.fillStyle = "#080c1c";
-    ctx.fillRect(0, horiz, W, H - horiz);
+    // Toronto Skyline + CN Tower
+    ctx.fillStyle = "#080b18";
+    const towers = [[0.12, 30, 22], [0.16, 42, 18], [0.22, 26, 26], [0.30, 48, 20], [0.36, 34, 16], [0.62, 38, 20], [0.68, 50, 24], [0.75, 32, 18], [0.81, 44, 22], [0.87, 28, 18]];
+    for (const [fx, th, tw] of towers) ctx.fillRect(W * fx, horiz - th, tw, th);
+    const cnx = W * 0.43;
+    ctx.fillRect(cnx - 2.5, horiz - 78, 5, 78);
+    ctx.beginPath(); ctx.ellipse(cnx, horiz - 52, 11, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = turbo ? "#facc15" : "#22d3ee";
+    ctx.fillRect(cnx - 1, horiz - 86, 2, 9); ctx.fillRect(cnx - 7, horiz - 53, 14, 2);
 
-    // Perspective grid lines
-    ctx.strokeStyle = errFlash > 0.1 ? "#fb7185" : (turbo ? "rgba(250,204,21,0.55)" : "rgba(34,211,238,0.42)");
+    ctx.fillStyle = "#070b1a"; ctx.fillRect(0, horiz, W, H - horiz);
+
+    ctx.strokeStyle = errFlash > 0.1 ? "#fb7185" : (turbo ? "rgba(250,204,21,0.58)" : "rgba(34,211,238,0.44)");
     ctx.lineWidth = 1.5;
     for (let i = -7; i <= 7; i++) {
-      ctx.beginPath();
-      ctx.moveTo(W / 2 + i * 24, horiz);
-      ctx.lineTo(W / 2 + i * 135, H);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(W / 2 + i * 24, horiz); ctx.lineTo(W / 2 + i * 145, H); ctx.stroke();
     }
-    for (let j = 0; j < 7; j++) {
-      const t = ((j + roadOffset) / 7) ** 2;
+    for (let j = 0; j < 8; j++) {
+      const t = ((j + roadOffset) / 8) ** 2;
       const y = horiz + t * (H - horiz);
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(W, y);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     }
 
-    // Sleek Neon Hover-Racer
+    // Turbo FOV speed lines along edges when blazing fast!
+    if (turbo) {
+      ctx.strokeStyle = "rgba(250, 204, 21, 0.35)"; ctx.lineWidth = 2;
+      for (let k = 0; k < 6; k++) {
+        const side = k % 2 === 0 ? -1 : 1;
+        const p = ((k * 0.23 + roadOffset * 2) % 1);
+        const lx = W / 2 + side * (160 + p * (W * 0.36));
+        const ly = horiz + p * (H - horiz);
+        ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + side * 26, ly + 14); ctx.stroke();
+      }
+    }
+
+    let ahead = 0;
+    for (const rv of rivals) {
+      const rel = rv.prog - myProg;
+      if (rel > 0) ahead += 1;
+      else if (!rv.passed) {
+        rv.passed = true;
+        SFX.powerup();
+        FX.floatEl($("tyRank"), "🏁 OVERTAKE!", "#facc15");
+      }
+      if (rel > -0.1 && rel < 0.45) {
+        const depth = Math.max(0.05, Math.min(1, 1 - rel / 0.45));
+        const ry = horiz + (depth ** 1.7) * (H - horiz - 30);
+        const rx = W / 2 + rv.lane * (60 + depth * 210);
+        const sc = 0.25 + depth * 0.85;
+        ctx.save();
+        ctx.translate(rx, ry); ctx.scale(sc, sc);
+        ctx.fillStyle = "#111827"; ctx.strokeStyle = rv.col; ctx.lineWidth = 2.5;
+        ctx.shadowColor = rv.col; ctx.shadowBlur = 12;
+        ctx.beginPath(); ctx.moveTo(0, -16); ctx.lineTo(26, 10); ctx.lineTo(-26, 10); ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = rv.col; ctx.fillRect(-10, 10, 20, 4);
+        ctx.restore();
+      }
+    }
+    $("tyRank").textContent = `POS: ${["1st 🏆", "2nd", "3rd", "4th"][ahead]} / 4`;
+
     const cx = W / 2;
-    const cy = H - 36 + Math.sin(performance.now() * 0.008) * 3;
-    // Thruster flame
+    const cy = H - 34 + Math.sin(performance.now() * 0.009) * 2.5;
     ctx.save();
     ctx.fillStyle = errFlash > 0.1 ? "#fb7185" : (turbo ? "#facc15" : "#22d3ee");
-    ctx.shadowColor = ctx.fillStyle;
-    ctx.shadowBlur = turbo ? 26 : 14;
-    const fl = 14 + Math.min(34, currentWpm * 0.8) + Math.random() * 8;
-    ctx.beginPath();
-    ctx.moveTo(cx - 18, cy + 8);
-    ctx.lineTo(cx, cy + 8 + fl);
-    ctx.lineTo(cx + 18, cy + 8);
-    ctx.closePath();
-    ctx.fill();
+    ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = turbo ? 26 : 14;
+    const fl = 12 + Math.min(34, currentWpm * 0.85) + Math.random() * 7;
+    for (const ox of [-13, 13]) {
+      ctx.beginPath(); ctx.moveTo(cx + ox - 6, cy + 11); ctx.lineTo(cx + ox, cy + 11 + fl); ctx.lineTo(cx + ox + 6, cy + 11); ctx.closePath(); ctx.fill();
+    }
     ctx.restore();
 
-    // Racer chassis
     ctx.save();
-    ctx.fillStyle = "#0f172a";
-    ctx.strokeStyle = turbo ? "#facc15" : "#38bdf8";
-    ctx.lineWidth = 2.5;
+    ctx.fillStyle = "#0f172a"; ctx.strokeStyle = turbo ? "#facc15" : "#38bdf8"; ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.moveTo(cx, cy - 26);
-    ctx.lineTo(cx + 38, cy + 12);
-    ctx.lineTo(cx + 18, cy + 16);
-    ctx.lineTo(cx - 18, cy + 16);
-    ctx.lineTo(cx - 38, cy + 12);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+    ctx.moveTo(cx, cy - 25); ctx.lineTo(cx + 38, cy + 11); ctx.lineTo(cx + 18, cy + 16);
+    ctx.lineTo(cx - 18, cy + 16); ctx.lineTo(cx - 38, cy + 11); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = turbo ? "#fef08a" : "#38bdf8";
+    ctx.beginPath(); ctx.moveTo(cx, cy - 14); ctx.lineTo(cx + 10, cy + 2); ctx.lineTo(cx - 10, cy + 2); ctx.closePath(); ctx.fill();
     ctx.restore();
 
-    errFlash *= 0.86;
+    errFlash *= 0.85;
     rafId = requestAnimationFrame(drawRoad);
   }
   rafId = requestAnimationFrame(drawRoad);
@@ -1639,7 +2488,7 @@ function runTypingArena(pack) {
   function renderPrompt(badNow = false) {
     const it = items[idx];
     const txt = it.text;
-    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Neon Turbo Typing" });
+    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Neon Turbo Typing", aiPack: !!pack.ai_generated });
     $("tyTag").textContent = `🏎️ LAP ${idx + 1}/${items.length} · ${it.tag}`;
     let html = "";
     for (let i = 0; i < txt.length; i++) {
@@ -1651,12 +2500,10 @@ function runTypingArena(pack) {
     $("tyPrompt").innerHTML = html;
 
     const targetChar = txt[pos] || "";
-    const normKey = targetChar === " " ? "SPACE" : targetChar.toUpperCase();
-    $("tyKbd").querySelectorAll(".ty-key").forEach((el) => {
-      el.classList.toggle("next", el.dataset.key === normKey);
-    });
+    const normKey = targetChar === " " ? "SPACE" : (SHIFT_KEY_MAP[targetChar] || targetChar.toUpperCase());
+    $("tyKbd").querySelectorAll(".ty-key").forEach((el) => el.classList.toggle("next", el.dataset.key === normKey));
     const shiftNeed = /[A-Z!"?]/.test(targetChar);
-    const fHint = FINGER_HINT[targetChar.toUpperCase()] || "Pinky";
+    const fHint = (FINGER_META[targetChar] || FINGER_META[targetChar.toUpperCase()] || ["R-Pinky"])[0];
     $("tyFingerTag").textContent = targetChar
       ? `Next: ${targetChar === " " ? "SPACE" : targetChar} (${shiftNeed ? "Shift + " : ""}${fHint})`
       : "Lap clear!";
@@ -1676,7 +2523,10 @@ function runTypingArena(pack) {
     if (["Shift", "CapsLock", "Tab", "Escape"].includes(e.key)) return;
     if (e.key.length !== 1) return;
     e.preventDefault();
-    if (!firstKeyTs) firstKeyTs = performance.now();
+    if (!firstKeyTs) {
+      firstKeyTs = performance.now();
+      beginStepClock();
+    }
 
     const target = items[idx].text[pos];
     totalTyped += 1;
@@ -1686,6 +2536,7 @@ function runTypingArena(pack) {
       SFX.keyTick();
       updateMetrics();
       if (pos >= items[idx].text.length) {
+        commitStepClock(40);
         addPoints(150, $("tyPrompt"), "#22d3ee");
         SFX.powerup();
         idx += 1;
@@ -1694,17 +2545,10 @@ function runTypingArena(pack) {
           const mins = Math.max(0.08, (performance.now() - firstKeyTs) / 60000);
           const cpm = Math.round(totalCorrect / mins);
           const wpm = Math.round(cpm / 5);
-          finishGame({
-            correct: totalCorrect,
-            total: Math.max(1, totalTyped),
-            wpm,
-            cpm,
-            production_passed: currentAcc >= 90,
-          });
+          finishGame({ correct: totalCorrect, total: Math.max(1, totalTyped), wpm, cpm, production_passed: currentAcc >= 90 });
           return;
         }
-        $("tyFb").className = "sa-feedback ok";
-        $("tyFb").textContent = `⚡ Lap cleared at ${currentWpm} WPM (${currentAcc}% accuracy)! Keep flying!`;
+        setFeedback($("tyFb"), "ok", `⚡ Lap cleared at <b>${currentWpm} WPM</b> (${currentAcc}% accuracy)! Keep flying!`);
       }
       renderPrompt(false);
     } else {
@@ -1717,16 +2561,12 @@ function runTypingArena(pack) {
   };
 
   window.addEventListener("keydown", onKeyDown);
-  addCleanup(() => {
-    active = false;
-    cancelAnimationFrame(rafId);
-    window.removeEventListener("keydown", onKeyDown);
-  });
+  addCleanup(() => { active = false; cancelAnimationFrame(rafId); window.removeEventListener("keydown", onKeyDown); });
   renderPrompt(false);
 }
 
 // ===========================================================================
-// GAME 6: 🔎 MYSTERY CLUE DETECTIVE (Stylus Highlight + Deduction + Verdict)
+// GAME 6: 🔎 MYSTERY CLUE DETECTIVE (2x DPR Noir Pinboard + Sticky Highlighter + Above-Fold Stamp!)
 // ===========================================================================
 
 function runClueDetective(pack) {
@@ -1736,65 +2576,244 @@ function runClueDetective(pack) {
   let correct = 0;
   const skillHits = {};
   let lastVerdict = "";
+  let stampProgress = 0;
+  let caseClosedNow = false;
+  let deskShake = 0;
+
+  stage.innerHTML = `
+    <div class="sa-scene-wrap" style="border-color:rgba(250,204,21,0.42)"><canvas id="cdDeskCv"></canvas></div>
+    <div id="cdHost" style="display:flex;flex-direction:column;gap:10px"></div>`;
+
+  const dcv = $("cdDeskCv");
+  const dctx = dcv.getContext("2d");
+  const motes = Array.from({ length: 24 }, () => ({ x: Math.random(), y: Math.random(), vx: (Math.random() - 0.5) * 0.001, vy: -0.001 - Math.random() * 0.001, r: 1 + Math.random() * 1.8 }));
+  let active = true;
+  let rafId = 0;
+
+  function drawDesk() {
+    if (!active) return;
+    const { W, H } = fitCanvas(dcv, dctx, 300, 110);
+    const nowS = performance.now() * 0.001;
+    const sx = deskShake > 0.2 ? (Math.random() - 0.5) * deskShake : 0;
+    const sy = deskShake > 0.2 ? (Math.random() - 0.5) * deskShake : 0;
+    deskShake *= 0.84;
+
+    dctx.save();
+    dctx.translate(sx, sy);
+
+    const bg = dctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, "#0b0d17"); bg.addColorStop(1, "#181826");
+    dctx.fillStyle = bg; dctx.fillRect(0, 0, W, H);
+
+    // Subtle Noir Pinboard Evidence Cards + Red Detective Strings!
+    const pins = [[W * 0.14, H * 0.58], [W * 0.34, H * 0.44], [W * 0.68, H * 0.42], [W * 0.86, H * 0.60]];
+    dctx.strokeStyle = "rgba(244, 63, 94, 0.35)"; dctx.lineWidth = 1.6;
+    dctx.beginPath();
+    pins.forEach(([px, py], i) => i === 0 ? dctx.moveTo(px, py) : dctx.lineTo(px, py));
+    dctx.stroke();
+
+    for (const [px, py] of pins) {
+      dctx.fillStyle = "rgba(30, 41, 59, 0.75)"; dctx.strokeStyle = "rgba(250, 204, 21, 0.25)"; dctx.lineWidth = 1;
+      dctx.beginPath(); dctx.roundRect(px - 32, py - 16, 64, 38, 4); dctx.fill(); dctx.stroke();
+      // Fake dossier lines
+      dctx.fillStyle = "rgba(148, 163, 184, 0.25)";
+      dctx.fillRect(px - 22, py - 4, 44, 3); dctx.fillRect(px - 22, py + 4, 32, 3); dctx.fillRect(px - 22, py + 12, 38, 3);
+      // Red thumbtack pin
+      dctx.fillStyle = "#f43f5e"; dctx.beginPath(); dctx.arc(px, py - 12, 3.5, 0, Math.PI * 2); dctx.fill();
+    }
+
+    const lg = dctx.createRadialGradient(W * 0.5, -10, 10, W * 0.5, H * 0.5, W * 0.45);
+    lg.addColorStop(0, "rgba(250, 204, 21, 0.2)"); lg.addColorStop(0.6, "rgba(245, 158, 11, 0.05)"); lg.addColorStop(1, "transparent");
+    dctx.fillStyle = lg; dctx.fillRect(0, 0, W, H);
+
+    for (const m of motes) {
+      m.x += m.vx; m.y += m.vy;
+      if (m.y < 0) { m.y = 1; m.x = Math.random(); }
+      dctx.fillStyle = "rgba(254, 240, 138, 0.35)";
+      dctx.beginPath(); dctx.arc(m.x * W, m.y * H, m.r, 0, Math.PI * 2); dctx.fill();
+    }
+
+    // Sweeping Magnifying Glass Scanner
+    const mx = W * 0.5 + Math.sin(nowS * 1.1) * (W * 0.26);
+    const my = H * 0.52 + Math.cos(nowS * 1.6) * 10;
+    dctx.save();
+    dctx.strokeStyle = "#facc15"; dctx.lineWidth = 3.5; dctx.shadowColor = "#facc15"; dctx.shadowBlur = 14;
+    dctx.beginPath(); dctx.arc(mx, my, 22, 0, Math.PI * 2); dctx.stroke();
+    dctx.fillStyle = "rgba(250, 204, 21, 0.12)"; dctx.fill();
+    dctx.beginPath(); dctx.moveTo(mx + 15, my + 15); dctx.lineTo(mx + 32, my + 32); dctx.lineWidth = 6; dctx.lineCap = "round"; dctx.stroke();
+    dctx.restore();
+
+    dctx.font = "700 12px 'JetBrains Mono', monospace";
+    dctx.fillStyle = "#fde047"; dctx.textAlign = "left";
+    dctx.fillText(`DETECTIVE DESK · CASE ${Math.min(idx + 1, items.length)} / ${items.length}`, 18, 22);
+
+    if (caseClosedNow) {
+      stampProgress = Math.min(1, stampProgress + 0.12);
+      const sc = 2.1 - 1.1 * stampProgress;
+      dctx.save();
+      dctx.translate(W * 0.5, H * 0.54);
+      dctx.rotate(-0.11);
+      dctx.scale(sc, sc);
+      dctx.globalAlpha = stampProgress;
+      dctx.strokeStyle = "#facc15"; dctx.fillStyle = "rgba(250, 204, 21, 0.18)";
+      dctx.shadowColor = "#facc15"; dctx.shadowBlur = 22; dctx.lineWidth = 4;
+      dctx.beginPath(); dctx.roundRect(-112, -22, 224, 44, 8); dctx.fill(); dctx.stroke();
+      dctx.font = "700 21px 'JetBrains Mono', monospace";
+      dctx.fillStyle = "#fef08a"; dctx.textAlign = "center";
+      dctx.fillText("CASE CLOSED ✓", 0, 7);
+      dctx.restore();
+    }
+
+    dctx.restore();
+    rafId = requestAnimationFrame(drawDesk);
+  }
+  rafId = requestAnimationFrame(drawDesk);
+  addCleanup(() => { active = false; cancelAnimationFrame(rafId); });
+
+  let caseCleanup = null;
+  addCleanup(() => { if (caseCleanup) { caseCleanup(); caseCleanup = null; } });
 
   function renderCase() {
+    VOICE.stop();
+    if (caseCleanup) { caseCleanup(); caseCleanup = null; }
     if (idx >= items.length) {
-      finishGame({
-        correct,
-        total: items.length,
-        production_passed: !!lastVerdict,
-        production_sentence: lastVerdict,
-        skill_hits: skillHits,
-      });
+      finishGame({ correct, total: items.length, production_passed: !!lastVerdict, production_sentence: lastVerdict, skill_hits: skillHits });
       return;
     }
+    beginStepClock();
+    caseClosedNow = false;
+    stampProgress = 0;
     const it = items[idx];
-    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Mystery Clue Detective" });
+    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Mystery Clue Detective", aiPack: !!pack.ai_generated });
     let clueFound = false;
     let choiceLocked = false;
     let hadMiss = false;
 
-    stage.innerHTML = `
-      <div class="sa-panel">
+    $("cdHost").innerHTML = `
+      <div class="sa-panel" style="padding:14px 18px">
         <div class="sa-mission-banner">
           <span class="sa-mission-tag">🔎 ${esc(it.case_title)}</span>
-          <span class="sa-tag">Step 1: Highlight the proof sentence with your stylus or mouse!</span>
+          <button type="button" class="sa-speak-btn" id="cdSpeakBtn">🔊 Read Casefile</button>
         </div>
-        <div class="sa-prompt-text">${esc(it.question)}</div>
+        <div class="sa-prompt-text" style="font-size:1.18rem">${esc(it.question)}</div>
       </div>
-      <div class="cd-casefile" id="cdFile"></div>
+      <div class="cd-casefile-wrap" id="cdWrap">
+        <canvas class="cd-hl-canvas" id="cdHlCv"></canvas>
+        <div class="cd-casefile" id="cdFile" style="padding:14px 16px;gap:8px"></div>
+      </div>
       <div id="cdStep2" hidden></div>
       <div id="cdStep3" hidden></div>
-      <div class="sa-feedback idle" id="cdFb">Tap or swipe your stylus across the exact sentence that proves the answer!</div>`;
+      <div class="sa-feedback idle" id="cdFb"><span class="sa-fb-msg">Swipe your Lenovo stylus (or mouse) across the exact proof sentence like a glowing highlighter — or tap it!</span></div>`;
+
+    $("cdSpeakBtn").onclick = () => VOICE.speak(`${it.question} ${it.sentences.join(" ")}`, { force: true });
 
     const file = $("cdFile");
+    const lineEls = [];
     it.sentences.forEach((sent, si) => {
       const div = document.createElement("div");
       div.className = "cd-line";
+      div.style.padding = "10px 14px";
+      div.dataset.si = si;
       div.innerHTML = `<span style="color:#94a3b8;font-family:'JetBrains Mono',monospace;margin-right:8px">[${si + 1}]</span>${esc(sent)}`;
-      div.onclick = () => {
-        if (clueFound) return;
-        const fb = $("cdFb");
-        if (si === it.clue_index) {
-          clueFound = true;
-          div.classList.add("highlighted");
-          SFX.highlight();
-          addPoints(75, div, "#facc15");
-          fb.className = "sa-feedback ok";
-          fb.textContent = "🟡 Evidence highlighted! Now lock in your deduction below.";
-          showChoices();
-        } else {
-          hadMiss = true;
-          resetCombo();
-          SFX.bad();
-          div.classList.add("miss");
-          setTimeout(() => div.classList.remove("miss"), 380);
-          fb.className = "sa-feedback bad";
-          fb.textContent = "That line sets the scene, but doesn't hold the smoking-gun clue. Check the other lines!";
-        }
-      };
       file.appendChild(div);
+      lineEls.push(div);
     });
+
+    const wrap = $("cdWrap");
+    const hcv = $("cdHlCv");
+    const hctx = hcv.getContext("2d");
+    let hlDims = fitCanvas(hcv, hctx, 240, 120);
+    const ro = new ResizeObserver(() => { if (!clueFound) hlDims = fitCanvas(hcv, hctx, 240, 120); });
+    ro.observe(wrap);
+    caseCleanup = () => ro.disconnect();
+
+    function checkLine(si, savedStroke = null) {
+      if (clueFound || si < 0 || si >= lineEls.length) return;
+      const div = lineEls[si];
+      if (si === it.clue_index) {
+        clueFound = true;
+        div.classList.add("highlighted");
+        hcv.style.pointerEvents = "none";
+        // Keep the child's glowing yellow highlighter stroke painted right over the proof sentence!
+        if (savedStroke && savedStroke.length >= 2) {
+          hctx.clearRect(0, 0, hlDims.W, hlDims.H);
+          hctx.strokeStyle = "rgba(250, 204, 21, 0.28)";
+          hctx.lineWidth = 22; hctx.lineCap = "round"; hctx.lineJoin = "round";
+          hctx.beginPath();
+          savedStroke.forEach((p, i) => i === 0 ? hctx.moveTo(p.x, p.y) : hctx.lineTo(p.x, p.y));
+          hctx.stroke();
+        }
+        SFX.highlight();
+        addPoints(75, div, "#facc15");
+        setFeedback($("cdFb"), "ok", "🟡 <b>Evidence highlighted!</b> Now lock in your deduction below.");
+        showChoices();
+      } else {
+        hadMiss = true;
+        resetCombo();
+        SFX.bad();
+        div.classList.add("miss");
+        safeTimeout(() => div.classList.remove("miss"), 380);
+        setFeedback($("cdFb"), "bad", "That line sets the scene, but doesn't hold the smoking-gun clue. Check the other lines!");
+      }
+    }
+
+    let activePid = null;
+    let hlPts = [];
+    let hlScreenPts = [];
+    hcv.addEventListener("pointerdown", (e) => {
+      if (clueFound) return;
+      if (e.pointerType === "pen") App.penDetected = true;
+      if (App.penDetected && e.pointerType === "touch") return; // Palm rejection
+      if (activePid !== null) return;
+      activePid = e.pointerId;
+      hcv.setPointerCapture?.(e.pointerId);
+      const r = wrap.getBoundingClientRect();
+      hlPts = [{ x: e.clientX - r.left, y: e.clientY - r.top }];
+      hlScreenPts = [{ x: e.clientX, y: e.clientY }];
+    });
+    hcv.addEventListener("pointermove", (e) => {
+      if (e.pointerId !== activePid || clueFound) return;
+      const r = wrap.getBoundingClientRect();
+      const evts = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+      for (const ev of evts) {
+        hlPts.push({ x: ev.clientX - r.left, y: ev.clientY - r.top });
+        hlScreenPts.push({ x: ev.clientX, y: ev.clientY });
+      }
+      hctx.clearRect(0, 0, hlDims.W, hlDims.H);
+      hctx.strokeStyle = "rgba(250, 204, 21, 0.42)";
+      hctx.lineWidth = 22; hctx.lineCap = "round"; hctx.lineJoin = "round";
+      hctx.beginPath();
+      hlPts.forEach((p, i) => i === 0 ? hctx.moveTo(p.x, p.y) : hctx.lineTo(p.x, p.y));
+      hctx.stroke();
+    });
+    const finishHl = (e) => {
+      if (e.pointerId !== activePid) return;
+      activePid = null;
+      const saved = hlPts.slice();
+      hctx.clearRect(0, 0, hlDims.W, hlDims.H);
+      if (hlScreenPts.length) {
+        if (hlScreenPts.length >= 2) FX.slash(hlScreenPts, "rgba(250, 204, 21, 0.7)", 16);
+        const counts = new Map();
+        for (const sp of hlScreenPts) {
+          for (const el of lineEls) {
+            const lr = el.getBoundingClientRect();
+            if (sp.y >= lr.top && sp.y <= lr.bottom) {
+              const sidx = Number(el.dataset.si);
+              counts.set(sidx, (counts.get(sidx) || 0) + 1);
+            }
+          }
+        }
+        let bestIdx = -1, bestCnt = 0;
+        for (const [k, v] of counts.entries()) {
+          if (v > bestCnt) { bestCnt = v; bestIdx = k; }
+        }
+        if (bestIdx >= 0) checkLine(bestIdx, saved);
+      }
+      hlPts = [];
+      hlScreenPts = [];
+    };
+    hcv.addEventListener("pointerup", finishHl);
+    hcv.addEventListener("pointercancel", finishHl);
 
     function showChoices() {
       const s2 = $("cdStep2");
@@ -1804,25 +2823,24 @@ function runClueDetective(pack) {
         const b = document.createElement("button");
         b.type = "button";
         b.className = "sa-choice-btn";
+        b.style.padding = "12px 16px";
         b.textContent = ch.label;
         b.onclick = () => {
           if (choiceLocked) return;
-          const fb = $("cdFb");
           if (ch.ok) {
             choiceLocked = true;
-            b.classList.add("ok");
             SFX.ok();
             addPoints(65, b, "#10b981");
-            fb.className = "sa-feedback ok";
-            fb.textContent = `✅ Deduction locked! ${it.explain} Now write your 1-sentence Case Verdict!`;
+            // Collapse Step 2 into a sleek 1-line badge so Noir Desk + CASE CLOSED stamp stay 100% ABOVE THE FOLD!
+            s2.innerHTML = `<div class="cd-locked-badge">✅ Deduction Locked: <b>${esc(ch.label)}</b> — ${esc(it.explain)}</div>`;
+            setFeedback($("cdFb"), "ok", "✍️ Deduction locked! Finish your 1-sentence Case Verdict using <b>because</b> + real proof!");
             showVerdict();
           } else {
             hadMiss = true;
             resetCombo();
             b.classList.add("bad");
             SFX.bad();
-            fb.className = "sa-feedback bad";
-            fb.textContent = ch.why || "Re-read your highlighted clue carefully!";
+            setFeedback($("cdFb"), "bad", esc(ch.why || "Re-read your highlighted clue carefully!"));
           }
         };
         $("cdChoices").appendChild(b);
@@ -1833,10 +2851,10 @@ function runClueDetective(pack) {
       const s3 = $("cdStep3");
       s3.hidden = false;
       s3.innerHTML = `
-        <div class="sa-panel" style="border-color:rgba(250,204,21,0.5)">
-          <div style="font-weight:700;color:#fde68a;margin-bottom:8px">✍️ Final Step — Stamp Case Closed with a Causal Verdict (use “because” + period!):</div>
-          <input type="text" id="cdVerdictInput" class="sa-sentence-input" value="${esc(it.verdict_starter)} " autocomplete="off" />
-          <div style="display:flex;justify-content:flex-end;margin-top:10px">
+        <div class="sa-panel" style="padding:14px 16px;border-color:rgba(250,204,21,0.5)">
+          <div style="font-weight:700;color:#fde68a;margin-bottom:8px;font-size:0.95rem">✍️ Final Step — Finish your Causal Verdict (explain WHY after “because” + end with a period!):</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <input type="text" id="cdVerdictInput" class="sa-sentence-input" style="flex:1;min-width:260px" value="${esc(it.verdict_starter)} " autocomplete="off" />
             <button type="button" class="sa-btn primary" id="cdCloseBtn">⚖️ Stamp CASE CLOSED</button>
           </div>
         </div>`;
@@ -1847,30 +2865,49 @@ function runClueDetective(pack) {
       const submitVerdict = async () => {
         const txt = inp.value.trim();
         if (!txt) return;
-        const r = await fetch("/api/skill-games/check-sentence", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: txt, required_word: it.required_word || "", require_because: true }),
-        });
-        const chk = await r.json();
-        const fb = $("cdFb");
-        if (chk.ok) {
-          SFX.powerup();
-          lastVerdict = txt;
-          if (!hadMiss) correct += 1;
-          skillHits[it.skill] = skillHits[it.skill] || { correct: 0, total: 0 };
-          skillHits[it.skill].total += 1;
-          if (!hadMiss) skillHits[it.skill].correct += 1;
-          addPoints(140, inp, "#facc15");
-          fb.className = "sa-feedback ok";
-          fb.innerHTML = `<span>🏆 <b>CASE CLOSED!</b> Airtight evidence!</span><button type="button" class="sa-btn emerald" id="cdNextBtn">Next Case →</button>`;
-          inp.disabled = true;
-          $("cdCloseBtn").disabled = true;
-          $("cdNextBtn").onclick = () => { idx += 1; renderCase(); };
-        } else {
+        const btn = $("cdCloseBtn");
+        btn.disabled = true;
+        btn.textContent = "Checking…";
+        try {
+          const r = await fetch("/api/skill-games/check-sentence", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: txt,
+              required_word: it.required_word || "",
+              require_because: true,
+              context_prompt: `Question: ${it.question} | Text proof clue: ${it.sentences[it.clue_index]} | Answer: ${it.explain}`,
+            }),
+          });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const chk = await r.json();
+          if (chk.ok) {
+            commitStepClock(45);
+            caseClosedNow = true;
+            deskShake = 12;
+            SFX.stamp();
+            lastVerdict = txt;
+            if (!hadMiss) correct += 1;
+            skillHits[it.skill] = skillHits[it.skill] || { correct: 0, total: 0 };
+            skillHits[it.skill].total += 1;
+            if (!hadMiss) skillHits[it.skill].correct += 1;
+            addPoints(140, inp, "#facc15");
+            inp.disabled = true;
+            btn.textContent = "✓ Stamped";
+            setFeedback($("cdFb"), "ok", "🏆 <b>CASE CLOSED!</b> Airtight evidence!", {
+              id: "cdNextBtn", label: "Next Case →", onClick: () => { idx += 1; renderCase(); },
+            });
+          } else {
+            btn.disabled = false;
+            btn.textContent = "⚖️ Stamp CASE CLOSED";
+            SFX.bad();
+            setFeedback($("cdFb"), "bad", esc(chk.feedback));
+          }
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = "⚖️ Stamp CASE CLOSED";
           SFX.bad();
-          fb.className = "sa-feedback bad";
-          fb.textContent = chk.feedback;
+          setFeedback($("cdFb"), "bad", "Network hiccup checking your verdict — click Stamp CASE CLOSED to try again!");
         }
       };
       $("cdCloseBtn").onclick = submitVerdict;
@@ -1886,10 +2923,19 @@ $("saBackBtn").onclick = () => {
   if (App.currentGameId) {
     loadHub();
   } else if (IS_EMBEDDED) {
+    VOICE.stop();
     try { window.parent.postMessage({ __skillArcadeClose: true }, "*"); } catch (_) {}
   } else {
+    VOICE.stop();
     location.href = IS_SANDBOX ? "/?sandbox=1" : "/";
   }
+};
+
+$("saVoiceBtn").onclick = () => {
+  const on = VOICE.toggle();
+  $("saVoiceBtn").classList.toggle("on", on);
+  $("saVoiceBtn").textContent = on ? "🗣️" : "🤫";
+  $("saVoiceBtn").setAttribute("aria-pressed", String(on));
 };
 
 $("saMuteBtn").onclick = () => {

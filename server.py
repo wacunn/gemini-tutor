@@ -488,6 +488,7 @@ class SkillSentenceIn(BaseModel):
     text: str
     required_word: str = ""
     require_because: bool = False
+    context_prompt: str = ""
 
 
 class SkillCompleteIn(BaseModel):
@@ -527,14 +528,32 @@ async def skill_games_pack(body: SkillPackIn):
         raise HTTPException(404, str(e))
 
 
+class SkillHandwritingIn(BaseModel):
+    image_b64: str
+    expected_word: str = ""
+
+
 @app.post("/api/skill-games/check-sentence")
-def skill_games_check_sentence(body: SkillSentenceIn):
+async def skill_games_check_sentence(body: SkillSentenceIn):
     from tutor import skill_games
 
-    return skill_games.verify_production_sentence(
+    return await asyncio.to_thread(
+        skill_games.verify_production_sentence,
         body.text,
         required_word=body.required_word,
         require_because=bool(body.require_because),
+        context_prompt=body.context_prompt,
+    )
+
+
+@app.post("/api/skill-games/read-handwriting")
+async def skill_games_read_handwriting(body: SkillHandwritingIn):
+    from tutor import skill_games
+
+    return await asyncio.to_thread(
+        skill_games.read_forge_handwriting,
+        body.image_b64,
+        expected_word=body.expected_word,
     )
 
 
@@ -563,12 +582,14 @@ def clear_history():
     from tutor.config import ACTIVITIES, DATA, PIECES, PROJECTS, SESSIONS
     from tutor.curriculum_tracker import default_report_card
     from tutor.record import DEFAULT_LEARNER
+    from tutor.skill_games import _default_skill_arcade
 
     rec = load_learner()
     rec["sessions"] = []
     rec["model"] = json.loads(json.dumps(DEFAULT_LEARNER["model"]))
     rec["report_card"] = default_report_card()
     rec["spelling_deck"] = {"cards": {}, "curriculum_index": 0}
+    rec["skill_arcade"] = _default_skill_arcade()
     save_learner(rec)
     for folder in (SESSIONS, PIECES, ACTIVITIES, PROJECTS):
         if folder.exists():
