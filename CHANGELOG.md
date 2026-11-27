@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.8.0
+- **Built-In Ontario Grade 3–4 Skill Arcade — 6 OLED Interactive Curriculum Games (`tutor/skill_games.py`, `tutor/arcade.py`, `server.py`, `static/skill_arcade.html`, `static/skill_arcade.css`, `static/skill_arcade.js`, `static/index.html`, `static/app.js`, `static/parent.html`):**
+  - **6 Tactile 60fps OLED Canvas2D + Stylus Games**:
+    1. **⚔️ Sentence Surgery**: Physically slash run-ons apart with a stylus laser blade (`PointerEvent` + `getCoalescedEvents()`), repair broken fragment circuits, and stamp missing capitals/contractions/dialogue quotation marks (`B3.1`, `B3.3`, `D2.5–D2.6`).
+    2. **🔥 Word Forge**: Animated obsidian blacksmith anvil & enchanted relic assembly; snap Prefix + Base + Suffix runes, pick the orthographic rule (`1-1-1 doubling`, `drop silent -e`, `y→i`, `keep`), then spell the fused word from memory (`Cover-Copy-Compare`) with live **Leitner SRS (`spelling_srs.py`)** synchronization (`B2.1–B2.3`).
+    3. **☄️ Homophone & Verb Asteroids**: 60fps orbital defense turret shooting twin homophones & irregular past-tense verbs via touchscreen tap or `1/2/3` keys, capped by a **Dreadnought Boss Wave** requiring an original Homework-Standard sentence (`B3.2`, `B2.4`).
+    4. **⚡ Sentence Stretch Lab**: Fuse choppy sentences using logical compound/complex bridges (`so`, `but`, `because`, `before`, `while`, `although`) and upgrade weak verbs to ignite **100% OVERDRIVE** (`B3.1`, `B2.4`).
+    5. **🏎️ Neon Turbo Typing Arena**: 60fps synthwave perspective highway with live WPM, accuracy-gated golden Turbo Boost (≥94%), and real-time QWERTY finger-zone guidance (`D2.2_keyboarding`).
+    6. **🔎 Mystery Clue Detective**: Stylus-highlight the proof sentence inside a 4-line casefile, deduce the culprit or literary device (simile/metaphor/POV), and write a causal `"because"` verdict to stamp `CASE CLOSED` (`C2.3`, `C1.2–C1.5`).
+  - **Deep Adaptive Curriculum & Reward Integration**: Recommends the top 2 games targeting the child's lowest Ontario Report Card skills or overdue Leitner spelling cards, supports optional **✨ AI World Pack** generation themed to their own comics/Minecraft worlds, tracks Skill Arcade mastery on `/parent`, and feeds accuracy-gated (≥65%) active minutes directly into the `1:2` Minecraft / Fists of Doom game bank.
+
 ## 1.7.4
 - **Dual Minecraft Bedrock + Java Support on Windows, Parent Override & `1:2` ADHD-Friendly Conversion Default (`tutor/arcade.py`, `server.py`, `bin/minecraft-gated-launch.py`, `setup_minecraft_windows.ps1`, `static/index.html`, `static/app.js`, `static/parent.html`):**
   - **Dual Minecraft Bedrock + Java Edition Support**: Independently detects **Minecraft Bedrock (`Minecraft for Windows`, `Microsoft.MinecraftUWP_8wekyb3d8bbwe` / `Minecraft.Windows.exe`)** and **Minecraft Java (`Prism Launcher` / `Minecraft Launcher`)** on Windows so both can be installed side by side, launched directly (`shell:AppsFolder\Microsoft.MinecraftUWP_8wekyb3d8bbwe!App` for Bedrock, Prism/Official for Java), gated independently via Desktop shortcuts + login watchdog, and played from the **same shared earned game-time bank**.

@@ -269,6 +269,9 @@
     <h2>Ontario Curriculum Report Card (Grades 3–4)</h2>
     <div id="reportCard"></div>
 
+    <h2>Skill Arcade Mastery &amp; Practice Log (6 Built-In Games)</h2>
+    <div id="skillArcadeReport"></div>
+
     <h2>Saved Books &amp; Printable PDFs</h2>
     <div class="grid" id="books"></div>
 
@@ -566,6 +569,7 @@
             </div>${strandCards}`;
         }
         $("notes").innerHTML = (L.parent_notes || []).slice().reverse().map(n => `<li>${esc(n.date.slice(0, 10))}: ${esc(n.note)}</li>`).join("");
+        renderSkillArcadeParent(d.skill_arcade || {});
         renderArcadeParent(d.arcade || { installed: false });
 
         const st = await (await fetch("/api/state")).json();
@@ -579,6 +583,49 @@
       function fmtMinSec(sec) {
         const s = Math.max(0, Math.round(Number(sec) || 0));
         return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+      }
+
+      function renderSkillArcadeParent(SA) {
+        const box = $("skillArcadeReport");
+        if (!box) return;
+        const games = SA.games || [];
+        const recent = SA.recent_runs || [];
+        const cards = games.map(g => {
+          const stars = [1, 2, 3].map(n => `<span style="color:${g.mastery_stars >= n ? "var(--y)" : "#3c4043"}">★</span>`).join("");
+          const stat = g.id === "typing_arena" && g.best_wpm > 0
+            ? `Best: <b>${g.best_wpm} WPM</b> (${g.best_accuracy}% acc)`
+            : (g.runs > 0 ? `Best: <b>${g.best_score} pts</b> (${g.best_accuracy}% acc)` : `<span class="muted">Not played yet</span>`);
+          return `<div class="card">
+            <div class="row" style="justify-content:space-between;align-items:center">
+              <h3 style="margin:0">${g.icon} ${esc(g.title)}</h3>
+              <span style="letter-spacing:2px">${stars}</span>
+            </div>
+            <div style="margin-top:8px;font-size:.9rem">${stat}</div>
+            <div class="muted" style="font-size:.82rem;margin-top:4px">${g.runs} mission${g.runs === 1 ? "" : "s"} completed</div>
+          </div>`;
+        }).join("");
+        const recentHtml = recent.slice(0, 8).map(r => {
+          const dt = esc((r.date || "").slice(5, 16).replace("T", " "));
+          const wpmTxt = r.wpm > 0 ? ` · <b>${r.wpm} WPM</b>` : "";
+          const sent = r.production_sentence ? `<div class="muted" style="margin-left:14px">✍️ “${esc(r.production_sentence)}”</div>` : "";
+          return `<li style="margin-bottom:6px">${dt} — <b>${esc(r.title)}</b>: ${r.correct}/${r.total} (<b>${r.accuracy}%</b>)${wpmTxt}${sent}</li>`;
+        }).join("");
+        box.innerHTML = `
+          <div class="card" style="margin-bottom:12px">
+            <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:12px">
+              <div>
+                <h3>Skill Arcade Summary (Wired to Ontario Curriculum, Leitner Spelling &amp; 1:2 Game Bank)</h3>
+                <div class="muted">Every high-accuracy mission updates the Report Card above, advances Leitner spelling cards, and banks active minutes toward Minecraft / Fists of Doom.</div>
+              </div>
+              <div class="row" style="gap:14px">
+                <div><div class="big">${SA.total_runs ?? 0}</div><div class="muted" style="font-size:.8rem">Missions</div></div>
+                <div><div class="big">${SA.avg_accuracy ?? 0}%</div><div class="muted" style="font-size:.8rem">Avg Accuracy</div></div>
+                <a href="/skill-arcade?sandbox=1" target="_blank"><button type="button" class="ghost">Try Skill Arcade (Sandbox)</button></a>
+              </div>
+            </div>
+          </div>
+          <div class="grid">${cards}</div>
+          ${recentHtml ? `<div class="card" style="margin-top:12px"><h3>Recent Missions &amp; Boss Sentences</h3><ul style="margin:6px 0 0;padding-left:18px;font-size:.88rem">${recentHtml}</ul></div>` : ""}`;
       }
 
       function renderArcadeParent(A) {

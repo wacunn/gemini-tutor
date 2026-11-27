@@ -221,6 +221,7 @@ function renderHeroStarters(savedProjects) {
     }
   }
   box.innerHTML = `${contPill}${arcadeHeroPills}
+    <button type="button" class="hero-pill skill-arcade-hero" data-open-skill-arcade="1">🎯 Skill Arcade (6 Games)</button>
     <button type="button" class="hero-pill" data-new-kind="epic_graphic_novel">Comic book</button>
     <button type="button" class="hero-pill" data-new-kind="story_jam_novel">100-page comic (talk plot first)</button>
     <button type="button" class="hero-pill" data-new-kind="how_to_tutorial">How-to guide</button>
@@ -236,6 +237,8 @@ function renderHeroStarters(savedProjects) {
       send({ type: "open_project", id: heroOpen.dataset.openHero });
     };
   }
+  const saBtn = box.querySelector("[data-open-skill-arcade]");
+  if (saBtn) saBtn.onclick = () => openSkillArcade();
   box.querySelectorAll("[data-play-arcade]").forEach((el) => {
     el.onclick = () => {
       const kind = el.dataset.playArcade;
@@ -258,6 +261,13 @@ function wireSidebar() {
   $("menuBtn").onclick = () => toggleSidebar();
   $("sideClose").onclick = () => toggleSidebar(false);
   $("sidebarBackdrop").onclick = () => toggleSidebar(false);
+  const sideSaBtn = $("sideSkillArcadeBtn");
+  if (sideSaBtn) {
+    sideSaBtn.onclick = () => {
+      toggleSidebar(false);
+      openSkillArcade();
+    };
+  }
   $("sideNewList").querySelectorAll("[data-new-kind]").forEach((btn) => {
     btn.onclick = () => {
       toggleSidebar(false);
@@ -2519,5 +2529,53 @@ async function pauseMinecraftArcade() {
     toast(`⏸ Minecraft closed — ${fmtClock(state.arcade?.game_seconds_available || 0)} saved in your game bank!`);
   }
 }
+
+// ---------------------------------------------------------------- Built-In Ontario Curriculum Skill Arcade Overlay
+
+function openSkillArcade(gameId = "") {
+  stopCenterMic(false);
+  if (state.micOn) micStop();
+  stopPlayback();
+  const ov = $("skillArcadeOverlay");
+  const fr = $("skillArcadeFrame");
+  if (!ov || !fr) {
+    location.href = `/skill-arcade?sandbox=${IS_SANDBOX ? 1 : 0}${gameId ? `&game=${encodeURIComponent(gameId)}` : ""}`;
+    return;
+  }
+  const q = new URLSearchParams({ embedded: "1", sandbox: IS_SANDBOX ? "1" : "0", t: String(Date.now()) });
+  if (gameId) q.set("game", gameId);
+  fr.src = `/skill-arcade?${q.toString()}`;
+  ov.hidden = false;
+}
+
+async function closeSkillArcade() {
+  const ov = $("skillArcadeOverlay");
+  const fr = $("skillArcadeFrame");
+  if (fr) fr.src = "about:blank";
+  if (ov) ov.hidden = true;
+  try {
+    const st = await (await fetch(`/api/arcade/status?sandbox=${IS_SANDBOX ? 1 : 0}`)).json();
+    state.arcade = st;
+    renderArcadeUI();
+    if (document.body.classList.contains("fresh")) renderHeroStarters(state.savedProjects || []);
+  } catch (_) {}
+}
+
+window.addEventListener("message", (e) => {
+  const d = e.data;
+  if (!d || typeof d !== "object") return;
+  if (d.__skillArcadeClose) {
+    closeSkillArcade();
+  } else if (d.__skillArcadeUpdated) {
+    if (d.__skillArcadeUpdated.arcade) {
+      state.arcade = d.__skillArcadeUpdated.arcade;
+      renderArcadeUI();
+      if (document.body.classList.contains("fresh")) renderHeroStarters(state.savedProjects || []);
+    }
+    if (d.__skillArcadeUpdated.arcade_reward?.unlocked_minutes > 0) {
+      playRewardChime();
+    }
+  }
+});
 
 boot();

@@ -2225,3 +2225,21 @@ body.fresh .dock {
   border: none;
   background: #000;
 }
+
+.hero-pill.skill-arcade-hero {
+  border: 1px solid rgba(56, 189, 248, 0.58);
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.16), rgba(168, 85, 247, 0.16));
+  color: #bae6fd;
+  font-weight: 600;
+}
+.hero-pill.skill-arcade-hero:hover {
+  border-color: #38bdf8;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.28), rgba(168, 85, 247, 0.24));
+}
+
+.side-action.skill-arcade-side-btn {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.16), rgba(168, 85, 247, 0.16));
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: #bae6fd;
+  font-weight: 600;
+}

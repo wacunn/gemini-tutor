@@ -56,6 +56,11 @@ def parent_page():
     return FileResponse(str(STATIC / "parent.html"))
 
 
+@app.get("/skill-arcade")
+def skill_arcade_page():
+    return FileResponse(str(STATIC / "skill_arcade.html"))
+
+
 # ---------- setup / state ----------
 
 class SetupIn(BaseModel):
@@ -208,7 +213,7 @@ def settings(body: SettingsIn):
 
 @app.get("/api/parent")
 def parent_data():
-    from tutor import arcade, guardian
+    from tutor import arcade, guardian, skill_games
     from tutor.blackboard import QUOTA
     from tutor.curriculum_tracker import ensure_report_card, format_report_for_ui
     from tutor.projects import list_projects
@@ -225,6 +230,7 @@ def parent_data():
         "quota": QUOTA.status_dict(),
         "report_card": format_report_for_ui(rc),
         "spelling_deck": deck_summary(rec),
+        "skill_arcade": skill_games.parent_summary(rec),
         "projects": list_projects(),
         "sessions": sessions,
         "activities": list_activities(),
@@ -467,6 +473,79 @@ def arcade_heartbeat(body: ArcadeHeartbeatIn):
     from tutor import arcade
 
     return arcade.consume_game_seconds(body.elapsed_seconds, sandbox=bool(body.sandbox), source=body.source)
+
+
+# ---------- Skill Arcade (Ontario Grade 3-4 Curriculum Games) ----------
+
+
+class SkillPackIn(BaseModel):
+    game_id: str
+    use_ai: bool = False
+    sandbox: int = 0
+
+
+class SkillSentenceIn(BaseModel):
+    text: str
+    required_word: str = ""
+    require_because: bool = False
+
+
+class SkillCompleteIn(BaseModel):
+    game_id: str
+    score: int = 0
+    correct: int = 0
+    total: int = 1
+    active_seconds: float = 0.0
+    wpm: int = 0
+    cpm: int = 0
+    production_passed: bool = False
+    production_sentence: str = ""
+    word_results: list[dict] = []
+    skill_hits: dict = {}
+    sandbox: int = 0
+
+
+@app.get("/api/skill-games/hub")
+def skill_games_hub(sandbox: int = 0):
+    from tutor import skill_games
+
+    return skill_games.get_arcade_hub_state(sandbox=bool(sandbox))
+
+
+@app.post("/api/skill-games/pack")
+async def skill_games_pack(body: SkillPackIn):
+    from tutor import skill_games
+
+    try:
+        return await asyncio.to_thread(
+            skill_games.generate_game_pack,
+            body.game_id,
+            use_ai=bool(body.use_ai),
+            sandbox=bool(body.sandbox),
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.post("/api/skill-games/check-sentence")
+def skill_games_check_sentence(body: SkillSentenceIn):
+    from tutor import skill_games
+
+    return skill_games.verify_production_sentence(
+        body.text,
+        required_word=body.required_word,
+        require_because=bool(body.require_because),
+    )
+
+
+@app.post("/api/skill-games/complete")
+def skill_games_complete(body: SkillCompleteIn):
+    from tutor import skill_games
+
+    try:
+        return skill_games.record_game_completion(body.model_dump(), sandbox=bool(body.sandbox))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @app.post("/api/quit")

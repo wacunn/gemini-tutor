@@ -1648,3 +1648,69 @@ class SessionArcadeTracker:
             "tutor_note": "",
             "arcade": status,
         }
+
+
+def record_skill_game_credit(
+    *,
+    active_seconds: float,
+    accuracy: int,
+    items_completed: int,
+    production_passed: bool = False,
+    game_title: str = "Skill Arcade",
+    sandbox: bool = False,
+) -> dict[str, Any]:
+    """Credits bounded, accuracy-gated Skill Arcade effort into the student's 1:2 game-time bank."""
+    if not is_any_game_installed():
+        return {"credited_seconds": 0.0, "unlocked_minutes": 0, "points_gained": 0, "visible": False, "message": ""}
+
+    with _STATE_LOCK:
+        rec, arc = _active_record_and_arc(sandbox=sandbox)
+        if not arc.get("enabled", True):
+            return {"credited_seconds": 0.0, "unlocked_minutes": 0, "points_gained": 0, "visible": False, "message": ""}
+
+        # Anti-spam / anti-guessing gate: require real engagement & >= 65% accuracy
+        if accuracy < 65 or items_completed < 2 or active_seconds < 12.0:
+            return {
+                "credited_seconds": 0.0,
+                "unlocked_minutes": 0,
+                "points_gained": 0,
+                "visible": True,
+                "message": "Aim for 65%+ accuracy to bank time toward your game reward!",
+            }
+
+        bounded = min(180.0, max(12.0, float(active_seconds)))
+        mult = 1.0 if (accuracy >= 85 or (production_passed and accuracy >= 75)) else 0.75
+        credit_s = round(bounded * mult, 1)
+
+        arc["committed_work_seconds"] = float(arc.get("committed_work_seconds") or 0.0) + credit_s
+        arc["lifetime_work_seconds"] = float(arc.get("lifetime_work_seconds") or 0.0) + credit_s
+        if production_passed:
+            arc["lifetime_sentences_verified"] = int(arc.get("lifetime_sentences_verified") or 0) + 1
+
+        res = _apply_thresholds(arc)
+        _persist(rec, arc, sandbox=sandbox)
+        status = client_status(rec, sandbox=sandbox)
+
+    games = []
+    if is_fod_installed():
+        games.append("Fists of Doom")
+    if is_minecraft_installed():
+        games.append("Minecraft")
+    game_label = " / ".join(games) if games else "video games"
+
+    mins_added = round(credit_s / 60.0, 1)
+    if res["unlocked_minutes"] > 0:
+        msg = f"🎮 UNLOCKED +{res['unlocked_minutes']} min of {game_label} time! (+{mins_added}m solid {game_title})"
+    elif res["points_gained"] > 0:
+        msg = f"⭐ +{res['points_gained']} Video Game Point from {game_title}! (+{mins_added}m banked)"
+    else:
+        msg = f"⏱ +{mins_added}m solid work banked toward {game_label}!"
+
+    return {
+        "credited_seconds": credit_s,
+        "unlocked_minutes": int(res["unlocked_minutes"]),
+        "points_gained": int(res["points_gained"]),
+        "visible": True,
+        "message": msg,
+        "arcade": status,
+    }
