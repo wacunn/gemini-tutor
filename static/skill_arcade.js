@@ -1,4 +1,4 @@
-// Skill Arcade v2.1 — Critic-Hardened 60fps 2x-DPR OLED Canvas2D + Lenovo Yoga Stylus Games
+// Starblade Arcade v2.2 — Stealth-School & Closed-Loop ZPD Adaptive Arenas (60fps 2x-DPR OLED + Lenovo Yoga Stylus)
 
 const PARAMS = new URLSearchParams(location.search);
 const IS_SANDBOX = PARAMS.get("sandbox") === "1";
@@ -67,9 +67,8 @@ function segmentHitsRect(x1, y1, x2, y2, rect, pad = 6) {
 function setFeedback(el, kind, html, btn = null) {
   if (!el) return;
   el.className = `sa-feedback ${kind}`;
-  el.innerHTML = `<span class="sa-fb-msg">${html}</span>${
-    btn ? `<button type="button" class="sa-btn ${btn.cls || "emerald"}" id="${btn.id}">${esc(btn.label)}</button>` : ""
-  }`;
+  el.innerHTML = `<span class="sa-fb-msg">${html}</span>${btn ? `<button type="button" class="sa-btn ${btn.cls || "emerald"}" id="${btn.id}">${esc(btn.label)}</button>` : ""
+    }`;
   if (btn && btn.onClick && $(btn.id)) {
     $(btn.id).onclick = btn.onClick;
   }
@@ -107,7 +106,7 @@ const VOICE = (() => {
     },
     stop() {
       if ("speechSynthesis" in window) {
-        try { window.speechSynthesis.cancel(); } catch (_) {}
+        try { window.speechSynthesis.cancel(); } catch (_) { }
       }
     },
     speak(text, { force = false, rate = 0.94 } = {}) {
@@ -123,7 +122,7 @@ const VOICE = (() => {
         const v = cachedVoice || pickVoice();
         if (v) u.voice = v;
         window.speechSynthesis.speak(u);
-      } catch (_) {}
+      } catch (_) { }
     },
   };
 })();
@@ -139,7 +138,7 @@ const SFX = (() => {
       const C = window.AudioContext || window.webkitAudioContext;
       if (C) ctx = new C();
     }
-    if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
+    if (ctx && ctx.state === "suspended") ctx.resume().catch(() => { });
     return ctx;
   }
   function tone(freq, dur, type = "sine", vol = 0.14, freqEnd = null, delay = 0) {
@@ -360,8 +359,11 @@ const App = {
   timers: new Set(),
   score: 0,
   combo: 0,
+  sector: 1,
+  overclock: false,
+  worldsTouched: false,
   penDetected: false,   // Persists across all games & rounds on Lenovo Yoga!
-  forgeUsePen: false,   // Remembers Yoga Pen tab choice across words in Word Forge!
+  forgeUsePen: false,   // Remembers Yoga Pen tab choice across words in Obsidian Forge!
   activeSeconds: 0,
   stepStartedAt: 0,
   hiddenAt: 0,
@@ -406,19 +408,26 @@ function runCleanups() {
   for (const id of App.timers) clearTimeout(id);
   App.timers.clear();
   while (App.cleanups.length) {
-    try { App.cleanups.pop()(); } catch (_) {}
+    try { App.cleanups.pop()(); } catch (_) { }
   }
 }
 
-function setHud({ visible = false, step = 1, total = 6, score = 0, combo = 0, title = "Skill Arcade", aiPack = false }) {
+function setHud({ visible = false, step = 1, total = 6, score = 0, combo = 0, sector = null, overclock = null, title = "Starblade Arcade", aiPack = false }) {
   $("saHudCenter").hidden = !visible;
-  const aiChip = aiPack ? ` <span class="sa-tag" style="color:#e9d5ff;background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.45)">✨ AI Pack</span>` : "";
+  const aiChip = aiPack ? ` <span class="sa-tag" style="color:#e9d5ff;background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.45)">🌌 My Worlds</span>` : "";
   $("saBrandTitle").innerHTML = `<span class="sa-brand-dot"></span><span>${esc(title)}</span>${aiChip}`;
-  $("saBackBtn").textContent = visible ? "← All 6 Games" : (IS_EMBEDDED ? "← Return to Tutor" : "← Back to Studio");
+  $("saBackBtn").textContent = visible ? "← Arenas" : (IS_EMBEDDED ? "← Studio" : "← Studio");
   if (!visible) return;
+  if (sector !== null) App.sector = sector;
+  if (overclock !== null) App.overclock = overclock;
   const pct = Math.max(0, Math.min(100, (step / Math.max(1, total)) * 100));
   $("saProgFill").style.width = `${pct}%`;
   $("saProgLabel").textContent = `${Math.min(step, total)} / ${total}`;
+  const tp = $("saTierPill");
+  if (tp) {
+    tp.textContent = App.overclock ? `⚡ OVERCLOCK S${App.sector}` : `SECTOR ${App.sector}`;
+    tp.classList.toggle("overclock", !!App.overclock);
+  }
   $("saScorePill").textContent = `${score} PTS`;
   if (combo >= 2) {
     $("saComboPill").hidden = false;
@@ -426,6 +435,92 @@ function setHud({ visible = false, step = 1, total = 6, score = 0, combo = 0, ti
   } else {
     $("saComboPill").hidden = true;
   }
+}
+
+// Live Mid-Round ZPD Director: escalates on 2-hit streaks, scaffolds down on 2-miss stumbles,
+// aligns EVERY upcoming item to the active ZPD tier, and tracks exact `playedIds` for `seen_ids` reconciliation!
+function createZpdDirector(pack) {
+  const startTier = Math.max(1, Math.min(3, Number(pack.adaptive?.start_tier) || 1));
+  const reserves = {
+    1: (pack.reserve_by_tier?.["1"] || []).slice(),
+    2: (pack.reserve_by_tier?.["2"] || []).slice(),
+    3: (pack.reserve_by_tier?.["3"] || []).slice(),
+  };
+  const usedIds = new Set((pack.items || []).map((x) => x.id));
+  const playedIds = [];
+  const subskillHits = {};
+  let tier = startTier;
+  let peakTier = startTier;
+  let hitStreak = 0;
+  let missStreak = 0;
+  App.sector = tier;
+  App.overclock = false;
+
+  function swapUpcomingIfBetter(itemsArr, nextIdx, desiredTier) {
+    if (!itemsArr || nextIdx < 0 || nextIdx >= itemsArr.length) return;
+    const curNext = itemsArr[nextIdx];
+    const curNextTier = Number(curNext?.tier) || 2;
+    if (curNextTier === desiredTier) return;
+    const bucket = reserves[desiredTier] || [];
+    const pickIdx = bucket.findIndex((cand) => !usedIds.has(cand.id) && (!curNext?.mode || cand.mode === curNext.mode));
+    const idxToUse = pickIdx >= 0 ? pickIdx : bucket.findIndex((cand) => !usedIds.has(cand.id));
+    if (idxToUse >= 0) {
+      const replacement = bucket.splice(idxToUse, 1)[0];
+      usedIds.add(replacement.id);
+      itemsArr[nextIdx] = replacement;
+    }
+  }
+
+  return {
+    get tier() { return tier; },
+    get peakTier() { return peakTier; },
+    get subskillHits() { return subskillHits; },
+    get playedIds() { return playedIds; },
+    record(item, cleanFirstTry, nextIdx = -1, itemsArr = null) {
+      if (item?.id && !playedIds.includes(item.id)) {
+        playedIds.push(item.id);
+      }
+      const sub = item?.subskill;
+      if (sub) {
+        subskillHits[sub] = subskillHits[sub] || { correct: 0, total: 0 };
+        subskillHits[sub].total += 1;
+        if (cleanFirstTry) subskillHits[sub].correct += 1;
+      }
+      if (cleanFirstTry) {
+        hitStreak += 1;
+        missStreak = 0;
+        if (hitStreak >= 2 && tier < 3) {
+          tier += 1;
+          peakTier = Math.max(peakTier, tier);
+          hitStreak = 0;
+          App.sector = tier;
+          App.overclock = true;
+          const tp = $("saTierPill");
+          if (tp) {
+            tp.textContent = `⚡ OVERCLOCK S${tier}`;
+            tp.classList.add("overclock");
+            FX.floatEl(tp, `⚡ SECTOR ${tier} UNLOCKED!`, "#facc15");
+          }
+        }
+      } else {
+        missStreak += 1;
+        hitStreak = 0;
+        if (missStreak >= 2 && tier > 1) {
+          tier -= 1;
+          missStreak = 0;
+          App.sector = tier;
+          App.overclock = false;
+          const tp = $("saTierPill");
+          if (tp) {
+            tp.textContent = `SECTOR ${tier}`;
+            tp.classList.remove("overclock");
+          }
+        }
+      }
+      // Always align the upcoming item toward the active ZPD `tier` on EVERY step (never snap back to T1!)
+      swapUpcomingIfBetter(itemsArr, nextIdx, tier);
+    },
+  };
 }
 
 function addPoints(base, el = null, color = "#38bdf8") {
@@ -468,12 +563,12 @@ function renderBankPill(arc) {
 // --------------------------------------------------------------------------- Hub Loading & Rendering
 
 const BANK_UNIT_LABEL = {
-  sentence_surgery: "cases",
-  word_forge: "words",
+  sentence_surgery: "streams",
+  word_forge: "blades",
   homophone_asteroids: "waves",
-  sentence_stretch: "labs",
+  sentence_stretch: "cores",
   typing_arena: "laps",
-  clue_detective: "cases",
+  clue_detective: "dossiers",
 };
 
 async function loadHub() {
@@ -482,7 +577,7 @@ async function loadHub() {
   $("saSummaryModal").hidden = true;
   $("saGameStage").hidden = true;
   $("saHubView").hidden = false;
-  setHud({ visible: false, title: "Skill Arcade" });
+  setHud({ visible: false, title: "Starblade Arcade" });
 
   let d;
   try {
@@ -492,9 +587,9 @@ async function loadHub() {
   } catch (e) {
     $("saGameGrid").innerHTML = `
       <div class="sa-panel" style="grid-column:1/-1;text-align:center;padding:28px">
-        <div style="font-size:1.1rem;font-weight:700;margin-bottom:8px">Couldn’t load Skill Arcade right now</div>
-        <div style="color:var(--muted);margin-bottom:14px">Make sure Gemini Tutor is running locally, then tap Retry.</div>
-        <button type="button" class="sa-btn primary" id="saHubRetryBtn">Retry Loading</button>
+        <div style="font-size:1.1rem;font-weight:700;margin-bottom:8px">Starblade Arcade Offline</div>
+        <div style="color:var(--muted);margin-bottom:14px">Tap Retry once the local app is ready.</div>
+        <button type="button" class="sa-btn primary" id="saHubRetryBtn">Retry</button>
       </div>`;
     const rb = $("saHubRetryBtn");
     if (rb) rb.onclick = () => loadHub();
@@ -504,31 +599,36 @@ async function loadHub() {
 
   $("saSandboxTag").hidden = !IS_SANDBOX;
   $("saAiToggleWrap").hidden = !d.ai_available;
+  if (!App.worldsTouched && d.auto_worlds_ready && PARAMS.get("ai") !== "0") {
+    $("saUseAi").checked = true;
+  }
   renderBankPill(d.arcade);
 
-  $("saHeroHeading").textContent = `Ready, ${d.child_name}? Pick a Mission`;
+  $("saHeroHeading").textContent = `Pick Your Arena, ${d.child_name}`;
+  const thirdStat = d.runes_ready > 0
+    ? `<div class="sa-stat-chip"><div class="v">🔥 ${d.runes_ready}</div><div class="k">Runes Ready</div></div>`
+    : `<div class="sa-stat-chip"><div class="v">${d.total_runs}</div><div class="k">Runs Cleared</div></div>`;
   $("saStatsStrip").innerHTML = `
-    <div class="sa-stat-chip"><div class="v">Tier ${d.mastery_tier}</div><div class="k">Ontario Mastery</div></div>
-    <div class="sa-stat-chip"><div class="v">${d.spelling_due}</div><div class="k">Spelling Due</div></div>
-    <div class="sa-stat-chip"><div class="v">${d.total_runs}</div><div class="k">Missions Cleared</div></div>`;
+    <div class="sa-stat-chip"><div class="v">${esc(d.rank_title || "Cadet")}</div><div class="k">Rank ${d.rank_level || 1}</div></div>
+    <div class="sa-stat-chip"><div class="v">🔥 ${d.streak_days || 0}d</div><div class="k">Streak</div></div>
+    ${thirdStat}`;
 
   $("saGameGrid").innerHTML = d.games.map((g) => {
     const stars = [1, 2, 3].map((n) => `<span class="${g.mastery_stars >= n ? "" : "off"}">★</span>`).join("");
-    const unit = BANK_UNIT_LABEL[g.id] || "items";
+    const unit = BANK_UNIT_LABEL[g.id] || "missions";
     const best = g.id === "typing_arena" && g.best_wpm > 0
       ? `Best: ${g.best_wpm} WPM`
-      : (g.best_score > 0 ? `${g.best_score} pts (${g.best_accuracy}%)` : `${g.bank_size} ${unit}`);
+      : (g.best_score > 0 ? `${g.best_score} pts` : `${g.bank_size} ${unit}`);
     return `
       <button type="button" class="sa-card ${g.recommended ? "recommended" : ""}" data-launch="${esc(g.id)}"
         style="--card-accent:${g.accent};--card-glow:${g.glow}">
         <div class="sa-card-top">
           <div class="sa-card-icon">${g.icon}</div>
-          ${g.recommended ? `<span class="sa-rec-badge">★ Recommended</span>` : `<span class="sa-tag">${esc(g.est_minutes)}</span>`}
+          ${g.recommended ? `<span class="sa-rec-badge">★ Hot Drop</span>` : `<span class="sa-tag">${esc(g.est_minutes)}</span>`}
         </div>
         <h2>${esc(g.title)}</h2>
         <div class="sa-card-sub">${esc(g.subtitle)}</div>
-        <div class="sa-card-reason">▸ ${esc(g.reason)}</div>
-        <div class="sa-card-tags">${(g.skill_badges || []).map((b) => `<span class="sa-tag">${esc(b)}</span>`).join("")}</div>
+        <div class="sa-card-reason">${esc(g.status_pill || "")}</div>
         <div class="sa-card-foot">
           <span>${esc(g.controls)}</span>
           <span class="sa-card-foot-right"><span class="sa-stars">${stars}</span><span>${esc(best)}</span></span>
@@ -551,8 +651,8 @@ async function startGame(gameId, useAi = false) {
 
   $("saSummaryModal").hidden = true;
   $("saLoadingText").textContent = useAi
-    ? "Gemini is crafting a fresh world-themed mission pack…"
-    : "Loading your personalized mission…";
+    ? "Warping into your story world…"
+    : "Powering up arena…";
   $("saLoading").hidden = false;
 
   try {
@@ -567,7 +667,8 @@ async function startGame(gameId, useAi = false) {
     $("saHubView").hidden = true;
     $("saGameStage").hidden = false;
     $("saGameStage").innerHTML = "";
-    setHud({ visible: true, step: 1, total: pack.items.length, score: 0, combo: 0, title: pack.game.title, aiPack: !!pack.ai_generated });
+    const startSec = Number(pack.adaptive?.start_tier) || 1;
+    setHud({ visible: true, step: 1, total: pack.items.length, score: 0, combo: 0, sector: startSec, overclock: false, title: pack.game.title, aiPack: !!pack.ai_generated });
 
     if (gameId === "sentence_surgery") runSentenceSurgery(pack);
     else if (gameId === "word_forge") runWordForge(pack);
@@ -577,7 +678,7 @@ async function startGame(gameId, useAi = false) {
     else if (gameId === "clue_detective") runClueDetective(pack);
   } catch (err) {
     $("saLoading").hidden = true;
-    alert("Could not load mission: " + err);
+    alert("Could not launch arena: " + err);
     loadHub();
   }
 }
@@ -599,6 +700,11 @@ async function finishGame(result) {
     production_sentence: result.production_sentence || "",
     word_results: result.word_results || [],
     skill_hits: result.skill_hits || {},
+    subskill_hits: result.subskill_hits || {},
+    char_errors: result.char_errors || {},
+    word_outcomes: result.word_outcomes || [],
+    played_ids: result.played_ids || [],
+    peak_tier: result.peak_tier || App.sector || 1,
     sandbox: IS_SANDBOX ? 1 : 0,
   };
 
@@ -612,10 +718,9 @@ async function finishGame(result) {
     if (!r.ok) throw new Error(await r.text());
     d = await r.json();
   } catch (err) {
-    d = { ok: false, stars: 0, accuracy: Math.round((100 * payload.correct) / Math.max(1, payload.total)), score: payload.score, srs_updates: [], skills_boosted: [], mastery_tier: 1, arcade_reward: null };
+    d = { ok: false, stars: 0, accuracy: Math.round((100 * payload.correct) / Math.max(1, payload.total)), score: payload.score, srs_updates: [], stealth_badges: [], rank_title: "Cadet", zpd_sector: 1, arcade_reward: null };
   }
 
-  // Honest fanfare: celebrate big on real >= 65% passes; calm encouraging wrap-up on warm-up misses!
   if (d.accuracy >= 65) {
     SFX.victory();
     FX.burst(window.innerWidth * 0.5, window.innerHeight * 0.3, "#facc15", 45);
@@ -627,21 +732,21 @@ async function finishGame(result) {
 
   if (d.arcade) renderBankPill(d.arcade);
   if (IS_EMBEDDED) {
-    try { window.parent.postMessage({ __skillArcadeUpdated: d }, "*"); } catch (_) {}
+    try { window.parent.postMessage({ __skillArcadeUpdated: d }, "*"); } catch (_) { }
   }
 
   const stars = [1, 2, 3].map((n) => `<span style="opacity:${d.stars >= n ? 1 : 0.22}">★</span>`).join("");
   $("saSumStars").innerHTML = stars;
   $("saSumTitle").textContent = d.stars === 3
-    ? "Flawless Mastery!"
-    : (d.stars === 2 ? "Strong Mission!" : (d.accuracy >= 65 ? "Good Practice Run!" : "Warm-Up Complete — Aim for 65%+!"));
+    ? "S-Rank Clear!"
+    : (d.stars === 2 ? "Arena Cleared!" : (d.accuracy >= 65 ? "Sector Secured!" : "Shields Low — Aim for 65%+!"));
 
   const m3 = payload.wpm > 0
-    ? `<div class="sa-sum-metric"><div class="v">${payload.wpm} WPM</div><div class="k">Speed</div></div>`
-    : `<div class="sa-sum-metric"><div class="v">${payload.correct}/${payload.total}</div><div class="k">First-Try Hits</div></div>`;
+    ? `<div class="sa-sum-metric"><div class="v">${payload.wpm} WPM</div><div class="k">Top Speed</div></div>`
+    : `<div class="sa-sum-metric"><div class="v">${payload.correct}/${payload.total}</div><div class="k">Clean Hits</div></div>`;
   $("saSumMetrics").innerHTML = `
     <div class="sa-sum-metric"><div class="v">${d.score}</div><div class="k">Score</div></div>
-    <div class="sa-sum-metric"><div class="v">${d.accuracy}%</div><div class="k">Accuracy</div></div>
+    <div class="sa-sum-metric"><div class="v">${d.accuracy}%</div><div class="k">Precision</div></div>
     ${m3}`;
 
   const rew = $("saSumReward");
@@ -654,19 +759,19 @@ async function finishGame(result) {
 
   const lines = [];
   if (d.srs_updates?.length) {
-    const up = d.srs_updates.map((u) => `<b>${esc(u.word)}</b> → Box ${u.box}/5 ${u.first_try ? "✓" : "(review tomorrow)"}`).join(" · ");
-    lines.push(`<div>🧠 <b>Leitner Spelling Deck:</b> ${up}</div>`);
+    const up = d.srs_updates.map((u) => `<b>${esc(u.word)}</b> → Vault ${u.box}/5 ${u.first_try ? "✓" : "(re-forge next run)"}`).join(" · ");
+    lines.push(`<div>🗡️ <b>Rune Vault:</b> ${up}</div>`);
   }
-  if (d.skills_boosted?.length) {
-    lines.push(`<div>📈 <b>Ontario Report Card Boosted:</b> ${d.skills_boosted.map((s) => `<span class="sa-tag">${esc(s)}</span>`).join(" ")}</div>`);
+  if (d.stealth_badges?.length) {
+    lines.push(`<div>⚡ <b>Upgrades:</b> ${d.stealth_badges.map((b) => `<span class="sa-tag">${esc(b)}</span>`).join(" ")}</div>`);
   }
   if (payload.production_sentence) {
-    lines.push(`<div>✍️ <b>Your Boss Sentence:</b> “${esc(payload.production_sentence)}”</div>`);
+    lines.push(`<div>💥 <b>Finishing Strike:</b> “${esc(payload.production_sentence)}”</div>`);
   }
   if (!lines.length) {
     lines.push(d.accuracy >= 65
-      ? `<div>📊 Progress saved to your Ontario Grade 3–4 Report Card (Tier ${d.mastery_tier}).</div>`
-      : `<div>💡 Hit 65%+ accuracy on your next run to boost Ontario Report Card skills and bank game minutes!</div>`);
+      ? `<div>🚀 Rank: <b>${esc(d.rank_title || "Cadet")}</b> · Sector ${d.zpd_sector || 1} Ready</div>`
+      : `<div>💡 Hit 65%+ precision next run to unlock higher sectors and bank bonus time!</div>`);
   }
   $("saSumDetails").innerHTML = lines.join("");
 
@@ -681,6 +786,7 @@ async function finishGame(result) {
 function runSentenceSurgery(pack) {
   const stage = $("saGameStage");
   const items = pack.items;
+  const zpd = createZpdDirector(pack);
   let idx = 0;
   let correct = 0;
   let repairedCases = 0;
@@ -747,7 +853,7 @@ function runSentenceSurgery(pack) {
     sctx.font = "700 12px 'JetBrains Mono', monospace";
     sctx.fillStyle = caseHealthy ? "#6ee7b7" : "#fda4af";
     sctx.textAlign = "left";
-    sctx.fillText(caseHealthy ? "STATUS: SYNTAX STABILIZED ✓" : "STATUS: SYNTAX FAULT DETECTED", 18, 22);
+    sctx.fillText(caseHealthy ? "STATUS: STREAM STABILIZED ✓" : "STATUS: STREAM FAULT DETECTED", 18, 22);
 
     sctx.textAlign = "right";
     sctx.fillStyle = "#7dd3fc";
@@ -778,16 +884,15 @@ function runSentenceSurgery(pack) {
     VOICE.stop();
     if (stepCleanup) { stepCleanup(); stepCleanup = null; }
     if (idx >= items.length) {
-      finishGame({ correct, total: items.length, skill_hits: skillHits, production_passed: false });
+      finishGame({ correct, total: items.length, skill_hits: skillHits, subskill_hits: zpd.subskillHits, played_ids: zpd.playedIds, peak_tier: zpd.peakTier, production_passed: false });
       return;
     }
     beginStepClock();
     caseHealthy = false;
     const it = items[idx];
     const host = $("ssStepHost");
-    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Sentence Surgery", aiPack: !!pack.ai_generated });
+    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Cyber Blade", aiPack: !!pack.ai_generated });
 
-    // Clean TTS: Mechanics mode reads the fixed natural English sentence so contractions sound right ("didn't", not "didnt")!
     const spokenSample = it.mode === "runon"
       ? it.words.join(" ")
       : (it.mode === "fragment" ? it.broken : it.tokens.map((t) => t.fix).join(" "));
@@ -796,8 +901,8 @@ function runSentenceSurgery(pack) {
       host.innerHTML = `
         <div class="sa-panel">
           <div class="sa-mission-banner">
-            <span class="sa-mission-tag">✂️ STYLUS LASER SLASH · RUN-ON REPAIR</span>
-            <button type="button" class="sa-speak-btn" id="ssSpeakBtn">🔊 Read Sentence</button>
+            <span class="sa-mission-tag">✂️ LASER SLASH · SPLIT STREAM</span>
+            <button type="button" class="sa-speak-btn" id="ssSpeakBtn">🔊 Read Aloud</button>
           </div>
           <div class="sa-prompt-text">${esc(it.prompt)}</div>
         </div>
@@ -805,7 +910,7 @@ function runSentenceSurgery(pack) {
           <canvas class="ss-slash-canvas" id="ssSlashCanvas"></canvas>
           <div class="ss-word-row" id="ssWordRow"></div>
         </div>
-        <div class="sa-feedback idle" id="ssFb"><span class="sa-fb-msg">Drag your Lenovo pen (or mouse) right across the gap between Sentence 1 and Sentence 2 — or tap any glowing divider!</span></div>`;
+        <div class="sa-feedback idle" id="ssFb"><span class="sa-fb-msg">Slash your pen (or tap the glowing seam) right between Thought 1 and Thought 2!</span></div>`;
 
       $("ssSpeakBtn").onclick = () => VOICE.speak(spokenSample, { force: true });
 
@@ -854,9 +959,10 @@ function runSentenceSurgery(pack) {
           }
           if (!missed) correct += 1;
           trackSkill(it.skill, !missed);
+          zpd.record(it, !missed, idx + 1, items);
           addPoints(missed ? 60 : 120, gapEl, "#38bdf8");
           setFeedback($("ssFb"), "ok", `✂️ <b>Clean laser slice!</b> ${esc(it.fixed)} — ${esc(it.explain)}`, {
-            id: "ssNextBtn", label: "Next Case →", onClick: () => { idx += 1; renderStep(); },
+            id: "ssNextBtn", label: "Next Stream →", onClick: () => { idx += 1; renderStep(); },
           });
         } else {
           missed = true;
@@ -864,7 +970,7 @@ function runSentenceSurgery(pack) {
           SFX.bad();
           gapEl.style.borderColor = "#fb7185";
           safeTimeout(() => { gapEl.style.borderColor = ""; }, 420);
-          setFeedback($("ssFb"), "bad", "Not quite there — tap <b>🔊 Read Sentence</b> to hear where the first complete thought finishes!");
+          setFeedback($("ssFb"), "bad", "Not quite there — tap <b>🔊 Read Aloud</b> to hear where Thought 1 finishes!");
         }
       }
 
@@ -965,7 +1071,7 @@ function runSentenceSurgery(pack) {
       host.innerHTML = `
         <div class="sa-panel">
           <div class="sa-mission-banner">
-            <span class="sa-mission-tag">🔧 FRAGMENT CIRCUIT REPAIR · MISSING ${esc(it.missing)}</span>
+            <span class="sa-mission-tag">🔧 CIRCUIT REPAIR · MISSING ${esc(String(it.missing || "ACTION").toUpperCase())}</span>
             <button type="button" class="sa-speak-btn" id="ssSpeakBtn">🔊 Read Aloud</button>
           </div>
           <div class="sa-prompt-text">${esc(it.prompt)}</div>
@@ -974,7 +1080,7 @@ function runSentenceSurgery(pack) {
           </div>
         </div>
         <div class="sa-choice-list" id="ssChoices"></div>
-        <div class="sa-feedback idle" id="ssFb"><span class="sa-fb-msg">Pick the repair module that builds a full Who + Does What sentence!</span></div>`;
+        <div class="sa-feedback idle" id="ssFb"><span class="sa-fb-msg">Snap in the power module that locks in Who + Does What!</span></div>`;
 
       $("ssSpeakBtn").onclick = () => VOICE.speak(spokenSample, { force: true });
       let locked = false;
@@ -996,16 +1102,17 @@ function runSentenceSurgery(pack) {
             SFX.ok();
             if (!missed) correct += 1;
             trackSkill(it.skill, !missed);
+            zpd.record(it, !missed, idx + 1, items);
             addPoints(missed ? 60 : 120, b, "#10b981");
-            setFeedback($("ssFb"), "ok", `⚡ <b>Circuit Repaired!</b> ${esc(it.explain)}`, {
-              id: "ssNextBtn", label: "Next Case →", onClick: () => { idx += 1; renderStep(); },
+            setFeedback($("ssFb"), "ok", `⚡ <b>Circuit Powered!</b> ${esc(it.explain)}`, {
+              id: "ssNextBtn", label: "Next Stream →", onClick: () => { idx += 1; renderStep(); },
             });
           } else {
             missed = true;
             resetCombo();
             b.classList.add("bad");
             SFX.bad();
-            setFeedback($("ssFb"), "bad", esc(ch.why || "Still a fragment — check who is doing what!"));
+            setFeedback($("ssFb"), "bad", esc(ch.why || "Still incomplete — check who is doing what!"));
           }
         };
         $("ssChoices").appendChild(b);
@@ -1017,13 +1124,13 @@ function runSentenceSurgery(pack) {
       host.innerHTML = `
         <div class="sa-panel">
           <div class="sa-mission-banner">
-            <span class="sa-mission-tag">💬 MECHANICS &amp; DIALOGUE STAMP · <span id="ssBugCount">${bugTotal} BUGS LEFT</span></span>
+            <span class="sa-mission-tag">🛡️ SECURITY SEALS · <span id="ssBugCount">${bugTotal} BUGS LEFT</span></span>
             <button type="button" class="sa-speak-btn" id="ssSpeakBtn">🔊 Read Aloud</button>
           </div>
           <div class="sa-prompt-text">${esc(it.prompt)}</div>
         </div>
         <div class="sa-panel" style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;padding:24px 20px" id="ssTokenWrap"></div>
-        <div class="sa-feedback idle" id="ssFb"><span class="sa-fb-msg">Tap each word that needs a capital letter, apostrophe, quotation mark, comma, or end mark!</span></div>`;
+        <div class="sa-feedback idle" id="ssFb"><span class="sa-fb-msg">Tap each glitched word to lock capitals, apostrophes, quotes, commas, or end marks!</span></div>`;
 
       $("ssSpeakBtn").onclick = () => VOICE.speak(spokenSample, { force: true });
       it.tokens.forEach((tk) => {
@@ -1050,11 +1157,12 @@ function runSentenceSurgery(pack) {
               const cleanRun = cleanTaps === 0;
               if (cleanRun) correct += 1;
               trackSkill(it.skill, cleanRun);
-              setFeedback($("ssFb"), "ok", `✅ <b>All bugs stamped!</b> ${esc(it.explain)}`, {
-                id: "ssNextBtn", label: "Next Case →", onClick: () => { idx += 1; renderStep(); },
+              zpd.record(it, cleanRun, idx + 1, items);
+              setFeedback($("ssFb"), "ok", `✅ <b>All bugs sealed!</b> ${esc(it.explain)}`, {
+                id: "ssNextBtn", label: "Next Stream →", onClick: () => { idx += 1; renderStep(); },
               });
             } else {
-              setFeedback($("ssFb"), "ok", `Fixed! ${esc(tk.hint || "")} (${bugTotal - bugsFixed} left!)`);
+              setFeedback($("ssFb"), "ok", `Sealed! ${esc(tk.hint || "")} (${bugTotal - bugsFixed} left!)`);
             }
           } else {
             cleanTaps += 1;
@@ -1062,7 +1170,7 @@ function runSentenceSurgery(pack) {
             SFX.bad();
             b.classList.add("shake");
             safeTimeout(() => b.classList.remove("shake"), 360);
-            setFeedback($("ssFb"), "bad", `“${esc(tk.raw)}” is already clean! Check capitals, contractions, quotes, commas, or end marks.`);
+            setFeedback($("ssFb"), "bad", `“${esc(tk.raw)}” is already clean! Check capitals, apostrophes, quotes, commas, or end marks.`);
           }
         };
         $("ssTokenWrap").appendChild(b);
@@ -1079,6 +1187,7 @@ function runSentenceSurgery(pack) {
 function runWordForge(pack) {
   const stage = $("saGameStage");
   const items = pack.items;
+  const zpd = createZpdDirector(pack);
   let idx = 0;
   let correct = 0;
   const wordResults = [];
@@ -1213,7 +1322,7 @@ function runWordForge(pack) {
 
     ctx.font = "700 12px 'JetBrains Mono', monospace";
     ctx.fillStyle = "#fdba74"; ctx.textAlign = "center";
-    ctx.fillText(`OBSIDIAN WORD FORGE · ENCHANTED BLADE ${forgedCount}/${items.length}`, W * 0.5, 20);
+    ctx.fillText(`OBSIDIAN FORGE · ENCHANTED BLADE ${forgedCount}/${items.length}`, W * 0.5, 20);
 
     drawEnchantedBlade(W * 0.5, H * 0.36, forgedCount, nowS);
 
@@ -1272,38 +1381,38 @@ function runWordForge(pack) {
 
   const RULES = [
     { id: "keep", label: "Keep Base Clean" },
-    { id: "double", label: "Double Consonant (1-1-1)" },
+    { id: "double", label: "Double Last Letter" },
     { id: "drop_e", label: "Drop Silent -e" },
-    { id: "y_to_i", label: "Change y → i" },
+    { id: "y_to_i", label: "Flip y → i" },
   ];
 
   function renderWord() {
     VOICE.stop();
     if (penCleanup) { penCleanup(); penCleanup = null; }
     if (idx >= items.length) {
-      finishGame({ correct, total: items.length, word_results: wordResults, production_passed: true });
+      finishGame({ correct, total: items.length, word_results: wordResults, subskill_hits: zpd.subskillHits, played_ids: zpd.playedIds, peak_tier: zpd.peakTier, production_passed: true });
       return;
     }
     beginStepClock();
     const it = items[idx];
-    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Word Forge", aiPack: !!pack.ai_generated });
+    let roundMissed = false;
+    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Obsidian Forge", aiPack: !!pack.ai_generated });
     const body = $("wfBody");
     const fb = $("wfFb");
 
-    // Auto-speak the word + context sentence immediately so Step 1 is NEVER blind guessing!
     VOICE.speak(`${it.word}. ${it.context_sentence || ""}`);
 
     const neededParts = [];
-    if (it.prefix) neededParts.push({ part: "prefix", label: "Prefix" });
+    if (it.prefix) neededParts.push({ part: "prefix", label: "Starter" });
     neededParts.push({ part: "base", label: "Base" });
-    if (it.suffix) neededParts.push({ part: "suffix", label: "Suffix" });
+    if (it.suffix) neededParts.push({ part: "suffix", label: "Ending" });
     const filled = {};
 
     body.innerHTML = `
       <div class="sa-mission-banner">
         <span class="sa-mission-tag">🔥 ${esc(it.unit)}</span>
         <div style="display:flex;gap:8px;align-items:center">
-          ${it.from_deck ? `<span class="sa-tag" style="color:#fdba74;border:1px solid rgba(249,115,22,0.4)">Leitner Box ${it.box}/5</span>` : ""}
+          ${it.from_deck ? `<span class="sa-tag" style="color:#fdba74;border:1px solid rgba(249,115,22,0.4)">Vault ${it.box}/5</span>` : ""}
           <button type="button" class="sa-speak-btn" id="wfHearBtn">🔊 Hear Word</button>
         </div>
       </div>
@@ -1314,7 +1423,6 @@ function runWordForge(pack) {
 
     $("wfHearBtn").onclick = () => VOICE.speak(`${it.word}. ${it.context_sentence || ""}`, { force: true });
 
-    // Direct-memory irregular Leitner cards go straight to Memory Forge cleanly
     if (it.direct_memory || !it.tiles?.length) {
       showMemoryStrike();
       return;
@@ -1330,6 +1438,7 @@ function runWordForge(pack) {
     }
     drawSlots();
 
+    const partName = (pt) => (pt === "prefix" ? "starter" : (pt === "suffix" ? "ending" : "base"));
     const runeBtns = [];
     it.tiles.forEach((tile) => {
       const b = document.createElement("button");
@@ -1338,10 +1447,11 @@ function runWordForge(pack) {
       b.textContent = tile.text;
       b.onclick = () => {
         if (!tile.correct) {
+          roundMissed = true;
           resetCombo();
           SFX.bad();
           b.style.borderColor = "#fb7185";
-          setFeedback(fb, "bad", `Not '${esc(tile.text)}' — tap <b>🔊 Hear Word</b> and pick the matching ${esc(tile.part)} rune!`);
+          setFeedback(fb, "bad", `Not '${esc(tile.text)}' — tap <b>🔊 Hear Word</b> and pick the matching ${partName(tile.part)} rune!`);
           return;
         }
         filled[tile.part] = tile.text;
@@ -1351,7 +1461,6 @@ function runWordForge(pack) {
         FX.burstEl(b, "#f97316", 16);
         drawSlots();
         if (neededParts.every((p) => filled[p.part])) {
-          // Disable all remaining distractor runes immediately!
           runeBtns.forEach((rb) => { rb.disabled = true; rb.classList.add("used"); });
           showRulePick();
         }
@@ -1363,7 +1472,7 @@ function runWordForge(pack) {
     function showRulePick() {
       const s2 = $("wfStep2");
       s2.hidden = false;
-      setFeedback(fb, "idle", "Step 2: Which spelling rule fuses these runes?");
+      setFeedback(fb, "idle", "Step 2: Which Forge Rule locks these runes together?");
       s2.innerHTML = `
         <div style="text-align:center;font-weight:600;color:#fed7aa;margin-bottom:8px">Choose the Forge Rule before the furnace shutter drops:</div>
         <div class="wf-rule-row" id="wfRuleRow"></div>`;
@@ -1379,10 +1488,11 @@ function runWordForge(pack) {
             addPoints(40, rb, "#f97316");
             showMemoryStrike();
           } else {
+            roundMissed = true;
             resetCombo();
             SFX.bad();
             rb.style.borderColor = "#fb7185";
-            setFeedback(fb, "bad", esc(it.memory_hint || "Check how the base word ends before adding this suffix!"));
+            setFeedback(fb, "bad", esc(it.memory_hint || "Check how the base word ends before locking on this ending!"));
           }
         };
         $("wfRuleRow").appendChild(rb);
@@ -1396,15 +1506,14 @@ function runWordForge(pack) {
       const startInPen = canPen && App.forgeUsePen;
       const s2 = $("wfStep2");
       s2.hidden = false;
-      // ZERO SPOILERS: show non-spoiling `memory_hint`, NEVER `it.note` until AFTER forging!
       s2.innerHTML = `
         <div class="wf-memory-box" style="padding:14px">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center">
-            <span style="font-weight:700;color:#fdba74">🔒 MEMORY FORGE — Spell From Memory!</span>
+            <span style="font-weight:700;color:#fdba74">🔒 MEMORY FORGE — Strike It From Memory!</span>
             <button type="button" class="sa-speak-btn" id="wfSpeakWord">🔊 Word</button>
             <button type="button" class="sa-speak-btn" id="wfSpeakSent">🔊 Sentence</button>
           </div>
-          <div style="font-size:0.86rem;color:#cbd5e1;text-align:center">${esc(it.memory_hint || "Spell cleanly from memory!")}</div>
+          <div style="font-size:0.86rem;color:#cbd5e1;text-align:center">${esc(it.memory_hint || "Strike every letter cleanly from memory!")}</div>
           ${canPen ? `
           <div class="wf-mode-tabs">
             <button type="button" class="wf-mode-tab ${!startInPen ? "on" : ""}" id="wfTabType">⌨️ Type It</button>
@@ -1433,7 +1542,7 @@ function runWordForge(pack) {
 
       setFeedback(fb, "idle", canPen
         ? "Listen to the word, then type it OR write it with your Lenovo pen from memory!"
-        : "Listen to the word, then type the fused spelling cleanly from memory!");
+        : "Listen to the word, then type the fused word cleanly from memory!");
 
       VOICE.speak(`Forge the word: ${it.word}. ${it.context_sentence || ""}`);
       $("wfSpeakWord").onclick = () => VOICE.speak(it.word, { force: true, rate: 0.86 });
@@ -1441,7 +1550,7 @@ function runWordForge(pack) {
 
       const inp = $("wfMemInput");
       if (!startInPen) inp.focus();
-      let hadMiss = false;
+      let memMissed = false;
       let wordDone = false;
 
       function evaluateAttempt(typedRaw) {
@@ -1454,21 +1563,24 @@ function runWordForge(pack) {
           SFX.hammer();
           triggerHammerStrike(true);
           forgedCount += 1;
-          if (!hadMiss) correct += 1;
+          const cleanWholeWord = !roundMissed && !memMissed;
+          if (cleanWholeWord) correct += 1;
           const partsStr = [it.prefix, it.base, it.suffix].filter(Boolean).join(" + ") || it.word;
           wordResults.push({
-            word: it.word, first_try: !hadMiss, wrote: typed,
-            parts: partsStr, note: it.note || "", unit: it.unit || "Word Forge",
+            word: it.word, first_try: !memMissed, wrote: typed,
+            parts: partsStr, note: it.note || "", unit: it.unit || "Rune Lock Forge",
           });
-          addPoints(hadMiss ? 65 : 150, s2, "#22d3ee");
+          zpd.record(it, cleanWholeWord, idx + 1, items);
+          addPoints(cleanWholeWord ? 150 : 65, s2, "#22d3ee");
           setFeedback(fb, "ok",
-            `💎 <b>FORGED: ${esc(it.word)}!</b> ${esc(it.note || "")} ${!hadMiss ? "(Leitner box upgraded!)" : "(Queued for tomorrow's review!)"}`,
+            `💎 <b>FORGED: ${esc(it.word)}!</b> ${esc(it.note || "")} ${!memMissed ? "(Vault Tier upgraded!)" : "(Queued for next forge!)"}`,
             { id: "wfNextBtn", label: "Next Rune →", onClick: () => { idx += 1; renderWord(); } });
           $("wfStrikeBtn").disabled = true;
           inp.disabled = true;
           if ($("wfPenStrike")) $("wfPenStrike").disabled = true;
         } else {
-          hadMiss = true;
+          memMissed = true;
+          roundMissed = true;
           resetCombo();
           SFX.bad();
           const target = it.word.toLowerCase();
@@ -1628,16 +1740,18 @@ function runWordForge(pack) {
 }
 
 // ===========================================================================
-// GAME 3: ☄️ HOMOPHONE & VERB ASTEROIDS (2x DPR + Unclipped Asteroids + Live Boss!)
+// GAME 3: ☄️ STARSHIELD TURRET (2x DPR + Unclipped Meteors + Live Boss!)
 // ===========================================================================
 
 function runHomophoneAsteroids(pack) {
   const stage = $("saGameStage");
   const items = pack.items;
+  const zpd = createZpdDirector(pack);
   let wave = 0;
   let correct = 0;
   let waveMissed = false;
   const trickyWords = [];
+  const wordOutcomes = [];
   const skillHits = {};
 
   stage.innerHTML = `
@@ -1689,16 +1803,17 @@ function runHomophoneAsteroids(pack) {
     waveMissed = false;
     const it = items[wave];
     currentSpoken = it.sentence.replace("___", "blank");
-    setHud({ visible: true, step: wave + 1, total: items.length + 1, score: App.score, combo: App.combo, title: "Homophone & Verb Asteroids", aiPack: !!pack.ai_generated });
+    setHud({ visible: true, step: wave + 1, total: items.length + 1, score: App.score, combo: App.combo, title: "Starshield Turret", aiPack: !!pack.ai_generated });
     const parts = it.sentence.split("___");
     $("astHud").innerHTML = `${esc(parts[0] || "")}<span class="ast-blank">?</span>${esc(parts[1] || "")}`;
 
     const lanes = [W * 0.21, W * 0.5, W * 0.79];
-    // Spawn cleanly inside canvas (y = 64 / 58 / 64, r = 44) -> ZERO top clipping!
+    // Adaptive speed: smoothly adjusts to live ZPD sector!
+    const zpdSpeedScale = zpd.tier === 1 ? 0.84 : (zpd.tier === 3 ? 1.18 : 1.0);
     rocks = it.options.map((opt, i) => ({
       idx: i, word: opt, ok: opt === it.answer,
       x: lanes[i], y: i === 1 ? 58 : 66, r: 44,
-      vy: 0.33 + Math.min(0.24, wave * 0.025),
+      vy: (0.31 + Math.min(0.22, wave * 0.022)) * zpdSpeedScale,
       rot: Math.random() * Math.PI * 2, vrot: (Math.random() - 0.5) * 0.012,
       verts: Array.from({ length: 11 }, (_, vi) => 0.84 + ((vi * 13 + i * 5) % 5) * 0.05),
       craters: [{ a: 0.8 + i, d: 0.45, r: 7 }, { a: 2.9 + i, d: 0.38, r: 5.5 }, { a: 4.7 + i, d: 0.48, r: 4.5 }],
@@ -1732,9 +1847,11 @@ function runHomophoneAsteroids(pack) {
       }
       if (!waveMissed) correct += 1;
       else trickyWords.push(it.answer);
+      wordOutcomes.push({ word: it.answer, ok: !waveMissed });
       skillHits[it.skill] = skillHits[it.skill] || { correct: 0, total: 0 };
       skillHits[it.skill].total += 1;
       if (!waveMissed) skillHits[it.skill].correct += 1;
+      zpd.record(it, !waveMissed, wave + 1, items);
 
       addPoints(waveMissed ? 60 : 120, $("astHud"), "#a855f7");
       setFeedback($("astFb"), "ok", `💥 <b>Direct Hit!</b> ${esc(it.explain)}`);
@@ -1814,7 +1931,7 @@ function runHomophoneAsteroids(pack) {
             });
           }
           addPoints(250, $("astHud"), "#a855f7");
-          setFeedback($("astFb"), "ok", "💥 <b>DREADNOUGHT VAPORIZED!</b> Awesome Homework-Standard sentence!");
+          setFeedback($("astFb"), "ok", "💥 <b>DREADNOUGHT VAPORIZED!</b> Direct hit on the command core!");
           safeTimeout(() => {
             finishGame({
               correct: correct + 1,
@@ -1822,6 +1939,10 @@ function runHomophoneAsteroids(pack) {
               production_passed: true,
               production_sentence: txt,
               skill_hits: skillHits,
+              subskill_hits: zpd.subskillHits,
+              word_outcomes: wordOutcomes,
+              played_ids: zpd.playedIds,
+              peak_tier: zpd.peakTier,
             });
           }, 1150);
         } else {
@@ -2095,6 +2216,7 @@ function buildFusedSentence(it, bridgeWord, bridgeKind, vividVerb) {
 function runSentenceStretch(pack) {
   const stage = $("saGameStage");
   const items = pack.items;
+  const zpd = createZpdDirector(pack);
   let idx = 0;
   let correct = 0;
   let reactorPower = 30;
@@ -2135,7 +2257,7 @@ function runSentenceStretch(pack) {
     rctx.stroke();
     rctx.restore();
 
-    for (const [nx, col, lbl] of [[lx, "#38bdf8", "CLAUSE A"], [rx, "#10b981", "CLAUSE B"]]) {
+    for (const [nx, col, lbl] of [[lx, "#38bdf8", "CORE A"], [rx, "#10b981", "CORE B"]]) {
       rctx.save();
       rctx.fillStyle = "#0f172a"; rctx.strokeStyle = col; rctx.lineWidth = 3;
       rctx.shadowColor = col; rctx.shadowBlur = 14;
@@ -2172,13 +2294,13 @@ function runSentenceStretch(pack) {
   function renderStep() {
     VOICE.stop();
     if (idx >= items.length) {
-      finishGame({ correct, total: items.length, skill_hits: skillHits, production_passed: false });
+      finishGame({ correct, total: items.length, skill_hits: skillHits, subskill_hits: zpd.subskillHits, played_ids: zpd.playedIds, peak_tier: zpd.peakTier, production_passed: false });
       return;
     }
     beginStepClock();
     reactorPower = 30;
     const it = items[idx];
-    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Sentence Stretch Lab", aiPack: !!pack.ai_generated });
+    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Reactor Overdrive", aiPack: !!pack.ai_generated });
     let hadMiss = false;
     let chosenBridge = null;
     let chosenKind = "complex";
@@ -2192,23 +2314,23 @@ function runSentenceStretch(pack) {
         <div class="sa-mission-banner" style="margin-bottom:8px">
           <div class="st-meter-wrap" style="flex:1;margin:0">
             <div class="st-meter-bar"><div class="st-meter-fill" id="stMeterFill"></div></div>
-            <div class="st-meter-label" id="stMeterLbl">LEVEL 1 · CHOPPY</div>
+            <div class="st-meter-label" id="stMeterLbl">STAGE 1 · UNLINKED</div>
           </div>
-          <button type="button" class="sa-speak-btn" id="stSpeakInit">🔊 Read Clauses</button>
+          <button type="button" class="sa-speak-btn" id="stSpeakInit">🔊 Read Both</button>
         </div>
-        <div class="sa-prompt-text" id="stStepPrompt">Step 1: Snap the right connector bridge to fuse these two choppy sentences!</div>
+        <div class="sa-prompt-text" id="stStepPrompt">Step 1: Snap the right bridge to link these two power cores!</div>
       </div>
       <div class="st-rails" id="stRails">
-        ${it.front_connector ? `<div class="st-bridge-slot" id="stBridgeSlot">Connector?</div>` : ""}
+        ${it.front_connector ? `<div class="st-bridge-slot" id="stBridgeSlot">Starter?</div>` : ""}
         <div class="st-clause">${hlVerb(esc(it.clause_a))}</div>
         ${!it.front_connector ? `<div class="st-bridge-slot" id="stBridgeSlot">Bridge?</div>` : ""}
         <div class="st-clause">${hlVerb(esc(it.clause_b))}</div>
       </div>
       <div class="sa-panel" id="stControls">
-        <div style="text-align:center;color:#94a3b8;font-size:0.9rem">Pick the logical connector:</div>
+        <div style="text-align:center;color:#94a3b8;font-size:0.9rem">Pick the power link:</div>
         <div class="st-pill-row" id="stBridgeRow"></div>
       </div>
-      <div class="sa-feedback idle" id="stFb"><span class="sa-fb-msg">Choose a connector that matches the real cause, timing, or contrast!</span></div>`;
+      <div class="sa-feedback idle" id="stFb"><span class="sa-fb-msg">Pick the link that matches the real cause, timing, or twist!</span></div>`;
 
     $("stSpeakInit").onclick = () => VOICE.speak(`${it.clause_a} ${it.clause_b}`, { force: true });
 
@@ -2229,8 +2351,8 @@ function runSentenceStretch(pack) {
           $("stBridgeSlot").textContent = it.front_connector ? br.word.charAt(0).toUpperCase() + br.word.slice(1) : br.word;
           $("stBridgeSlot").classList.add("locked");
           $("stMeterFill").style.width = "70%";
-          $("stMeterLbl").textContent = `LEVEL 2 · ${chosenKind.toUpperCase()}`;
-          setFeedback($("stFb"), "ok", `⚡ <b>Nice bridge!</b> ${esc(br.why)} Now upgrade the weak yellow verb!`);
+          $("stMeterLbl").textContent = "STAGE 2 · LINKED";
+          setFeedback($("stFb"), "ok", `⚡ <b>Cores linked!</b> ${esc(br.why)} Now supercharge the yellow action word!`);
           showVerbUpgrade();
         } else {
           hadMiss = true;
@@ -2244,9 +2366,9 @@ function runSentenceStretch(pack) {
     });
 
     function showVerbUpgrade() {
-      $("stStepPrompt").textContent = `Step 2: Swap the weak verb “${it.weak_verb}” for a vivid Grade 4 action verb to hit OVERDRIVE!`;
+      $("stStepPrompt").textContent = `Step 2: Swap “${it.weak_verb}” for a high-voltage action word to hit OVERDRIVE!`;
       $("stControls").innerHTML = `
-        <div style="text-align:center;color:#fde68a;font-size:0.95rem;font-weight:600">Pick a vivid upgrade for “${esc(it.weak_verb)}”:</div>
+        <div style="text-align:center;color:#fde68a;font-size:0.95rem;font-weight:600">Supercharge “${esc(it.weak_verb)}”:</div>
         <div class="st-pill-row" id="stVerbRow"></div>`;
       it.verb_upgrades.forEach((vu) => {
         const vb = document.createElement("button");
@@ -2268,27 +2390,27 @@ function runSentenceStretch(pack) {
             skillHits["B2.4_vocabulary"] = skillHits["B2.4_vocabulary"] || { correct: 0, total: 0 };
             skillHits["B2.4_vocabulary"].total += 1;
             if (!hadMiss) skillHits["B2.4_vocabulary"].correct += 1;
+            zpd.record(it, !hadMiss, idx + 1, items);
 
             addPoints(hadMiss ? 60 : 120, vb, "#facc15");
             $("stMeterFill").style.width = "100%";
             $("stMeterLbl").textContent = "⚡ OVERDRIVE 100%!";
-            // Dynamically fuse the sentence with the EXACT vivid verb the student picked!
             const fused = buildFusedSentence(it, chosenBridge, chosenKind, chosenVerb);
             $("stRails").innerHTML = `<div style="font-size:1.22rem;font-weight:700;color:#6ee7b7;text-align:center">⚡ ${esc(fused)}</div>`;
             $("stControls").innerHTML = `
               <div style="display:flex;justify-content:center;gap:12px;align-items:center">
-                <button type="button" class="sa-speak-btn" id="stHearBtn">🔊 Hear Your Fused Sentence</button>
+                <button type="button" class="sa-speak-btn" id="stHearBtn">🔊 Hear Overdrive Line</button>
               </div>`;
             $("stHearBtn").onclick = () => VOICE.speak(fused, { force: true });
-            setFeedback($("stFb"), "ok", "🔥 <b>OVERDRIVE UNLOCKED!</b> Two choppy sentences fused into one vivid Grade 4 sentence!", {
-              id: "stNextBtn", label: "Next Lab →", onClick: () => { idx += 1; renderStep(); },
+            setFeedback($("stFb"), "ok", "🔥 <b>OVERDRIVE UNLOCKED!</b> Twin cores fused at 100% power!", {
+              id: "stNextBtn", label: "Next Core →", onClick: () => { idx += 1; renderStep(); },
             });
           } else {
             hadMiss = true;
             resetCombo();
             SFX.bad();
             vb.style.borderColor = "#fb7185";
-            setFeedback($("stFb"), "bad", `“${esc(vu.word)}” is still a sleepy weak verb — pick one that paints a sharp action!`);
+            setFeedback($("stFb"), "bad", `“${esc(vu.word)}” is low-voltage — pick one that paints a sharp action!`);
           }
         };
         $("stVerbRow").appendChild(vb);
@@ -2326,23 +2448,29 @@ const SHIFT_KEY_MAP = { "!": "1", "\"": "'", "?": "?" };
 function runTypingArena(pack) {
   const stage = $("saGameStage");
   const items = pack.items;
-  const totalCharsAll = items.reduce((acc, it) => acc + it.text.length, 0);
+  const zpd = createZpdDirector(pack);
+  const targetWpm = Math.max(12, Math.min(55, Number(pack.adaptive?.target_wpm) || 20));
+  let totalCharsAll = items.reduce((acc, it) => acc + it.text.length, 0);
   let idx = 0;
   let pos = 0;
+  let lapErrors = 0;
   let totalTyped = 0;
   let totalCorrect = 0;
   let firstKeyTs = 0;
+  let lastFrameTs = performance.now();
   let currentWpm = 0;
   let currentAcc = 100;
   let errFlash = 0;
   let roadOffset = 0;
   let active = true;
   let rafId = 0;
+  const charErrors = {};
 
+  // Live adaptive rival cruisers paced around the player's personal ZPD WPM!
   const rivals = [
-    { lane: -0.55, prog: 0.28, col: "#f43f5e", passed: false },
-    { lane: 0.55, prog: 0.56, col: "#a855f7", passed: false },
-    { lane: -0.32, prog: 0.82, col: "#f59e0b", passed: false },
+    { lane: -0.55, prog: 0.05, wpmMult: 0.78, col: "#f43f5e", passed: false },
+    { lane: 0.55, prog: 0.12, wpmMult: 0.93, col: "#a855f7", passed: false },
+    { lane: -0.32, prog: 0.19, wpmMult: 1.04, col: "#f59e0b", passed: false },
   ];
 
   stage.innerHTML = `
@@ -2376,12 +2504,26 @@ function runTypingArena(pack) {
 
   function drawRoad() {
     if (!active) return;
+    const nowTs = performance.now();
+    const dtSec = Math.min(0.05, Math.max(0, (nowTs - lastFrameTs) / 1000));
+    lastFrameTs = nowTs;
     const { W, H } = fitCanvas(cv, ctx, 300, 180);
     const horiz = H * 0.44;
     const turbo = currentAcc >= 94 && currentWpm >= 14;
     const speed = 0.015 + Math.min(0.14, currentWpm * 0.0026);
     roadOffset = (roadOffset + speed) % 1;
     const myProg = totalCorrect / Math.max(1, totalCharsAll);
+
+    // Advance rival cruisers dynamically once the race starts (with gentle rubber-banding!)
+    if (firstKeyTs && !document.hidden) {
+      const baseCps = (targetWpm * 5) / 60;
+      for (const rv of rivals) {
+        const gap = rv.prog - myProg;
+        const band = gap > 0.22 ? 0.55 : (gap < -0.18 ? 1.12 : 1.0);
+        const dps = ((baseCps * rv.wpmMult * band) / Math.max(1, totalCharsAll)) * dtSec;
+        rv.prog = Math.min(0.985, rv.prog + dps);
+      }
+    }
 
     const sky = ctx.createLinearGradient(0, 0, 0, horiz);
     sky.addColorStop(0, "#05040f"); sky.addColorStop(1, turbo ? "#2e1065" : "#111834");
@@ -2488,7 +2630,7 @@ function runTypingArena(pack) {
   function renderPrompt(badNow = false) {
     const it = items[idx];
     const txt = it.text;
-    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Neon Turbo Typing", aiPack: !!pack.ai_generated });
+    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Neon Drift: Toronto", aiPack: !!pack.ai_generated });
     $("tyTag").textContent = `🏎️ LAP ${idx + 1}/${items.length} · ${it.tag}`;
     let html = "";
     for (let i = 0; i < txt.length; i++) {
@@ -2537,6 +2679,11 @@ function runTypingArena(pack) {
       updateMetrics();
       if (pos >= items[idx].text.length) {
         commitStepClock(40);
+        const curItem = items[idx];
+        zpd.record(curItem, lapErrors <= 2, idx + 1, items);
+        // Recompute totalCharsAll immediately after any mid-race ZPD sentence swap so myProg & rival dps stay 100% synced!
+        totalCharsAll = items.reduce((acc, it) => acc + it.text.length, 0);
+        lapErrors = 0;
         addPoints(150, $("tyPrompt"), "#22d3ee");
         SFX.powerup();
         idx += 1;
@@ -2545,13 +2692,29 @@ function runTypingArena(pack) {
           const mins = Math.max(0.08, (performance.now() - firstKeyTs) / 60000);
           const cpm = Math.round(totalCorrect / mins);
           const wpm = Math.round(cpm / 5);
-          finishGame({ correct: totalCorrect, total: Math.max(1, totalTyped), wpm, cpm, production_passed: currentAcc >= 90 });
+          finishGame({
+            correct: totalCorrect,
+            total: Math.max(1, totalTyped),
+            wpm,
+            cpm,
+            char_errors: charErrors,
+            subskill_hits: zpd.subskillHits,
+            played_ids: zpd.playedIds,
+            peak_tier: zpd.peakTier,
+            production_passed: currentAcc >= 90,
+          });
           return;
         }
         setFeedback($("tyFb"), "ok", `⚡ Lap cleared at <b>${currentWpm} WPM</b> (${currentAcc}% accuracy)! Keep flying!`);
       }
       renderPrompt(false);
     } else {
+      lapErrors += 1;
+      if (/[A-Z]/.test(target) && e.key === target.toLowerCase()) {
+        charErrors.SHIFT = (charErrors.SHIFT || 0) + 1;
+      } else if (target && target !== " ") {
+        charErrors[target] = (charErrors[target] || 0) + 1;
+      }
       errFlash = 1;
       resetCombo();
       SFX.keyErr();
@@ -2572,6 +2735,7 @@ function runTypingArena(pack) {
 function runClueDetective(pack) {
   const stage = $("saGameStage");
   const items = pack.items;
+  const zpd = createZpdDirector(pack);
   let idx = 0;
   let correct = 0;
   const skillHits = {};
@@ -2677,14 +2841,23 @@ function runClueDetective(pack) {
     VOICE.stop();
     if (caseCleanup) { caseCleanup(); caseCleanup = null; }
     if (idx >= items.length) {
-      finishGame({ correct, total: items.length, production_passed: !!lastVerdict, production_sentence: lastVerdict, skill_hits: skillHits });
+      finishGame({
+        correct,
+        total: items.length,
+        production_passed: !!lastVerdict,
+        production_sentence: lastVerdict,
+        skill_hits: skillHits,
+        subskill_hits: zpd.subskillHits,
+        played_ids: zpd.playedIds,
+        peak_tier: zpd.peakTier,
+      });
       return;
     }
     beginStepClock();
     caseClosedNow = false;
     stampProgress = 0;
     const it = items[idx];
-    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Mystery Clue Detective", aiPack: !!pack.ai_generated });
+    setHud({ visible: true, step: idx + 1, total: items.length, score: App.score, combo: App.combo, title: "Shadow Detective", aiPack: !!pack.ai_generated });
     let clueFound = false;
     let choiceLocked = false;
     let hadMiss = false;
@@ -2852,7 +3025,7 @@ function runClueDetective(pack) {
       s3.hidden = false;
       s3.innerHTML = `
         <div class="sa-panel" style="padding:14px 16px;border-color:rgba(250,204,21,0.5)">
-          <div style="font-weight:700;color:#fde68a;margin-bottom:8px;font-size:0.95rem">✍️ Final Step — Finish your Causal Verdict (explain WHY after “because” + end with a period!):</div>
+          <div style="font-weight:700;color:#fde68a;margin-bottom:8px;font-size:0.95rem">✍️ Final Step — Lock in your Final Verdict (prove WHY after “because” + end with a period!):</div>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <input type="text" id="cdVerdictInput" class="sa-sentence-input" style="flex:1;min-width:260px" value="${esc(it.verdict_starter)} " autocomplete="off" />
             <button type="button" class="sa-btn primary" id="cdCloseBtn">⚖️ Stamp CASE CLOSED</button>
@@ -2891,6 +3064,7 @@ function runClueDetective(pack) {
             skillHits[it.skill] = skillHits[it.skill] || { correct: 0, total: 0 };
             skillHits[it.skill].total += 1;
             if (!hadMiss) skillHits[it.skill].correct += 1;
+            zpd.record(it, !hadMiss, idx + 1, items);
             addPoints(140, inp, "#facc15");
             inp.disabled = true;
             btn.textContent = "✓ Stamped";
@@ -2924,7 +3098,7 @@ $("saBackBtn").onclick = () => {
     loadHub();
   } else if (IS_EMBEDDED) {
     VOICE.stop();
-    try { window.parent.postMessage({ __skillArcadeClose: true }, "*"); } catch (_) {}
+    try { window.parent.postMessage({ __skillArcadeClose: true }, "*"); } catch (_) { }
   } else {
     VOICE.stop();
     location.href = IS_SANDBOX ? "/?sandbox=1" : "/";
@@ -2944,10 +3118,11 @@ $("saMuteBtn").onclick = () => {
   $("saMuteBtn").setAttribute("aria-pressed", String(m));
 };
 
+$("saUseAi").addEventListener("change", () => { App.worldsTouched = true; });
 $("saPlayAgainBtn").onclick = () => startGame(App.currentGameId, $("saUseAi").checked);
 $("saPlayAiBtn").onclick = () => startGame(App.currentGameId, true);
 $("saReturnHubBtn").onclick = () => loadHub();
 
 loadHub().then(() => {
-  if (START_GAME) startGame(START_GAME, false);
+  if (START_GAME) startGame(START_GAME, $("saUseAi").checked);
 });

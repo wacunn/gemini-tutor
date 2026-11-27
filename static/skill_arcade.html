@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>Skill Arcade · Gemini Tutor</title>
+  <title>Starblade Arcade</title>
   <link rel="icon" type="image/png" href="/static/icon-192.png" />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@500;700&family=Google+Sans+Text:wght@400;500;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/skill_arcade.css" />
@@ -15,10 +15,10 @@
   <div class="sa-shell">
     <header class="sa-topbar">
       <div class="sa-top-left">
-        <button type="button" class="sa-btn ghost" id="saBackBtn">← Back to Studio</button>
+        <button type="button" class="sa-btn ghost" id="saBackBtn">← Studio</button>
         <div class="sa-brand" id="saBrandTitle">
           <span class="sa-brand-dot"></span>
-          <span>Skill Arcade</span>
+          <span>Starblade Arcade</span>
         </div>
         <span class="sa-sandbox-tag" id="saSandboxTag" hidden>Parent Sandbox</span>
       </div>
@@ -28,17 +28,18 @@
           <div class="sa-progress-track"><div class="sa-progress-fill" id="saProgFill"></div></div>
           <span class="sa-progress-label" id="saProgLabel">1 / 6</span>
         </div>
+        <div class="sa-hud-pill tier" id="saTierPill">SECTOR 1</div>
         <div class="sa-hud-pill combo" id="saComboPill" hidden>🔥 x2</div>
         <div class="sa-hud-pill score" id="saScorePill">0 PTS</div>
       </div>
 
       <div class="sa-top-right">
         <div class="sa-bank-pill" id="saBankPill" hidden></div>
-        <label class="sa-ai-toggle" id="saAiToggleWrap" title="Use Gemini to invent fresh rounds themed to your comics & Minecraft worlds">
+        <label class="sa-ai-toggle" id="saAiToggleWrap" title="Weave your own comic heroes &amp; worlds into missions">
           <input type="checkbox" id="saUseAi" />
-          <span>✨ AI World Pack</span>
+          <span>🌌 My Worlds</span>
         </label>
-        <button type="button" class="sa-icon-btn on" id="saVoiceBtn" title="Toggle spoken voice narration" aria-pressed="true">🗣️</button>
+        <button type="button" class="sa-icon-btn on" id="saVoiceBtn" title="Toggle voice" aria-pressed="true">🗣️</button>
         <button type="button" class="sa-icon-btn" id="saMuteBtn" title="Toggle sound effects" aria-pressed="false">🔊</button>
       </div>
     </header>
@@ -46,15 +47,11 @@
     <!-- HUB VIEW -->
     <main class="sa-hub" id="saHubView">
       <section class="sa-hero">
-        <div>
-          <div class="sa-eyebrow">ONTARIO GRADE 3–4 · PERSONALIZED SKILL ARENA</div>
-          <h1 id="saHeroHeading">Choose Your Mission</h1>
-          <p class="sa-hero-sub" id="saHeroSub">Every high-accuracy round boosts your real writing skills, upgrades your spelling deck, and banks time toward your games.</p>
-        </div>
+        <h1 id="saHeroHeading">Pick Your Arena</h1>
         <div class="sa-stats-strip" id="saStatsStrip"></div>
       </section>
 
-      <section class="sa-grid" id="saGameGrid" aria-label="Skill Arcade Games"></section>
+      <section class="sa-grid" id="saGameGrid" aria-label="Starblade Arenas"></section>
     </main>
 
     <!-- ACTIVE GAME STAGE -->
@@ -63,21 +60,21 @@
     <!-- LOADING OVERLAY -->
     <div class="sa-loading" id="saLoading" hidden>
       <div class="sa-spinner"></div>
-      <div id="saLoadingText">Building your personalized mission…</div>
+      <div id="saLoadingText">Powering up arena…</div>
     </div>
 
     <!-- SUMMARY MODAL -->
     <div class="sa-modal-backdrop" id="saSummaryModal" hidden role="dialog" aria-modal="true" aria-labelledby="saSumTitle">
       <div class="sa-modal-card">
         <div class="sa-sum-stars" id="saSumStars">★★★</div>
-        <h2 id="saSumTitle">Mission Complete!</h2>
+        <h2 id="saSumTitle">Arena Cleared!</h2>
         <div class="sa-sum-metrics" id="saSumMetrics"></div>
         <div class="sa-sum-reward" id="saSumReward" hidden></div>
         <div class="sa-sum-details" id="saSumDetails"></div>
         <div class="sa-sum-actions">
-          <button type="button" class="sa-btn primary" id="saPlayAgainBtn">↻ Play Another Round</button>
-          <button type="button" class="sa-btn ai" id="saPlayAiBtn" hidden>✨ Fresh AI World Pack</button>
-          <button type="button" class="sa-btn ghost" id="saReturnHubBtn">All 6 Games</button>
+          <button type="button" class="sa-btn primary" id="saPlayAgainBtn">↻ Next Run</button>
+          <button type="button" class="sa-btn ai" id="saPlayAiBtn" hidden>🌌 Fresh World Drop</button>
+          <button type="button" class="sa-btn ghost" id="saReturnHubBtn">All Arenas</button>
         </div>
       </div>
     </div>

@@ -221,7 +221,7 @@ function renderHeroStarters(savedProjects) {
     }
   }
   box.innerHTML = `${contPill}${arcadeHeroPills}
-    <button type="button" class="hero-pill skill-arcade-hero" data-open-skill-arcade="1">🎯 Skill Arcade (6 Games)</button>
+    <button type="button" class="hero-pill skill-arcade-hero" data-open-skill-arcade="1">🕹️ Starblade Arcade</button>
     <button type="button" class="hero-pill" data-new-kind="epic_graphic_novel">Comic book</button>
     <button type="button" class="hero-pill" data-new-kind="story_jam_novel">100-page comic (talk plot first)</button>
     <button type="button" class="hero-pill" data-new-kind="how_to_tutorial">How-to guide</button>

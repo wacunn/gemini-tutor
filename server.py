@@ -503,6 +503,11 @@ class SkillCompleteIn(BaseModel):
     production_sentence: str = ""
     word_results: list[dict] = []
     skill_hits: dict = {}
+    subskill_hits: dict = {}
+    char_errors: dict = {}
+    word_outcomes: list[dict] = []
+    played_ids: list[str] = []
+    peak_tier: int = 1
     sandbox: int = 0
 
 

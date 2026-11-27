@@ -20,7 +20,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from google import genai
 from google.genai import types
 
-from . import arcade, blackboard, builder, controller, curriculum_tracker, guardian, media, observers, projects, thinking
+from . import arcade, blackboard, builder, controller, curriculum_tracker, guardian, media, observers, projects, skill_games, thinking
 from .config import DATA, LIVE_FALLBACK_MODELS, LIVE_MODEL, api_key, genai_client
 from .prompt import TOOL_SPECS, build_system_prompt, opening_message
 from .record import (
@@ -680,6 +680,7 @@ class TutorSession:
                     had_synthesis=self.ctrl.had_synthesis,
                     words_studied=len(self.ctrl.studied_words_today),
                 )
+                skill_games.ingest_studio_session_signals(rec, wchecks)
                 rec.setdefault("sessions", []).append(
                     {
                         "id": self.id,

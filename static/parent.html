@@ -590,40 +590,58 @@
         if (!box) return;
         const games = SA.games || [];
         const recent = SA.recent_runs || [];
+        const studioFlags = SA.studio_flags || [];
+        const troubleWords = SA.trouble_words || [];
         const cards = games.map(g => {
           const stars = [1, 2, 3].map(n => `<span style="color:${g.mastery_stars >= n ? "var(--y)" : "#3c4043"}">★</span>`).join("");
           const stat = g.id === "typing_arena" && g.best_wpm > 0
             ? `Best: <b>${g.best_wpm} WPM</b> (${g.best_accuracy}% acc)`
             : (g.runs > 0 ? `Best: <b>${g.best_score} pts</b> (${g.best_accuracy}% acc)` : `<span class="muted">Not played yet</span>`);
+          const zpdTxt = g.zpd ? `<span class="pill" style="font-size:.75rem;margin-left:6px">ZPD Tier ${g.zpd}</span>` : "";
+          const targets = (g.stealth_targets || []).length
+            ? `<div class="muted" style="font-size:.78rem;margin-top:5px">🎯 Stealth Focus: ${g.stealth_targets.map(esc).join(" · ")}</div>`
+            : "";
           return `<div class="card">
             <div class="row" style="justify-content:space-between;align-items:center">
-              <h3 style="margin:0">${g.icon} ${esc(g.title)}</h3>
+              <h3 style="margin:0">${g.icon} ${esc(g.title)}${zpdTxt}</h3>
               <span style="letter-spacing:2px">${stars}</span>
             </div>
             <div style="margin-top:8px;font-size:.9rem">${stat}</div>
             <div class="muted" style="font-size:.82rem;margin-top:4px">${g.runs} mission${g.runs === 1 ? "" : "s"} completed</div>
+            ${targets}
           </div>`;
         }).join("");
         const recentHtml = recent.slice(0, 8).map(r => {
           const dt = esc((r.date || "").slice(5, 16).replace("T", " "));
           const wpmTxt = r.wpm > 0 ? ` · <b>${r.wpm} WPM</b>` : "";
+          const zpdBadge = r.zpd ? ` · ZPD ${r.zpd}` : "";
           const sent = r.production_sentence ? `<div class="muted" style="margin-left:14px">✍️ “${esc(r.production_sentence)}”</div>` : "";
-          return `<li style="margin-bottom:6px">${dt} — <b>${esc(r.title)}</b>: ${r.correct}/${r.total} (<b>${r.accuracy}%</b>)${wpmTxt}${sent}</li>`;
+          return `<li style="margin-bottom:6px">${dt} — <b>${esc(r.title)}</b>: ${r.correct}/${r.total} (<b>${r.accuracy}%</b>)${wpmTxt}${zpdBadge}${sent}</li>`;
         }).join("");
+        const loopBanner = (studioFlags.length || troubleWords.length)
+          ? `<div class="card" style="margin-bottom:12px;border:1px solid rgba(56,189,248,0.45)">
+              <h3 style="margin:0 0 4px">🔄 Closed-Loop Studio → Stealth Arcade Queue</h3>
+              <div class="muted" style="font-size:.86rem">
+                ${studioFlags.length ? `<div><b>Skills flagged from comic/story writing:</b> ${studioFlags.map(esc).join(" · ")}</div>` : ""}
+                ${troubleWords.length ? `<div><b>Confusable words queued for Starshield Turret:</b> ${troubleWords.map(esc).join(", ")}</div>` : ""}
+              </div>
+            </div>`
+          : "";
         box.innerHTML = `
           <div class="card" style="margin-bottom:12px">
             <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:12px">
               <div>
-                <h3>Skill Arcade Summary (Wired to Ontario Curriculum, Leitner Spelling &amp; 1:2 Game Bank)</h3>
-                <div class="muted">Every high-accuracy mission updates the Report Card above, advances Leitner spelling cards, and banks active minutes toward Minecraft / Fists of Doom.</div>
+                <h3>Starblade Stealth Arcade (Ontario Curriculum, ZPD Adaptive Engine &amp; 1:2 Game Bank)</h3>
+                <div class="muted">Zero curriculum jargon shown to your child — behind the scenes, every arena adapts mid-round (ZPD Tiers 1.0–3.0), targets real Studio writing slips, updates the Ontario Report Card above, and banks 1:2 gaming time.</div>
               </div>
               <div class="row" style="gap:14px">
                 <div><div class="big">${SA.total_runs ?? 0}</div><div class="muted" style="font-size:.8rem">Missions</div></div>
                 <div><div class="big">${SA.avg_accuracy ?? 0}%</div><div class="muted" style="font-size:.8rem">Avg Accuracy</div></div>
-                <a href="/skill-arcade?sandbox=1" target="_blank"><button type="button" class="ghost">Try Skill Arcade (Sandbox)</button></a>
+                <a href="/skill-arcade?sandbox=1" target="_blank"><button type="button" class="ghost">Try Starblade Arcade (Sandbox)</button></a>
               </div>
             </div>
           </div>
+          ${loopBanner}
           <div class="grid">${cards}</div>
           ${recentHtml ? `<div class="card" style="margin-top:12px"><h3>Recent Missions &amp; Boss Sentences</h3><ul style="margin:6px 0 0;padding-left:18px;font-size:.88rem">${recentHtml}</ul></div>` : ""}`;
       }
