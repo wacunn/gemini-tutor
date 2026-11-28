@@ -17,12 +17,18 @@ function esc(s) {
 
 // --------------------------------------------------------------------------- Crisp 2x DPR Canvas & Geometry Helpers
 
+const IS_WIN_LAPTOP = /Windows/i.test(navigator.userAgent || "");
+const SA_MAX_DPR = IS_WIN_LAPTOP ? 1.25 : 2;
+if (IS_WIN_LAPTOP && document.documentElement) {
+  document.documentElement.classList.add("win-perf");
+}
+
 function fitCanvas(cv, ctx, fallbackW = 300, fallbackH = 140) {
   const host = cv.parentElement || cv;
   const r = host.getBoundingClientRect();
   const W = Math.max(fallbackW, Math.floor(r.width));
   const H = Math.max(fallbackH, Math.floor(r.height));
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, SA_MAX_DPR);
   const bw = Math.floor(W * dpr);
   const bh = Math.floor(H * dpr);
   if (cv.width !== bw || cv.height !== bh) {
@@ -218,7 +224,7 @@ const FX = (() => {
   const floats = [];
 
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, SA_MAX_DPR);
     W = window.innerWidth;
     H = window.innerHeight;
     for (const c of [bg, fx]) {

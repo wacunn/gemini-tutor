@@ -44,7 +44,14 @@ def open_app() -> None:
         ]
         for browser in candidates:
             if Path(browser).exists():
-                subprocess.Popen([browser, f"--app={URL}", "--window-size=1280,860"])
+                subprocess.Popen([
+                    browser,
+                    f"--app={URL}",
+                    "--window-size=1280,860",
+                    "--ignore-gpu-blocklist",
+                    "--enable-gpu-rasterization",
+                    "--disable-features=OverscrollHistoryNavigation",
+                ])
                 return
         webbrowser.open(URL)
         return

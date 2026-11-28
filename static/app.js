@@ -4,6 +4,9 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 const IS_SANDBOX = new URLSearchParams(location.search).get("sandbox") === "1";
+if (/Windows/i.test(navigator.userAgent || "") && document.documentElement) {
+  document.documentElement.classList.add("win-perf");
+}
 
 const state = {
   name: "",

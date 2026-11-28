@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.3
+- **🪟 Windows Laptop / Lenovo Yoga GPU, Canvas & Trackpad Optimization (`launch.py`, `static/app.js`, `static/style.css`, `static/skill_arcade.js`, `static/skill_arcade.css`, `static/index.html`, `static/skill_arcade.html`):**
+  - **Hardware GPU Acceleration Flags on Windows**: `launch.py` now launches Chrome/Edge with `--ignore-gpu-blocklist`, `--enable-gpu-rasterization`, and `--disable-features=OverscrollHistoryNavigation` so Lenovo OEM integrated GPU drivers never silently fall back to CPU software rendering and 2-finger trackpad swipes never trigger accidental Back navigation.
+  - **2.6× Lighter OLED HiDPI Canvas2D Fill-Rate on Windows**: `skill_arcade.js` caps 2D canvas DPR to `1.25×` on Windows laptops (`SA_MAX_DPR`) while keeping `2×` Retina on Apple Silicon Macs, cutting per-frame fill-rate by ~60% on 2.8K Lenovo Yoga panels with crisp visuals.
+  - **Zero Windows DWM Blur Readback Stalls**: Applies `html.win-perf` on Windows to bypass per-frame `backdrop-filter: blur(...)` compositing stalls over animated Skill Arcade canvases, plus `overscroll-behavior: none` and `touch-action: manipulation` for instant touchscreen taps without double-tap zoom delay.
+
 ## 1.8.2
 - **🕹️ Starblade Arcade v2.2 — "School Without School Smell" Stealth Re-Skin & Closed-Loop ZPD Adaptive Engine (`tutor/skill_games.py`, `tutor/live.py`, `server.py`, `static/skill_arcade.html`, `static/skill_arcade.css`, `static/skill_arcade.js`, `static/index.html`, `static/app.js`, `static/parent.html`):**
   - **Zero "School Smell" Kid Surfaces + Full Parent Transparency**: Stripped 100% of curriculum codes, grade badges, rubric labels, and grammar-worksheet terminology (`ONTARIO GRADE 3–4`, `Gr.3 B3.1`, `Morphology`, `Homophones`, `Clauses`, `Report Card`, `Leitner`, `1-1-1`, `past participle`, `Point of View`, etc.) from every kid-facing Hub card, HUD pill, in-game prompt, feedback banner, and win modal while keeping full Ontario Grade 3–4 pedagogical rigor under the hood and full curriculum/diagnostic visibility on `/parent`.

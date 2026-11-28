@@ -21,10 +21,22 @@ html,
 body {
   margin: 0;
   height: 100%;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-text);
   -webkit-font-smoothing: antialiased;
+}
+
+button {
+  touch-action: manipulation;
+}
+
+html.win-perf *,
+html.win-perf *::before,
+html.win-perf *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 [hidden] {
